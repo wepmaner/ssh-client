@@ -130,3 +130,26 @@ func TestAskSkipsEscapeSequences(t *testing.T) {
 		t.Fatalf("out = %q", out.String())
 	}
 }
+
+func TestPrompterPending(t *testing.T) {
+	p, _ := newTestPrompter("pw\rls\r")
+	if got, err := p.AskSecret("Password: "); err != nil || got != "pw" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	if got := string(p.Pending()); got != "ls\r" {
+		t.Fatalf("Pending = %q", got)
+	}
+	if got := p.Pending(); len(got) != 0 {
+		t.Fatalf("second Pending = %q", got)
+	}
+}
+
+func TestPrompterPendingDropsLFAfterCR(t *testing.T) {
+	p, _ := newTestPrompter("pw\r\nls")
+	if _, err := p.AskSecret(""); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(p.Pending()); got != "ls" {
+		t.Fatalf("Pending = %q", got)
+	}
+}

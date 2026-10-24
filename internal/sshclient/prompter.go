@@ -43,6 +43,29 @@ func (p *Prompter) Confirm(prompt string) (bool, error) {
 	}
 }
 
+// Pending возвращает и изымает байты, которые Prompter уже прочитал из входа в свой буфер,
+// но ещё не разобрал как ответ. Слой сессии вызывает его один раз после аутентификации и
+// пересылает результат в shell, чтобы не потерять клавиши, набранные до запуска shell.
+// Перевод строки сразу после \r, завершившего последний ответ, отбрасывается. Без данных возвращает nil.
+func (p *Prompter) Pending() []byte {
+	n := p.in.Buffered()
+	if n == 0 {
+		return nil
+	}
+	b := make([]byte, n)
+	// Не больше Buffered() байт bufio.Reader отдаёт из буфера, не обращаясь к исходному потоку.
+	if _, err := io.ReadFull(p.in, b); err != nil {
+		return nil
+	}
+	if p.skipLF {
+		p.skipLF = false
+		if len(b) > 0 && b[0] == '\n' {
+			b = b[1:]
+		}
+	}
+	return b
+}
+
 func (p *Prompter) readLine(prompt string, echo bool) (string, error) {
 	if _, err := io.WriteString(p.out, prompt); err != nil {
 		return "", err
