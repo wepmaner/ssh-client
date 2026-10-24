@@ -2,4 +2,8 @@
 .superpowers/
 build/bin/
 frontend/node_modules/
-frontend/dist/
+frontend/dist/*
+!frontend/dist/gitkeep
+node_modules/
+!build/appicon.png
+frontend/package.json.md5

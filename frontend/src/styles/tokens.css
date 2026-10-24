@@ -1,0 +1,46 @@
+:root {
+  --bg: #1a1d22;
+  --titlebar: #121417;
+  --sidebar: #16181d;
+  --card: #22262d;
+  --terminal: #0f1114;
+  --border: #2a2f37;
+  --text: #e8eaed;
+  --muted: #a3acb8;
+  --accent: #4f8ff7;
+  --ok: #3fb950;
+  --danger: #c42b1c;
+
+  --radius-control: 4px;
+  --radius-card: 6px;
+  --radius-dialog: 8px;
+
+  --control-height: 32px;
+  --titlebar-height: 40px;
+  --caption-button-width: 46px;
+
+  --font-ui: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  overflow: hidden;
+  user-select: none;
+}
+
+#app {
+  height: 100%;
+}

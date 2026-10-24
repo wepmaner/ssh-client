@@ -1,0 +1,14 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - gosec
+  settings:
+    gosec:
+      severity: low
+      confidence: low
+      config:
+        global:
+          # G404 (math/rand) is a hard error; no exclusions anywhere, including internal/.
+          audit: true
