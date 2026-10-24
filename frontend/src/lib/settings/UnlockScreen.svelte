@@ -2,6 +2,7 @@
   import { VaultUnlock, errorText } from '../api'
   import Button from '../ui/Button.svelte'
   import Input from '../ui/Input.svelte'
+  import { vault } from '../stores.svelte'
 
   let { onunlocked }: { onunlocked: () => void } = $props()
 
@@ -42,10 +43,15 @@
       <path d="M3 4.5 7 8l-4 3.5" />
       <path d="M8.5 12H13" />
     </svg>
-    <h1>Хранилище зашифровано</h1>
-    <Input type="password" bind:value={pw} bind:el={field} placeholder="Пароль" aria-label="Пароль" autocomplete="current-password" />
-    <p class="error" role="alert">{error}</p>
-    <Button variant="primary" type="submit" disabled={busy} style="width:100%">Разблокировать</Button>
+    {#if vault.has_password}
+      <h1>Хранилище зашифровано</h1>
+      <Input type="password" bind:value={pw} bind:el={field} placeholder="Пароль" aria-label="Пароль" autocomplete="current-password" />
+      <p class="error" role="alert">{error}</p>
+      <Button variant="primary" type="submit" disabled={busy} style="width:100%">Разблокировать</Button>
+    {:else}
+      <h1>Хранилище недоступно</h1>
+      <p class="error" role="alert">{vault.error}</p>
+    {/if}
   </form>
 </main>
 

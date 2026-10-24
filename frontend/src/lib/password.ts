@@ -1,10 +1,11 @@
 /** Strength of a password as the number of filled meter segments, 0..4. */
 export function passwordStrength(pw: string): 0 | 1 | 2 | 3 | 4 {
+  const len = [...pw].length
   const hasLetter = /\p{L}/u.test(pw)
   const hasDigit = /\d/.test(pw)
   const hasSymbol = /[^\p{L}\d\s]/u.test(pw)
   const mixedCase = /\p{Ll}/u.test(pw) && /\p{Lu}/u.test(pw)
-  const checks = [pw.length >= 8, pw.length >= 12, hasLetter && hasDigit, hasSymbol || mixedCase]
+  const checks = [len >= 8, len >= 12, hasLetter && hasDigit, hasSymbol || mixedCase]
   return checks.filter(Boolean).length as 0 | 1 | 2 | 3 | 4
 }
 

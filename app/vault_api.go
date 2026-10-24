@@ -53,7 +53,9 @@ func (a *App) VaultUnlock(password string) error {
 	if a.vault == nil {
 		return errVaultMissing
 	}
-	if err := a.vault.Unlock([]byte(password)); err != nil {
+	pw := []byte(password)
+	defer clear(pw)
+	if err := a.vault.Unlock(pw); err != nil {
 		if errors.Is(err, store.ErrWrongPassword) {
 			return errWrongPassword
 		}
@@ -73,7 +75,9 @@ func (a *App) VaultSetPassword(password string) error {
 	if utf8.RuneCountInString(password) < minPasswordLen {
 		return errPasswordShort
 	}
-	return a.vault.SetPassword([]byte(password))
+	pw := []byte(password)
+	defer clear(pw)
+	return a.vault.SetPassword(pw)
 }
 
 // VaultRemovePassword verifies the password against the file and returns the
@@ -90,7 +94,9 @@ func (a *App) VaultRemovePassword(password string) error {
 	if err != nil {
 		return err
 	}
-	if err := probe.Unlock([]byte(password)); err != nil {
+	pw := []byte(password)
+	defer clear(pw)
+	if err := probe.Unlock(pw); err != nil {
 		if errors.Is(err, store.ErrWrongPassword) {
 			return errWrongPassword
 		}

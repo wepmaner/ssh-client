@@ -20,7 +20,7 @@
 
   const strength = $derived(passwordStrength(pw))
   const match = $derived(pw === again)
-  const valid = $derived(pw.length >= 8 && match)
+  const valid = $derived([...pw].length >= 8 && match)
 
   $effect(() => {
     if (!open) return
