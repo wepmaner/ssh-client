@@ -12,12 +12,14 @@ func blobOf(b []byte) windows.DataBlob {
 		return windows.DataBlob{}
 	}
 	// DPAPI inputs are small (keys), so the length always fits uint32.
-	return windows.DataBlob{Size: uint32(len(b)), Data: &b[0]} //nolint:gosec
+	return windows.DataBlob{Size: uint32(len(b)), Data: &b[0]} //nolint:gosec // G115: DPAPI inputs are small, length fits uint32
 }
 
 func takeBlob(out windows.DataBlob) []byte {
 	res := make([]byte, out.Size)
-	copy(res, unsafe.Slice(out.Data, out.Size))                        //nolint:gosec // G103: reading the DPAPI-owned output buffer
+	src := unsafe.Slice(out.Data, out.Size) //nolint:gosec // G103: reading the DPAPI-owned output buffer
+	copy(res, src)
+	clear(src)                                                         // do not leave plaintext in freed memory
 	_, _ = windows.LocalFree(windows.Handle(unsafe.Pointer(out.Data))) //nolint:gosec // G103,G104: nothing to do if free fails
 	return res
 }

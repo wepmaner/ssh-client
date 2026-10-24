@@ -51,6 +51,9 @@ func NewDEK() ([]byte, error) {
 }
 
 func newGCM(key []byte) (cipher.AEAD, error) {
+	if len(key) != keyLen {
+		return nil, errors.New("store: key must be 32 bytes")
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err

@@ -55,11 +55,18 @@ func TestEnvelopeDPAPIWithoutKDF(t *testing.T) {
 
 func TestUnmarshalEnvelopeCorrupt(t *testing.T) {
 	mut := map[string]func(*store.Envelope){
-		"version": func(e *store.Envelope) { e.Version = 2 },
-		"wrap":    func(e *store.Envelope) { e.Wrap = "rot13" },
-		"data":    func(e *store.Envelope) { e.Data = nil },
-		"nonce":   func(e *store.Envelope) { e.Nonce = nil },
-		"kdf":     func(e *store.Envelope) { e.KDF = nil },
+		"version":  func(e *store.Envelope) { e.Version = 2 },
+		"wrap":     func(e *store.Envelope) { e.Wrap = "rot13" },
+		"data":     func(e *store.Envelope) { e.Data = nil },
+		"nonce":    func(e *store.Envelope) { e.Nonce = nil },
+		"kdf":      func(e *store.Envelope) { e.KDF = nil },
+		"salt":     func(e *store.Envelope) { e.KDF.Salt = []byte("short") },
+		"time":     func(e *store.Envelope) { e.KDF.Time = 0 },
+		"threads":  func(e *store.Envelope) { e.KDF.Threads = 0 },
+		"memlow":   func(e *store.Envelope) { e.KDF.MemoryKiB = 1 },
+		"memhigh":  func(e *store.Envelope) { e.KDF.MemoryKiB = 1<<20 + 1 },
+		"dekenc":   func(e *store.Envelope) { e.DEKEnc = nil },
+		"deknonce": func(e *store.Envelope) { e.DEKNonce = []byte("x") },
 	}
 	for name, f := range mut {
 		e := pwEnvelope()

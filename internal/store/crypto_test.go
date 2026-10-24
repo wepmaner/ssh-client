@@ -93,3 +93,28 @@ func TestKDFParamsDefaults(t *testing.T) {
 		t.Fatal("salt must be random")
 	}
 }
+
+func TestSealOpenRejectNon256Key(t *testing.T) {
+	for _, n := range []int{16, 24, 31, 33} {
+		if _, _, err := store.Seal(make([]byte, n), []byte("x")); err == nil {
+			t.Errorf("Seal accepted %d-byte key", n)
+		}
+		if _, err := store.Open(make([]byte, n), make([]byte, 12), []byte("x")); err == nil {
+			t.Errorf("Open accepted %d-byte key", n)
+		}
+	}
+}
+
+func TestOpenRejectsBadNonceLength(t *testing.T) {
+	key, err := store.NewDEK()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, c, err := store.Seal(key, []byte("x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Open(key, make([]byte, 5), c); err == nil {
+		t.Fatal("bad nonce length must fail")
+	}
+}
