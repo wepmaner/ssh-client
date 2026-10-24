@@ -39,6 +39,10 @@ const (
 // Время, пока пользователь отвечает на вопросы в терминале, не считается. Переменная — для тестов.
 var handshakeTimeout = 10 * time.Second
 
+// maxHandshakeTime — общий предел рукопожатия вместе с ответами пользователя, чтобы сервер
+// не мог бесконечно держать соединение вопросами. Переменная — для тестов.
+var maxHandshakeTime = 10 * time.Minute
+
 // userError — готовое сообщение для пользователя; причина доступна через errors.Is/As.
 type userError struct {
 	msg   string
@@ -75,17 +79,19 @@ func Dial(ctx context.Context, t Target, p *Prompter, kh *KnownHosts) (*ssh.Clie
 		HostKeyCallback: d.hostKeyCallback(kh.Callback(p)),
 		Auth:            auth,
 		AuthCallback:    d.abortIfCancelled,
-		Timeout:         dialTimeout,
 	}
-	stop := context.AfterFunc(ctx, func() { _ = conn.Close() }) //nolint:gosec // G104: closing aborts the handshake; its error is irrelevant
+	// Общий предел рукопожатия вместе с вопросами: сервер не может держать соединение бесконечно.
+	hctx, cancel := context.WithTimeout(ctx, maxHandshakeTime)
+	defer cancel()
+	stop := context.AfterFunc(hctx, func() { _ = conn.Close() }) //nolint:gosec // G104: closing aborts the handshake; its error is irrelevant
 	d.armDeadline()
 	c, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
-	if !stop() { // ctx завершился во время рукопожатия и закрыл соединение
+	if !stop() { // ctx или общий предел истёк во время рукопожатия и закрыл соединение
 		if err == nil {
 			_ = c.Close() //nolint:gosec // G104: best-effort cleanup, ctx error is reported
 		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, timeoutError(ctx.Err())
+		if errors.Is(hctx.Err(), context.DeadlineExceeded) {
+			return nil, timeoutError(hctx.Err())
 		}
 		return nil, fmt.Errorf("подключение к %s: %w", addr, ctx.Err())
 	}
@@ -151,10 +157,14 @@ func (d *dialState) prompting(f func() error) error {
 	return err
 }
 
-func (d *dialState) abortIfCancelled(*ssh.ClientAuthContext) (ssh.AuthMethod, error) {
+func (d *dialState) isCancelled() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.cancelled {
+	return d.cancelled
+}
+
+func (d *dialState) abortIfCancelled(*ssh.ClientAuthContext) (ssh.AuthMethod, error) {
+	if d.isCancelled() {
 		return nil, ErrCancelled
 	}
 	return nil, nil
@@ -184,12 +194,18 @@ func (d *dialState) classify(addr string, err error) error {
 		return hostKeyErr
 	case isTimeout(err) || (!deadline.IsZero() && !time.Now().Before(deadline)):
 		return timeoutError(err)
-	case strings.Contains(err.Error(), "unable to authenticate") ||
-		strings.Contains(err.Error(), "too many authentication attempts"):
-		// x/crypto/ssh не даёт типизированной ошибки отказа в доступе, только текст.
-		return &userError{msg: msgAuthDenied, cause: err}
+	case isAuthDenied(err):
+		return &userError{msg: msgAuthDenied, cause: errors.Join(ErrAuthDenied, err)}
 	}
 	return fmt.Errorf("подключение к %s: %w", addr, err)
+}
+
+// isAuthDenied распознаёт отказ в доступе. x/crypto/ssh не даёт типизированной ошибки, только текст:
+// клиент сам исчерпал методы ("unable to authenticate", "too many authentication attempts") или сервер
+// разорвал соединение после MaxAuthTries ("Too many authentication failures" у OpenSSH и x/crypto).
+func isAuthDenied(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unable to authenticate") || strings.Contains(msg, "too many authentication")
 }
 
 // authMethods строит методы в порядке: ключ, keyboard-interactive, пароль.
@@ -226,7 +242,10 @@ func (d *dialState) passphraseSigners(k *model.Key) func() ([]ssh.Signer, error)
 			if err != nil {
 				return nil, err
 			}
-			signer, err := ssh.ParsePrivateKeyWithPassphrase(k.PrivatePEM, []byte(pass))
+			// Копию фразы затираем сразу; строку pass Go затереть не даёт, её заберёт сборщик мусора.
+			pb := []byte(pass)
+			signer, err := ssh.ParsePrivateKeyWithPassphrase(k.PrivatePEM, pb)
+			clear(pb)
 			if err == nil {
 				return []ssh.Signer{signer}, nil
 			}
@@ -239,12 +258,28 @@ func (d *dialState) passphraseSigners(k *model.Key) func() ([]ssh.Signer, error)
 }
 
 func (d *dialState) keyboardInteractive(_, instruction string, questions []string, echos []bool) ([]string, error) {
-	answers := make([]string, len(questions))
-	err := d.prompting(func() error {
+	printInstruction := func() error {
 		if instruction = strings.TrimRight(instruction, "\r\n"); instruction != "" {
 			if _, err := io.WriteString(d.p.out, terminalText(instruction)+"\r\n"); err != nil {
 				return err
 			}
+		}
+		return nil
+	}
+	if len(questions) == 0 {
+		// Раунд без вопросов: ждать пользователя не нужно, срок ожидания сервера не приостанавливаем.
+		if d.isCancelled() {
+			return nil, ErrCancelled
+		}
+		if err := printInstruction(); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+	answers := make([]string, len(questions))
+	err := d.prompting(func() error {
+		if err := printInstruction(); err != nil {
+			return err
 		}
 		for i, q := range questions {
 			ask := d.p.AskSecret

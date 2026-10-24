@@ -153,3 +153,13 @@ func TestPrompterPendingDropsLFAfterCR(t *testing.T) {
 		t.Fatalf("Pending = %q", got)
 	}
 }
+
+func TestPrompterPendingOnlySkippedLF(t *testing.T) {
+	p, _ := newTestPrompter("pw\r\n")
+	if _, err := p.AskSecret(""); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Pending(); got != nil {
+		t.Fatalf("Pending = %q, want nil", got)
+	}
+}

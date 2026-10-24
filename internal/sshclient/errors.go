@@ -10,4 +10,6 @@ var (
 	ErrHostKeyChanged = errors.New("ключ сервера изменился")
 	// ErrTimeout означает превышение времени ожидания.
 	ErrTimeout = errors.New("превышено время ожидания")
+	// ErrAuthDenied означает, что сервер не принял ни ключ, ни ответы пользователя.
+	ErrAuthDenied = errors.New("доступ запрещён")
 )

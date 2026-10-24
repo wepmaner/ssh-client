@@ -59,9 +59,12 @@ func (p *Prompter) Pending() []byte {
 	}
 	if p.skipLF {
 		p.skipLF = false
-		if len(b) > 0 && b[0] == '\n' {
+		if b[0] == '\n' {
 			b = b[1:]
 		}
+	}
+	if len(b) == 0 {
+		return nil
 	}
 	return b
 }

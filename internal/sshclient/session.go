@@ -116,6 +116,8 @@ func (s *Session) Resize(cols, rows int) error {
 func (s *Session) Wait() error { return s.sess.Wait() }
 
 // Close закрывает сессию; повторные вызовы ничего не делают и возвращают nil.
+// Насосы перестают отдавать данные сразу, но канал Output закрывается, только когда сервер
+// подтвердит закрытие канала (CLOSE) или оборвётся соединение; при зависшем сервере закройте *ssh.Client.
 func (s *Session) Close() error {
 	var err error
 	s.closeOnce.Do(func() {

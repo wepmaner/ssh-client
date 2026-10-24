@@ -121,7 +121,7 @@ func TestDialFallsBackToPassword(t *testing.T) {
 
 func TestDialWrongPasswordRetriesThenDenied(t *testing.T) {
 	_, out, err := dialTest(t, testServerOpts{Password: "s3cret"}, nil, strings.NewReader("a\nb\nc\n"))
-	if err == nil || err.Error() != "Доступ запрещён: сервер отклонил ключ и пароль" {
+	if err == nil || err.Error() != "Доступ запрещён: сервер отклонил ключ и пароль" || !errors.Is(err, ErrAuthDenied) {
 		t.Fatalf("err = %v", err)
 	}
 	if n := strings.Count(out.String(), "Пароль alice@127.0.0.1: "); n != 3 {
@@ -258,9 +258,49 @@ func (s *slowReader) Read(b []byte) (int, error) {
 }
 
 func TestDialPromptDoesNotCountTowardsTimeout(t *testing.T) {
-	setHandshakeTimeout(t, 300*time.Millisecond)
-	_, _, err := dialTest(t, testServerOpts{Password: "s3cret"}, nil, &slowReader{delay: 700 * time.Millisecond, r: strings.NewReader("s3cret\n")})
+	setHandshakeTimeout(t, time.Second)
+	_, _, err := dialTest(t, testServerOpts{Password: "s3cret"}, nil, &slowReader{delay: 2 * time.Second, r: strings.NewReader("s3cret\n")})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDialServerDisconnectsAfterMaxAuthTries(t *testing.T) {
+	// Сервер рвёт соединение после двух неудач раньше, чем клиент исчерпает свои попытки.
+	key, _ := testClientKey(t, "work", "")
+	_, _, err := dialTest(t, testServerOpts{Password: "s3cret", MaxAuthTries: 2}, key, strings.NewReader("a\nb\nc\n"))
+	if err == nil || err.Error() != "Доступ запрещён: сервер отклонил ключ и пароль" || !errors.Is(err, ErrAuthDenied) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDialKeyboardInteractiveWithoutQuestionsKeepsDeadline(t *testing.T) {
+	// Раунд keyboard-interactive без вопросов не должен приостанавливать срок ожидания сервера.
+	d := &dialState{p: NewPrompter(io.Discard, strings.NewReader(""))}
+	c1, c2 := net.Pipe()
+	t.Cleanup(func() { ignoreErr(c1.Close()); ignoreErr(c2.Close()) })
+	d.conn = c1
+	d.armDeadline()
+	before := d.deadline
+	answers, err := d.keyboardInteractive("", "Добро пожаловать", nil, nil)
+	if err != nil || len(answers) != 0 {
+		t.Fatalf("answers %q, err %v", answers, err)
+	}
+	if !d.deadline.Equal(before) {
+		t.Fatalf("deadline changed: %v -> %v", before, d.deadline)
+	}
+}
+
+func TestDialHandshakeWallTimeCapped(t *testing.T) {
+	old := maxHandshakeTime
+	maxHandshakeTime = 300 * time.Millisecond
+	t.Cleanup(func() { maxHandshakeTime = old })
+	start := time.Now()
+	_, _, err := dialTest(t, testServerOpts{Password: "s3cret"}, nil, &slowReader{delay: time.Second, r: strings.NewReader("s3cret\n")})
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("took %v", d)
 	}
 }

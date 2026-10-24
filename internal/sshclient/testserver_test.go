@@ -16,10 +16,11 @@ import (
 
 // testServerOpts настраивает тестовый SSH-сервер.
 type testServerOpts struct {
-	AcceptKey ssh.PublicKey // единственный принимаемый публичный ключ; nil — все ключи отклоняются
-	Password  string        // принимаемый пароль; "" — вход по паролю не предлагается
-	KBIAnswer string        // ожидаемый ответ keyboard-interactive; "" — метод не предлагается
-	ExitCode  int           // != 0: shell печатает "ok\r\n", сразу завершается с этим кодом и закрывает канал
+	AcceptKey    ssh.PublicKey // единственный принимаемый публичный ключ; nil — все ключи отклоняются
+	Password     string        // принимаемый пароль; "" — вход по паролю не предлагается
+	KBIAnswer    string        // ожидаемый ответ keyboard-interactive; "" — метод не предлагается
+	MaxAuthTries int           // ServerConfig.MaxAuthTries; 0 — значение x/crypto по умолчанию (6)
+	ExitCode     int           // != 0: shell печатает "ok\r\n", сразу завершается с этим кодом и закрывает канал
 
 	OnPty          func(term string, cols, rows uint32) // вызывается на pty-req
 	OnWindowChange func(cols, rows uint32)              // вызывается на window-change
@@ -88,6 +89,7 @@ func startTestServer(t *testing.T, opts testServerOpts) (addr string, hostKey ss
 			return nil, errors.New("неверный код")
 		}
 	}
+	cfg.MaxAuthTries = opts.MaxAuthTries
 	cfg.AddHostKey(signer)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
