@@ -86,6 +86,19 @@ func (a *App) VaultRemovePassword(password string) error {
 	if !a.storeUnlocked() {
 		return errVaultLocked
 	}
+	if err := a.verifyPassword(password); err != nil {
+		return err
+	}
+	return a.vault.RemovePassword()
+}
+
+// verifyPassword checks the password against the vault file with a separate
+// probe, so a wrong value never touches the live vault. A vault without a
+// password accepts any input.
+func (a *App) verifyPassword(password string) error {
+	if !a.vault.HasPassword() {
+		return nil
+	}
 	dir, err := appdir.Dir()
 	if err != nil {
 		return err
@@ -102,7 +115,7 @@ func (a *App) VaultRemovePassword(password string) error {
 		}
 		return err
 	}
-	return a.vault.RemovePassword()
+	return nil
 }
 
 // VaultCounts returns how many keys and hosts are stored.
