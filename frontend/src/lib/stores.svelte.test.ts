@@ -9,6 +9,7 @@ vi.mock('./api', async () => {
   const models = await import('../../wailsjs/go/models')
   return {
     GetSettings: getSettings,
+    HostsListTemp: () => Promise.resolve([]),
     KeysList: keysList,
     VaultState: vaultState,
     errorText: String,

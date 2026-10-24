@@ -6,6 +6,10 @@ export function GetSettings() {
   return window['go']['app']['App']['GetSettings']();
 }
 
+export function HostsListTemp() {
+  return window['go']['app']['App']['HostsListTemp']();
+}
+
 export function KeyCopyPublic(arg1) {
   return window['go']['app']['App']['KeyCopyPublic'](arg1);
 }
@@ -48,6 +52,26 @@ export function KeysList() {
 
 export function SaveSettings(arg1) {
   return window['go']['app']['App']['SaveSettings'](arg1);
+}
+
+export function SessionClose(arg1) {
+  return window['go']['app']['App']['SessionClose'](arg1);
+}
+
+export function SessionList() {
+  return window['go']['app']['App']['SessionList']();
+}
+
+export function SessionOpen(arg1, arg2, arg3) {
+  return window['go']['app']['App']['SessionOpen'](arg1, arg2, arg3);
+}
+
+export function SessionResize(arg1, arg2, arg3) {
+  return window['go']['app']['App']['SessionResize'](arg1, arg2, arg3);
+}
+
+export function SessionWrite(arg1, arg2) {
+  return window['go']['app']['App']['SessionWrite'](arg1, arg2);
 }
 
 export function VaultCounts() {

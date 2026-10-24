@@ -1,4 +1,4 @@
-import { GetSettings, KeysList, VaultState, app, errorText, model } from './api'
+import { GetSettings, HostsListTemp, KeysList, VaultState, app, errorText, model } from './api'
 
 export const vault = $state({
   ready: false,
@@ -15,13 +15,25 @@ export const settings = $state<model.Settings>(plain(model.Settings.createFrom({
 
 export type View = 'hosts' | 'keys' | 'forwards' | 'settings'
 
+/**
+ * view is the section of the home tab; activeTab says whether the home tab or the selected
+ * session tab is in front. editHostId asks the hosts screen (Task 11) to open that host.
+ */
 // TODO(Task 11): default view returns to 'hosts' once the hosts screen exists.
-export const ui = $state<{ view: View }>({ view: 'keys' })
+export const ui = $state<{ view: View; activeTab: 'home' | 'session'; editHostId: string }>({
+  view: 'keys',
+  activeTab: 'home',
+  editHostId: '',
+})
 
 export const keys = $state<app.KeyDTO[]>([])
 
-/** Hosts arrive with the hosts API in Task 11; key detail resolves names against this. */
-export const hosts = $state<{ id: string; name: string }[]>([])
+/** Saved hosts. TEMP(Task 11): filled from HostsListTemp until the hosts API lands. */
+export const hosts = $state<app.HostDTO[]>([])
+
+export async function refreshHosts(): Promise<void> {
+  hosts.splice(0, hosts.length, ...plain(await HostsListTemp()))
+}
 
 export const toastState = $state({ message: '' })
 let toastTimer: ReturnType<typeof setTimeout> | undefined
@@ -52,6 +64,7 @@ export async function refreshAll(): Promise<void> {
     if (!vault.locked && !vault.corrupt) {
       await refreshSettings()
       await refreshKeys()
+      await refreshHosts()
     }
   } catch (e) {
     Object.assign(vault, {

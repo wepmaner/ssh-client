@@ -1,6 +1,7 @@
 // Thin typed layer over the generated Wails bindings.
 export {
   GetSettings,
+  HostsListTemp,
   KeyCopyPublic,
   KeyDelete,
   KeyExport,
@@ -12,6 +13,11 @@ export {
   KeyRename,
   KeysList,
   SaveSettings,
+  SessionClose,
+  SessionList,
+  SessionOpen,
+  SessionResize,
+  SessionWrite,
   VaultCounts,
   VaultRemovePassword,
   VaultResetCorrupt,

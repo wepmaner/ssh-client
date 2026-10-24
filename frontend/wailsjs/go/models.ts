@@ -1,5 +1,27 @@
 export namespace app {
 	
+	export class HostDTO {
+	    id: string;
+	    name: string;
+	    address: string;
+	    port: number;
+	    user: string;
+	    key_name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new HostDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.address = source["address"];
+	        this.port = source["port"];
+	        this.user = source["user"];
+	        this.key_name = source["key_name"];
+	    }
+	}
 	export class KeyDTO {
 	    id: string;
 	    name: string;
@@ -26,6 +48,26 @@ export namespace app {
 	        this.source = source["source"];
 	        this.created_at = source["created_at"];
 	        this.host_ids = source["host_ids"];
+	    }
+	}
+	export class SessionDTO {
+	    id: string;
+	    host_id: string;
+	    host_name: string;
+	    state: string;
+	    latency_ms: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SessionDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.host_id = source["host_id"];
+	        this.host_name = source["host_name"];
+	        this.state = source["state"];
+	        this.latency_ms = source["latency_ms"];
 	    }
 	}
 	export class VaultCountsDTO {

@@ -1,0 +1,183 @@
+<script lang="ts">
+  import { FitAddon } from '@xterm/addon-fit'
+  import { SearchAddon } from '@xterm/addon-search'
+  import { WebglAddon } from '@xterm/addon-webgl'
+  import { Terminal, type ITheme } from '@xterm/xterm'
+  import '@xterm/xterm/css/xterm.css'
+  import { onMount } from 'svelte'
+  import { EventsOn, SessionResize, SessionWrite } from '../api'
+  import { sessions } from '../sessions.svelte'
+  import { settings } from '../stores.svelte'
+  import { decodeBase64, encodeUtf8Base64 } from './base64'
+  import { orderedSender } from './input'
+  import { copyText, isAppShortcut, readClipboard, terminalAction } from './keys'
+  import SearchBar from './SearchBar.svelte'
+
+  let { sessionId, visible }: { sessionId: string; visible: boolean } = $props()
+
+  const theme: ITheme = {
+    background: '#0f1114',
+    foreground: '#d8dde3',
+    cursor: '#d8dde3',
+    cursorAccent: '#0f1114',
+    selectionBackground: 'rgba(79,143,247,.35)',
+    black: '#1a1d22',
+    red: '#f08c7d',
+    green: '#7ee787',
+    yellow: '#e3b341',
+    blue: '#79c0ff',
+    magenta: '#c9a3ff',
+    cyan: '#7fdbdb',
+    white: '#e8eaed',
+    brightBlack: '#6f7a87',
+    brightRed: '#f5a89c',
+    brightGreen: '#a2f0a8',
+    brightYellow: '#f0c966',
+    brightBlue: '#a1d3ff',
+    brightMagenta: '#dcc4ff',
+    brightCyan: '#a3e8e8',
+    brightWhite: '#ffffff',
+  }
+
+  const fontFamily = (name: string) => (name ? `"${name.replaceAll('"', '')}", ` : '') + 'Consolas, monospace'
+
+  let host: HTMLDivElement
+  let term = $state<Terminal>()
+  let search = $state<SearchAddon>()
+  let fit: FitAddon | undefined
+  const searchOpen = $derived(sessions.searchId === sessionId)
+
+  const send = orderedSender((b64) => SessionWrite(sessionId, b64))
+
+  function setSize(cols: number, rows: number): void {
+    const tab = sessions.list.find((t) => t.id === sessionId)
+    if (tab) Object.assign(tab, { cols, rows })
+    void SessionResize(sessionId, cols, rows).catch(() => {})
+  }
+
+  /** Fits the terminal to its box; a hidden view (display:none) has no size and keeps its own. */
+  function refit(): void {
+    if (fit && host.clientWidth > 0 && host.clientHeight > 0) fit.fit()
+  }
+
+  async function paste(): Promise<void> {
+    const text = await readClipboard()
+    if (text) term?.paste(text)
+  }
+
+  function toggleSearch(): void {
+    sessions.searchId = searchOpen ? '' : sessionId
+    if (!searchOpen) term?.focus()
+  }
+
+  onMount(() => {
+    const t = new Terminal({
+      theme,
+      fontFamily: fontFamily(settings.terminal_font),
+      fontSize: settings.terminal_size || 13,
+      cursorBlink: settings.blink_cursor,
+      allowProposedApi: true,
+      scrollback: 10000,
+    })
+    fit = new FitAddon()
+    const s = new SearchAddon()
+    t.loadAddon(fit)
+    t.loadAddon(s)
+    t.open(host)
+    if (settings.webgl) {
+      try {
+        const gl = new WebglAddon()
+        gl.onContextLoss(() => gl.dispose()) // falls back to the DOM renderer
+        t.loadAddon(gl)
+      } catch {
+        // No WebGL2 context: xterm keeps its DOM renderer.
+      }
+    }
+
+    t.attachCustomKeyEventHandler((e) => {
+      if (!isAppShortcut(e)) return true
+      const action = terminalAction(e)
+      if (action === 'copy') void copyText(t.getSelection())
+      if (action === 'paste') void paste()
+      if (action === 'search') toggleSearch()
+      if (action) e.preventDefault()
+      return false // tab shortcuts bubble to the window handler in TitleBar
+    })
+    const subs = [
+      t.onData((d) => send(encodeUtf8Base64(d))),
+      t.onBinary((d) => send(btoa(d))),
+      t.onResize(({ cols, rows }) => setSize(cols, rows)),
+      t.onSelectionChange(() => {
+        if (settings.copy_on_select && t.hasSelection()) void copyText(t.getSelection())
+      }),
+    ]
+    const offData = EventsOn('term:data:' + sessionId, (b64: string) => t.write(decodeBase64(b64)))
+
+    term = t
+    search = s
+    refit()
+    // The first resize also tells Go the view listens: held output is released after it.
+    setSize(t.cols, t.rows)
+    if (visible) t.focus()
+
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const ro = new ResizeObserver(() => {
+      clearTimeout(timer)
+      timer = setTimeout(refit, 50)
+    })
+    ro.observe(host)
+
+    return () => {
+      clearTimeout(timer)
+      ro.disconnect()
+      offData()
+      for (const d of subs) d.dispose()
+      t.dispose()
+      term = undefined
+    }
+  })
+
+  // Settings apply to open terminals at once.
+  $effect(() => {
+    if (!term) return
+    term.options.fontFamily = fontFamily(settings.terminal_font)
+    term.options.fontSize = settings.terminal_size || 13
+    term.options.cursorBlink = settings.blink_cursor
+    refit()
+  })
+
+  $effect(() => {
+    if (visible) term?.focus()
+  })
+
+  function closeSearch(): void {
+    sessions.searchId = ''
+    term?.focus()
+  }
+
+  function oncontextmenu(e: MouseEvent): void {
+    e.preventDefault()
+    void paste()
+  }
+</script>
+
+<div class="terminal" {oncontextmenu} role="presentation">
+  <div class="xterm-host" bind:this={host}></div>
+  {#if searchOpen && search}
+    <SearchBar {search} onclose={closeSearch} />
+  {/if}
+</div>
+
+<style>
+  .terminal {
+    position: relative;
+    height: 100%;
+    padding: 12px 18px;
+    background: var(--terminal);
+    user-select: text;
+  }
+  .xterm-host {
+    width: 100%;
+    height: 100%;
+  }
+</style>

@@ -5,6 +5,8 @@ import {app} from '../models';
 
 export function GetSettings():Promise<model.Settings>;
 
+export function HostsListTemp():Promise<Array<app.HostDTO>>;
+
 export function KeyCopyPublic(arg1:string):Promise<void>;
 
 export function KeyDelete(arg1:string):Promise<void>;
@@ -26,6 +28,16 @@ export function KeyRename(arg1:string,arg2:string):Promise<void>;
 export function KeysList():Promise<Array<app.KeyDTO>>;
 
 export function SaveSettings(arg1:model.Settings):Promise<void>;
+
+export function SessionClose(arg1:string):Promise<void>;
+
+export function SessionList():Promise<Array<app.SessionDTO>>;
+
+export function SessionOpen(arg1:string,arg2:number,arg3:number):Promise<string>;
+
+export function SessionResize(arg1:string,arg2:number,arg3:number):Promise<void>;
+
+export function SessionWrite(arg1:string,arg2:string):Promise<void>;
 
 export function VaultCounts():Promise<app.VaultCountsDTO>;
 
