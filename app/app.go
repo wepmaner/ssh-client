@@ -30,8 +30,11 @@ func New() *App {
 const vaultFile = "vault.json"
 
 // VaultResetCorrupt moves a damaged vault aside as vault.json.corrupt and
-// starts a fresh one.
+// starts a fresh one. It refuses unless the vault failed to open as corrupt.
 func (a *App) VaultResetCorrupt() error {
+	if !errors.Is(a.vaultErr, store.ErrCorrupt) {
+		return errors.New("vault is not corrupt")
+	}
 	dir, err := appdir.Dir()
 	if err != nil {
 		return err

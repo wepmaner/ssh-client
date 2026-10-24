@@ -238,7 +238,10 @@ func TestRecoverCorrupt(t *testing.T) {
 	if _, err := RecoverCorrupt(path); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = os.ReadFile(path + ".corrupt") //nolint:gosec // G304: test temp path
+	got, err = os.ReadFile(path + ".corrupt") //nolint:gosec // G304: test temp path
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(got) != "garbage2" {
 		t.Fatalf("corrupt copy = %q", got)
 	}
@@ -297,5 +300,23 @@ func TestCorrectPasswordCorruptDataIsNotWrongPassword(t *testing.T) {
 	}
 	if !v2.Locked() {
 		t.Fatal("must stay locked")
+	}
+}
+
+func TestRecoverCorruptWithoutVaultKeepsOlderCorrupt(t *testing.T) {
+	path := newVaultPath(t)
+	if err := os.WriteFile(path+".corrupt", []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	v, err := RecoverCorrupt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Locked() {
+		t.Fatal("fresh vault must be unlocked")
+	}
+	got, err := os.ReadFile(path + ".corrupt") //nolint:gosec // G304: test temp path
+	if err != nil || string(got) != "old" {
+		t.Fatalf("older corrupt copy = %q, %v", got, err)
 	}
 }

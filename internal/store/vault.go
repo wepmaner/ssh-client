@@ -49,13 +49,14 @@ func OpenVault(path string) (*Vault, error) {
 }
 
 // RecoverCorrupt moves a damaged vault aside as <path>.corrupt (replacing an
-// older one) and opens a fresh DPAPI vault at path.
+// older one; nothing is moved when path is absent) and opens a fresh DPAPI vault at path.
 func RecoverCorrupt(path string) (*Vault, error) {
-	if err := os.Remove(path + ".corrupt"); err != nil && !errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: path comes from appdir.Dir() or the caller
-		return nil, fmt.Errorf("remove old corrupt copy: %w", err)
-	}
-	if err := os.Rename(path, path+".corrupt"); err != nil && !errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: path comes from appdir.Dir() or the caller
-		return nil, fmt.Errorf("move corrupt vault: %w", err)
+	if _, err := os.Stat(path); err == nil { //nolint:gosec // G703: path comes from appdir.Dir() or the caller
+		if err := os.Rename(path, path+".corrupt"); err != nil { //nolint:gosec // G703: path comes from appdir.Dir() or the caller
+			return nil, fmt.Errorf("move corrupt vault: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("stat vault: %w", err)
 	}
 	return OpenVault(path)
 }
