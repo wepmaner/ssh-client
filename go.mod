@@ -3,6 +3,8 @@ module sshclient
 go 1.25.0
 
 require (
+	github.com/kayrus/putty v1.0.5
+	github.com/liornabat/putty v0.0.0-20230320110606-dd06a463f84f
 	github.com/wailsapp/wails/v2 v2.16.0
 	golang.org/x/crypto v0.53.0
 	golang.org/x/sys v0.46.0
