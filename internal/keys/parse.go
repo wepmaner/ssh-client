@@ -25,6 +25,8 @@ var (
 	ErrWrongPassphrase = errors.New("keys: wrong passphrase")
 	// ErrUnsupportedKeyType means the key is neither ed25519 nor RSA.
 	ErrUnsupportedKeyType = errors.New("keys: unsupported key type")
+	// ErrInvalidKey means the key material is internally inconsistent.
+	ErrInvalidKey = errors.New("keys: invalid key")
 )
 
 const (
@@ -84,6 +86,9 @@ func build(raw any, comment, source string) (model.Key, error) {
 	var kind string
 	switch v := raw.(type) {
 	case *rsa.PrivateKey:
+		if err := v.Validate(); err != nil {
+			return model.Key{}, fmt.Errorf("%w: %v", ErrInvalidKey, err)
+		}
 		v.Precompute()
 		priv, kind = v, "rsa"
 	case ed25519.PrivateKey:
@@ -95,6 +100,7 @@ func build(raw any, comment, source string) (model.Key, error) {
 	default:
 		return model.Key{}, fmt.Errorf("%w: %T", ErrUnsupportedKeyType, raw)
 	}
+	comment = sanitizeComment(comment)
 	signer, err := ssh.NewSignerFromKey(priv)
 	if err != nil {
 		return model.Key{}, fmt.Errorf("keys: signer: %w", err)
@@ -185,4 +191,15 @@ func (r *wireReader) string() string {
 	s := string(r.b[:n])
 	r.b = r.b[n:]
 	return s
+}
+
+// sanitizeComment replaces control characters (including newlines) with
+// spaces so the comment can never break out of a one-line public key.
+func sanitizeComment(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
 }

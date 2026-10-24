@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,8 +75,8 @@ func TestGenerateRSAIs4096(t *testing.T) {
 }
 
 func TestGenerateUnknownKind(t *testing.T) {
-	if _, err := Generate("dsa", ""); err == nil {
-		t.Fatal("expected error")
+	if _, err := Generate("dsa", ""); !errors.Is(err, ErrUnsupportedKeyType) {
+		t.Fatalf("want ErrUnsupportedKeyType, got %v", err)
 	}
 }
 
@@ -240,5 +241,36 @@ func TestGenerateUsesCryptoRand(t *testing.T) {
 	}
 	if a.Fingerprint == b.Fingerprint {
 		t.Fatal("two generated keys share a fingerprint")
+	}
+}
+
+func TestParseCRLFInput(t *testing.T) {
+	for _, name := range []string{"v3-plain.ppk", "ed25519_openssh"} {
+		data := strings.ReplaceAll(string(readFixture(t, name)), "\n", "\r\n")
+		if _, err := ParsePrivate([]byte(data), nil); err != nil {
+			t.Errorf("%s with CRLF: %v", name, err)
+		}
+	}
+}
+
+func TestCommentSanitized(t *testing.T) {
+	k, err := Generate("ed25519", "x\nssh-ed25519 AAAA\t\x7f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(k.PublicLine, "\r\n\t\x7f") || strings.ContainsAny(k.Comment, "\r\n\t\x7f") {
+		t.Fatalf("control characters survived: %q / %q", k.PublicLine, k.Comment)
+	}
+}
+
+func TestParseInvalidRSA(t *testing.T) {
+	blk, _ := pem.Decode(readFixture(t, "rsa_pkcs1.pem"))
+	orig, err := x509.ParsePKCS1PrivateKey(blk.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig.Primes[0].Add(orig.Primes[0], big.NewInt(2)) // break N = p*q
+	if _, err := build(orig, "", "openssh"); !errors.Is(err, ErrInvalidKey) {
+		t.Fatalf("want ErrInvalidKey, got %v", err)
 	}
 }

@@ -1,0 +1,2 @@
+internal/keys/testdata/* -text
+*.ppk -text

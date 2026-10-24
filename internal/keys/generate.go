@@ -5,7 +5,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
-	"errors"
 	"fmt"
 	"time"
 
@@ -32,7 +31,7 @@ func Generate(kind string, comment string) (model.Key, error) {
 		}
 		priv = p
 	default:
-		return model.Key{}, errors.New("keys: unknown key kind " + kind)
+		return model.Key{}, fmt.Errorf("%w: %s", ErrUnsupportedKeyType, kind)
 	}
 	k, err := build(priv, comment, "generated")
 	if err != nil {
