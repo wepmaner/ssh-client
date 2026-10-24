@@ -7,9 +7,11 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"sshclient/internal/sshclient/sshtest"
 )
 
-func sessionTest(t *testing.T, opts testServerOpts) *Session {
+func sessionTest(t *testing.T, opts sshtest.Opts) *Session {
 	t.Helper()
 	key, pub := testClientKey(t, "work", "")
 	opts.AcceptKey = pub
@@ -67,7 +69,7 @@ func TestSessionEchoAndResize(t *testing.T) {
 	}
 	pty := make(chan size, 1)
 	resized := make(chan size, 1)
-	s := sessionTest(t, testServerOpts{
+	s := sessionTest(t, sshtest.Opts{
 		OnPty:          func(term string, cols, rows uint32) { pty <- size{term, cols, rows} },
 		OnWindowChange: func(cols, rows uint32) { resized <- size{"", cols, rows} },
 	})
@@ -93,7 +95,7 @@ func TestSessionEchoAndResize(t *testing.T) {
 }
 
 func TestSessionExitCode(t *testing.T) {
-	s := sessionTest(t, testServerOpts{ExitCode: 3})
+	s := sessionTest(t, sshtest.Opts{ExitCode: 3})
 	readUntil(t, s, "ok\r\n")
 	err := s.Wait()
 	var exitErr *ssh.ExitError
@@ -104,7 +106,7 @@ func TestSessionExitCode(t *testing.T) {
 }
 
 func TestSessionCloseIsIdempotent(t *testing.T) {
-	s := sessionTest(t, testServerOpts{})
+	s := sessionTest(t, sshtest.Opts{})
 	readUntil(t, s, "ok\r\n")
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
@@ -119,7 +121,7 @@ func TestSessionCloseIsIdempotent(t *testing.T) {
 }
 
 func TestSessionCloseWhileOutputUnread(t *testing.T) {
-	s := sessionTest(t, testServerOpts{})
+	s := sessionTest(t, sshtest.Opts{})
 	// Никто не читает Output: насос должен выйти по Close, а не зависнуть на отправке.
 	for range 50 {
 		if err := s.Write([]byte(strings.Repeat("x", 1024))); err != nil {

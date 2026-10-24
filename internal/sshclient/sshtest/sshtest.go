@@ -1,4 +1,5 @@
-package sshclient
+// Package sshtest — SSH-сервер в процессе для тестов клиента и слоя приложения.
+package sshtest
 
 import (
 	"bytes"
@@ -14,8 +15,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// testServerOpts настраивает тестовый SSH-сервер.
-type testServerOpts struct {
+// Opts настраивает тестовый SSH-сервер.
+type Opts struct {
 	AcceptKey    ssh.PublicKey // единственный принимаемый публичный ключ; nil — все ключи отклоняются
 	Password     string        // принимаемый пароль; "" — вход по паролю не предлагается
 	KBIAnswer    string        // ожидаемый ответ keyboard-interactive; "" — метод не предлагается
@@ -26,9 +27,9 @@ type testServerOpts struct {
 	OnWindowChange func(cols, rows uint32)              // вызывается на window-change
 }
 
-// testServer — SSH-сервер в процессе для тестов клиента.
-type testServer struct {
-	opts testServerOpts
+// server — SSH-сервер в процессе для тестов клиента.
+type server struct {
+	opts Opts
 	wg   sync.WaitGroup
 
 	mu     sync.Mutex
@@ -37,19 +38,19 @@ type testServer struct {
 }
 
 // channelHandler обслуживает один входящий канал.
-type channelHandler func(s *testServer, nc ssh.NewChannel)
+type channelHandler func(s *server, nc ssh.NewChannel)
 
 // channelHandlers — точка расширения по типам каналов: пробросы (direct-tcpip и т. п.) добавляются сюда.
 var channelHandlers = map[string]channelHandler{
-	"session": (*testServer).handleSession,
+	"session": (*server).handleSession,
 }
 
 // globalRequestHandlers — точка расширения для глобальных запросов (tcpip-forward и т. п.).
 // Неизвестные запросы отклоняются.
-var globalRequestHandlers = map[string]func(s *testServer, conn *ssh.ServerConn, req *ssh.Request){}
+var globalRequestHandlers = map[string]func(s *server, conn *ssh.ServerConn, req *ssh.Request){}
 
-// startTestServer запускает сервер на 127.0.0.1:0 и останавливает его в t.Cleanup.
-func startTestServer(t *testing.T, opts testServerOpts) (addr string, hostKey ssh.PublicKey) {
+// Start запускает сервер на 127.0.0.1:0 и останавливает его в t.Cleanup.
+func Start(t testing.TB, opts Opts) (addr string, hostKey ssh.PublicKey) {
 	t.Helper()
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -60,7 +61,7 @@ func startTestServer(t *testing.T, opts testServerOpts) (addr string, hostKey ss
 		t.Fatal(err)
 	}
 
-	s := &testServer{opts: opts}
+	s := &server{opts: opts}
 	cfg := &ssh.ServerConfig{
 		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			if opts.AcceptKey != nil && bytes.Equal(key.Marshal(), opts.AcceptKey.Marshal()) {
@@ -130,7 +131,7 @@ func startTestServer(t *testing.T, opts testServerOpts) (addr string, hostKey ss
 }
 
 // track запоминает соединение для закрытия в Cleanup; false — сервер уже остановлен.
-func (s *testServer) track(c net.Conn) bool {
+func (s *server) track(c net.Conn) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -140,7 +141,7 @@ func (s *testServer) track(c net.Conn) bool {
 	return true
 }
 
-func (s *testServer) serveConn(c net.Conn, cfg *ssh.ServerConfig) {
+func (s *server) serveConn(c net.Conn, cfg *ssh.ServerConfig) {
 	conn, chans, reqs, err := ssh.NewServerConn(c, cfg)
 	if err != nil {
 		ignoreErr(c.Close())
@@ -175,7 +176,7 @@ func (s *testServer) serveConn(c net.Conn, cfg *ssh.ServerConfig) {
 }
 
 // handleSession — канал session с эхо-shell.
-func (s *testServer) handleSession(nc ssh.NewChannel) {
+func (s *server) handleSession(nc ssh.NewChannel) {
 	ch, reqs, err := nc.Accept()
 	if err != nil {
 		return

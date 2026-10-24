@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 
 	"sshclient/internal/model"
+	"sshclient/internal/sshclient/sshtest"
 )
 
 // testClientKey создаёт ключ Ed25519; passphrase != "" шифрует PEM этой фразой.
@@ -66,9 +67,9 @@ func targetFor(t *testing.T, addr string, key *model.Key) Target {
 	return Target{Address: host, Port: n, User: "alice", Key: key}
 }
 
-func dialTest(t *testing.T, opts testServerOpts, key *model.Key, in io.Reader) (*ssh.Client, *bytes.Buffer, error) {
+func dialTest(t *testing.T, opts sshtest.Opts, key *model.Key, in io.Reader) (*ssh.Client, *bytes.Buffer, error) {
 	t.Helper()
-	addr, hostKey := startTestServer(t, opts)
+	addr, hostKey := sshtest.Start(t, opts)
 	out := &bytes.Buffer{}
 	c, err := Dial(context.Background(), targetFor(t, addr, key), NewPrompter(out, in), trustedKnownHosts(t, addr, hostKey))
 	if c != nil {
@@ -79,7 +80,7 @@ func dialTest(t *testing.T, opts testServerOpts, key *model.Key, in io.Reader) (
 
 func TestDialWithKey(t *testing.T) {
 	key, pub := testClientKey(t, "work", "")
-	c, out, err := dialTest(t, testServerOpts{AcceptKey: pub}, key, strings.NewReader(""))
+	c, out, err := dialTest(t, sshtest.Opts{AcceptKey: pub}, key, strings.NewReader(""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +94,7 @@ func TestDialWithKey(t *testing.T) {
 
 func TestDialPassphraseKeyAsksInTerminal(t *testing.T) {
 	key, pub := testClientKey(t, "work", "right")
-	_, out, err := dialTest(t, testServerOpts{AcceptKey: pub}, key, strings.NewReader("wrong\nright\n"))
+	_, out, err := dialTest(t, sshtest.Opts{AcceptKey: pub}, key, strings.NewReader("wrong\nright\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +108,7 @@ func TestDialPassphraseKeyAsksInTerminal(t *testing.T) {
 
 func TestDialFallsBackToPassword(t *testing.T) {
 	key, _ := testClientKey(t, "work", "")
-	_, out, err := dialTest(t, testServerOpts{Password: "s3cret"}, key, strings.NewReader("s3cret\n"))
+	_, out, err := dialTest(t, sshtest.Opts{Password: "s3cret"}, key, strings.NewReader("s3cret\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +121,7 @@ func TestDialFallsBackToPassword(t *testing.T) {
 }
 
 func TestDialWrongPasswordRetriesThenDenied(t *testing.T) {
-	_, out, err := dialTest(t, testServerOpts{Password: "s3cret"}, nil, strings.NewReader("a\nb\nc\n"))
+	_, out, err := dialTest(t, sshtest.Opts{Password: "s3cret"}, nil, strings.NewReader("a\nb\nc\n"))
 	if err == nil || err.Error() != "Доступ запрещён: сервер отклонил ключ и пароль" || !errors.Is(err, ErrAuthDenied) {
 		t.Fatalf("err = %v", err)
 	}
@@ -130,7 +131,7 @@ func TestDialWrongPasswordRetriesThenDenied(t *testing.T) {
 }
 
 func TestDialKeyboardInteractive(t *testing.T) {
-	_, out, err := dialTest(t, testServerOpts{KBIAnswer: "123456"}, nil, strings.NewReader("123456\n"))
+	_, out, err := dialTest(t, sshtest.Opts{KBIAnswer: "123456"}, nil, strings.NewReader("123456\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +144,7 @@ func TestDialKeyboardInteractive(t *testing.T) {
 }
 
 func TestDialCancelledAtPasswordPrompt(t *testing.T) {
-	_, out, err := dialTest(t, testServerOpts{Password: "s3cret"}, nil, strings.NewReader("\x03"))
+	_, out, err := dialTest(t, sshtest.Opts{Password: "s3cret"}, nil, strings.NewReader("\x03"))
 	if !errors.Is(err, ErrCancelled) {
 		t.Fatalf("err = %v", err)
 	}
@@ -154,7 +155,7 @@ func TestDialCancelledAtPasswordPrompt(t *testing.T) {
 
 func TestDialCancelStopsFurtherMethods(t *testing.T) {
 	// Ctrl+C на вопросе keyboard-interactive: пароль после этого уже не спрашивается.
-	_, out, err := dialTest(t, testServerOpts{Password: "s3cret", KBIAnswer: "1"}, nil, strings.NewReader("\x03"))
+	_, out, err := dialTest(t, sshtest.Opts{Password: "s3cret", KBIAnswer: "1"}, nil, strings.NewReader("\x03"))
 	if !errors.Is(err, ErrCancelled) {
 		t.Fatalf("err = %v", err)
 	}
@@ -165,7 +166,7 @@ func TestDialCancelStopsFurtherMethods(t *testing.T) {
 
 func TestDialChangedHostKeyRefused(t *testing.T) {
 	key, pub := testClientKey(t, "work", "")
-	addr, _ := startTestServer(t, testServerOpts{AcceptKey: pub})
+	addr, _ := sshtest.Start(t, sshtest.Opts{AcceptKey: pub})
 	kh := trustedKnownHosts(t, addr, testKey(t)) // записан чужой ключ
 	out := &bytes.Buffer{}
 	c, err := Dial(context.Background(), targetFor(t, addr, key), NewPrompter(out, strings.NewReader("yes\n")), kh)
@@ -259,7 +260,7 @@ func (s *slowReader) Read(b []byte) (int, error) {
 
 func TestDialPromptDoesNotCountTowardsTimeout(t *testing.T) {
 	setHandshakeTimeout(t, time.Second)
-	_, _, err := dialTest(t, testServerOpts{Password: "s3cret"}, nil, &slowReader{delay: 2 * time.Second, r: strings.NewReader("s3cret\n")})
+	_, _, err := dialTest(t, sshtest.Opts{Password: "s3cret"}, nil, &slowReader{delay: 2 * time.Second, r: strings.NewReader("s3cret\n")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +269,7 @@ func TestDialPromptDoesNotCountTowardsTimeout(t *testing.T) {
 func TestDialServerDisconnectsAfterMaxAuthTries(t *testing.T) {
 	// Сервер рвёт соединение после двух неудач раньше, чем клиент исчерпает свои попытки.
 	key, _ := testClientKey(t, "work", "")
-	_, _, err := dialTest(t, testServerOpts{Password: "s3cret", MaxAuthTries: 2}, key, strings.NewReader("a\nb\nc\n"))
+	_, _, err := dialTest(t, sshtest.Opts{Password: "s3cret", MaxAuthTries: 2}, key, strings.NewReader("a\nb\nc\n"))
 	if err == nil || err.Error() != "Доступ запрещён: сервер отклонил ключ и пароль" || !errors.Is(err, ErrAuthDenied) {
 		t.Fatalf("err = %v", err)
 	}
@@ -296,7 +297,7 @@ func TestDialHandshakeWallTimeCapped(t *testing.T) {
 	maxHandshakeTime = 300 * time.Millisecond
 	t.Cleanup(func() { maxHandshakeTime = old })
 	start := time.Now()
-	_, _, err := dialTest(t, testServerOpts{Password: "s3cret"}, nil, &slowReader{delay: time.Second, r: strings.NewReader("s3cret\n")})
+	_, _, err := dialTest(t, sshtest.Opts{Password: "s3cret"}, nil, &slowReader{delay: time.Second, r: strings.NewReader("s3cret\n")})
 	if !errors.Is(err, ErrTimeout) {
 		t.Fatalf("err = %v", err)
 	}
@@ -304,3 +305,6 @@ func TestDialHandshakeWallTimeCapped(t *testing.T) {
 		t.Fatalf("took %v", d)
 	}
 }
+
+// ignoreErr явно отбрасывает ошибку закрытия в тестах: проверять её нечем и незачем.
+func ignoreErr(error) {}
