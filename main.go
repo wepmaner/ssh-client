@@ -32,9 +32,10 @@ func main() {
 			DisableFramelessWindowDecorations: false,
 			Theme:                             windows.Dark,
 		},
-		OnStartup:  a.Startup,
-		OnShutdown: a.Shutdown,
-		Bind:       []interface{}{a},
+		OnStartup:     a.Startup,
+		OnBeforeClose: a.BeforeClose,
+		OnShutdown:    a.Shutdown,
+		Bind:          []interface{}{a},
 	})
 	if err != nil {
 		println("Error:", err.Error())

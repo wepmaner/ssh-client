@@ -34,12 +34,16 @@ func (a *App) Startup(ctx context.Context) {
 	}
 }
 
-// Shutdown is called when the window closes; it saves the window geometry.
-func (a *App) Shutdown(ctx context.Context) {
+// BeforeClose saves the window geometry while the window is still alive.
+// It never prevents the close.
+func (a *App) BeforeClose(ctx context.Context) bool {
 	var ws model.WindowState
 	if runtime.WindowIsMaximised(ctx) {
 		// Keep the previous un-maximised geometry to restore into.
-		ws, _ = loadWindowState()
+		var ok bool
+		if ws, ok = loadWindowState(); !ok || ws.W <= 0 {
+			ws = model.DefaultSettings().Window
+		}
 		ws.Maximized = true
 	} else {
 		ws.X, ws.Y = runtime.WindowGetPosition(ctx)
@@ -48,4 +52,10 @@ func (a *App) Shutdown(ctx context.Context) {
 	if err := saveWindowState(ws); err != nil {
 		log.Printf("save window state: %v", err)
 	}
+	return false
+}
+
+// Shutdown is called after the window has closed.
+func (a *App) Shutdown(ctx context.Context) {
+	_ = ctx
 }
