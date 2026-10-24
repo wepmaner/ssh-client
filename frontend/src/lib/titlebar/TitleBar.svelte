@@ -1,5 +1,7 @@
 <script lang="ts">
   import { Quit, WindowMinimise, WindowToggleMaximise } from '../../../wailsjs/runtime/runtime'
+
+  let { title = '' }: { title?: string } = $props()
 </script>
 
 <header class="titlebar" role="presentation" ondblclick={WindowToggleMaximise}>
@@ -8,6 +10,7 @@
       <path d="M3 4.5 7 8l-4 3.5" />
       <path d="M8.5 12H13" />
     </svg>
+    {#if title}<span class="home">{title}</span>{/if}
   </div>
   <div class="caption">
     <button type="button" class="btn" aria-label="Свернуть" onclick={WindowMinimise} ondblclick={(e) => e.stopPropagation()}>
@@ -43,6 +46,16 @@
     display: flex;
     align-items: center;
     padding-left: 12px;
+  }
+
+  .home {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    margin-left: 12px;
+    padding: 0 16px;
+    background: var(--bg);
+    font-size: 13px;
   }
 
   .glyph {

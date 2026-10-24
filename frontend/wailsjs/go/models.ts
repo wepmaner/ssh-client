@@ -1,5 +1,33 @@
 export namespace app {
 	
+	export class KeyDTO {
+	    id: string;
+	    name: string;
+	    type: string;
+	    public_line: string;
+	    comment: string;
+	    fingerprint: string;
+	    source: string;
+	    created_at: string;
+	    host_ids: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new KeyDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.type = source["type"];
+	        this.public_line = source["public_line"];
+	        this.comment = source["comment"];
+	        this.fingerprint = source["fingerprint"];
+	        this.source = source["source"];
+	        this.created_at = source["created_at"];
+	        this.host_ids = source["host_ids"];
+	    }
+	}
 	export class VaultCountsDTO {
 	    keys: number;
 	    hosts: number;

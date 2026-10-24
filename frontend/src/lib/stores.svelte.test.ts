@@ -1,10 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 
-const { getSettings, vaultState } = vi.hoisted(() => ({ getSettings: vi.fn(), vaultState: vi.fn() }))
+const { getSettings, vaultState, keysList } = vi.hoisted(() => ({
+  getSettings: vi.fn(),
+  vaultState: vi.fn(),
+  keysList: vi.fn(() => Promise.resolve([])),
+}))
 vi.mock('./api', async () => {
   const models = await import('../../wailsjs/go/models')
   return {
     GetSettings: getSettings,
+    KeysList: keysList,
     VaultState: vaultState,
     errorText: String,
     model: models.model,

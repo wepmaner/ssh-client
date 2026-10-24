@@ -8,8 +8,9 @@
     onclose: () => void
     children: Snippet
     footer?: Snippet
+    width?: number
   }
-  let { open, title, onclose, children, footer }: Props = $props()
+  let { open, title, onclose, children, footer, width = 500 }: Props = $props()
 
   let panel: HTMLDivElement | undefined = $state()
 
@@ -30,7 +31,7 @@
 
 {#if open}
   <div class="scrim" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
-    <div class="panel" role="dialog" aria-modal="true" aria-label={title} bind:this={panel}>
+    <div class="panel" role="dialog" aria-modal="true" aria-label={title} bind:this={panel} style:width="{width}px">
       <header>
         <h2>{title}</h2>
         <Button variant="ghost" aria-label="Закрыть" onclick={onclose} style="padding:0;width:32px">

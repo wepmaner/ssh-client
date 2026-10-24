@@ -1,6 +1,16 @@
 // Thin typed layer over the generated Wails bindings.
 export {
   GetSettings,
+  KeyCopyPublic,
+  KeyDelete,
+  KeyExport,
+  KeyGenerate,
+  KeyImportFile,
+  KeyImportFileWithPassphrase,
+  KeyImportText,
+  KeyImportTextWithPassphrase,
+  KeyRename,
+  KeysList,
   SaveSettings,
   VaultCounts,
   VaultRemovePassword,

@@ -5,6 +5,26 @@ import {app} from '../models';
 
 export function GetSettings():Promise<model.Settings>;
 
+export function KeyCopyPublic(arg1:string):Promise<void>;
+
+export function KeyDelete(arg1:string):Promise<void>;
+
+export function KeyExport(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function KeyGenerate(arg1:string,arg2:string,arg3:string):Promise<app.KeyDTO>;
+
+export function KeyImportFile():Promise<app.KeyDTO>;
+
+export function KeyImportFileWithPassphrase(arg1:string,arg2:string):Promise<app.KeyDTO>;
+
+export function KeyImportText(arg1:string,arg2:string):Promise<app.KeyDTO>;
+
+export function KeyImportTextWithPassphrase(arg1:string,arg2:string,arg3:string):Promise<app.KeyDTO>;
+
+export function KeyRename(arg1:string,arg2:string):Promise<void>;
+
+export function KeysList():Promise<Array<app.KeyDTO>>;
+
 export function SaveSettings(arg1:model.Settings):Promise<void>;
 
 export function VaultCounts():Promise<app.VaultCountsDTO>;

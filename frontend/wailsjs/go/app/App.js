@@ -6,6 +6,46 @@ export function GetSettings() {
   return window['go']['app']['App']['GetSettings']();
 }
 
+export function KeyCopyPublic(arg1) {
+  return window['go']['app']['App']['KeyCopyPublic'](arg1);
+}
+
+export function KeyDelete(arg1) {
+  return window['go']['app']['App']['KeyDelete'](arg1);
+}
+
+export function KeyExport(arg1, arg2, arg3) {
+  return window['go']['app']['App']['KeyExport'](arg1, arg2, arg3);
+}
+
+export function KeyGenerate(arg1, arg2, arg3) {
+  return window['go']['app']['App']['KeyGenerate'](arg1, arg2, arg3);
+}
+
+export function KeyImportFile() {
+  return window['go']['app']['App']['KeyImportFile']();
+}
+
+export function KeyImportFileWithPassphrase(arg1, arg2) {
+  return window['go']['app']['App']['KeyImportFileWithPassphrase'](arg1, arg2);
+}
+
+export function KeyImportText(arg1, arg2) {
+  return window['go']['app']['App']['KeyImportText'](arg1, arg2);
+}
+
+export function KeyImportTextWithPassphrase(arg1, arg2, arg3) {
+  return window['go']['app']['App']['KeyImportTextWithPassphrase'](arg1, arg2, arg3);
+}
+
+export function KeyRename(arg1, arg2) {
+  return window['go']['app']['App']['KeyRename'](arg1, arg2);
+}
+
+export function KeysList() {
+  return window['go']['app']['App']['KeysList']();
+}
+
 export function SaveSettings(arg1) {
   return window['go']['app']['App']['SaveSettings'](arg1);
 }
