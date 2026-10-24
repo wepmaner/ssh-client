@@ -1,0 +1,6 @@
+*.png
+.superpowers/
+build/bin/
+frontend/node_modules/
+frontend/dist/
+frontend/wailsjs/
