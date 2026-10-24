@@ -115,7 +115,10 @@ func TestSetPasswordKeepsDEK(t *testing.T) {
 	if v3.Locked() || v3.HasPassword() {
 		t.Fatal("expected unlocked dpapi vault after RemovePassword")
 	}
-	e3Raw, _ := os.ReadFile(path) //nolint:gosec // G304: test temp path
+	e3Raw, err := os.ReadFile(path) //nolint:gosec // G304: test temp path
+	if err != nil {
+		t.Fatal(err)
+	}
 	e3, err := UnmarshalEnvelope(e3Raw)
 	if err != nil {
 		t.Fatal(err)
@@ -159,8 +162,140 @@ func TestSaveIsAtomicAndKeepsBackup(t *testing.T) {
 	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
 		t.Fatalf("tmp file left behind: %v", err)
 	}
-	cur, _ := os.ReadFile(path) //nolint:gosec // G304: test temp path
+	cur, err := os.ReadFile(path) //nolint:gosec // G304: test temp path
+	if err != nil {
+		t.Fatal(err)
+	}
 	if bytes.Equal(cur, first) {
 		t.Fatal("vault file not updated")
+	}
+}
+
+func TestFailedSaveDoesNotLeakIntoLaterWrites(t *testing.T) {
+	path := newVaultPath(t)
+	s := NewStore(mustOpen(t, path))
+	// A directory in place of the tmp file makes every write fail.
+	if err := os.Mkdir(path+".tmp", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SaveHost(model.Host{ID: "lost", Address: "a"}); err == nil {
+		t.Fatal("expected save failure")
+	}
+	if len(s.Hosts()) != 0 {
+		t.Fatal("failed save was not rolled back")
+	}
+	if err := s.v.SetPassword([]byte("pw")); err != nil {
+		t.Fatal(err)
+	}
+	v2 := mustOpen(t, path)
+	if err := v2.Unlock([]byte("pw")); err != nil {
+		t.Fatal(err)
+	}
+	if len(v2.Data().Hosts) != 0 {
+		t.Fatalf("rolled-back data reached disk: %+v", v2.Data().Hosts)
+	}
+	if _, err := s.SaveHost(model.Host{Address: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	v3 := mustOpen(t, path)
+	if err := v3.Unlock([]byte("pw")); err != nil {
+		t.Fatal(err)
+	}
+	if len(v3.Data().Hosts) != 1 || v3.Data().Hosts[0].Address != "b" {
+		t.Fatal("disk does not match memory")
+	}
+}
+
+func mustOpen(t *testing.T, path string) *Vault {
+	t.Helper()
+	v, err := OpenVault(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func TestRecoverCorrupt(t *testing.T) {
+	path := newVaultPath(t)
+	if err := os.WriteFile(path, []byte("garbage"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	v, err := RecoverCorrupt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Locked() {
+		t.Fatal("fresh vault must be unlocked")
+	}
+	got, err := os.ReadFile(path + ".corrupt") //nolint:gosec // G304: test temp path
+	if err != nil || string(got) != "garbage" {
+		t.Fatalf("corrupt copy = %q, %v", got, err)
+	}
+	// A second recovery replaces the older .corrupt file.
+	if err := os.WriteFile(path, []byte("garbage2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RecoverCorrupt(path); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = os.ReadFile(path + ".corrupt") //nolint:gosec // G304: test temp path
+	if string(got) != "garbage2" {
+		t.Fatalf("corrupt copy = %q", got)
+	}
+}
+
+func TestTamperedDataIsCorrupt(t *testing.T) {
+	path := newVaultPath(t)
+	mustOpen(t, path)
+	raw, err := os.ReadFile(path) //nolint:gosec // G304: test temp path
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := UnmarshalEnvelope(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Data[0] ^= 0xff
+	out, err := MarshalEnvelope(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenVault(path); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCorrectPasswordCorruptDataIsNotWrongPassword(t *testing.T) {
+	path := newVaultPath(t)
+	v := mustOpen(t, path)
+	if err := v.SetPassword([]byte("pw")); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path) //nolint:gosec // G304: test temp path
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := UnmarshalEnvelope(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Data[0] ^= 0xff
+	out, err := MarshalEnvelope(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	v2 := mustOpen(t, path)
+	err = v2.Unlock([]byte("pw"))
+	if !errors.Is(err, ErrCorrupt) || errors.Is(err, ErrWrongPassword) {
+		t.Fatalf("err = %v", err)
+	}
+	if !v2.Locked() {
+		t.Fatal("must stay locked")
 	}
 }

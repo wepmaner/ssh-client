@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"errors"
 	"slices"
 	"sync"
@@ -13,6 +14,8 @@ import (
 
 // ErrKeyInUse is returned when deleting a key that hosts still reference.
 var ErrKeyInUse = errors.New("key is used by hosts")
+
+var errInvalidID = errors.New("invalid id")
 
 var errStoreLocked = errors.New("vault is locked")
 
@@ -48,7 +51,7 @@ func (s *Store) mutate(f func(d *model.VaultData) error) error {
 	snapshot := *d
 	snapshot.Hosts = slices.Clone(d.Hosts)
 	snapshot.Groups = slices.Clone(d.Groups)
-	snapshot.Keys = slices.Clone(d.Keys)
+	snapshot.Keys = cloneKeys(d.Keys)
 	snapshot.Forwards = slices.Clone(d.Forwards)
 	if err := f(d); err != nil {
 		*d = snapshot
@@ -59,6 +62,14 @@ func (s *Store) mutate(f func(d *model.VaultData) error) error {
 		return err
 	}
 	return nil
+}
+
+func cloneKeys(keys []model.Key) []model.Key {
+	out := slices.Clone(keys)
+	for i := range out {
+		out[i].PrivatePEM = bytes.Clone(out[i].PrivatePEM)
+	}
+	return out
 }
 
 // Hosts returns a copy of all hosts.
@@ -84,7 +95,10 @@ func (s *Store) SaveHost(h model.Host) (model.Host, error) {
 		d.Hosts = append(d.Hosts, h)
 		return nil
 	})
-	return h, err
+	if err != nil {
+		return model.Host{}, err
+	}
+	return h, nil
 }
 
 // DeleteHost removes a host; unknown ids are ignored.
@@ -97,6 +111,9 @@ func (s *Store) DeleteHost(id string) error {
 
 // HostsUsingKey returns the hosts that reference keyID.
 func (s *Store) HostsUsingKey(keyID string) []model.Host {
+	if keyID == "" {
+		return nil
+	}
 	return read(s, func(d *model.VaultData) []model.Host {
 		var out []model.Host
 		for _, h := range d.Hosts {
@@ -126,7 +143,10 @@ func (s *Store) SaveGroup(g model.Group) (model.Group, error) {
 		d.Groups = append(d.Groups, g)
 		return nil
 	})
-	return g, err
+	if err != nil {
+		return model.Group{}, err
+	}
+	return g, nil
 }
 
 // DeleteGroup removes a group and ungroups its hosts.
@@ -144,7 +164,7 @@ func (s *Store) DeleteGroup(id string) error {
 
 // Keys returns a copy of all keys.
 func (s *Store) Keys() []model.Key {
-	return read(s, func(d *model.VaultData) []model.Key { return slices.Clone(d.Keys) })
+	return read(s, func(d *model.VaultData) []model.Key { return cloneKeys(d.Keys) })
 }
 
 // SaveKey inserts or updates a key.
@@ -164,11 +184,17 @@ func (s *Store) SaveKey(k model.Key) (model.Key, error) {
 		d.Keys = append(d.Keys, k)
 		return nil
 	})
-	return k, err
+	if err != nil {
+		return model.Key{}, err
+	}
+	return k, nil
 }
 
 // DeleteKey removes a key, or returns ErrKeyInUse if hosts reference it.
 func (s *Store) DeleteKey(id string) error {
+	if id == "" {
+		return errInvalidID
+	}
 	return s.mutate(func(d *model.VaultData) error {
 		if slices.ContainsFunc(d.Hosts, func(h model.Host) bool { return h.KeyID == id }) {
 			return ErrKeyInUse
@@ -196,7 +222,10 @@ func (s *Store) SaveForward(f model.Forward) (model.Forward, error) {
 		d.Forwards = append(d.Forwards, f)
 		return nil
 	})
-	return f, err
+	if err != nil {
+		return model.Forward{}, err
+	}
+	return f, nil
 }
 
 // DeleteForward removes a forwarding rule.

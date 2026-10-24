@@ -115,3 +115,27 @@ func TestStorePersists(t *testing.T) {
 		t.Fatal("not persisted")
 	}
 }
+
+func TestEmptyKeyIDGuards(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.SaveHost(model.Host{Address: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.HostsUsingKey(""); got != nil {
+		t.Fatalf("got %v", got)
+	}
+	if err := s.DeleteKey(""); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestKeysReturnsDeepCopy(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.SaveKey(model.Key{Name: "k", PrivatePEM: []byte("secret")}); err != nil {
+		t.Fatal(err)
+	}
+	s.Keys()[0].PrivatePEM[0] = 'X'
+	if string(s.Keys()[0].PrivatePEM) != "secret" {
+		t.Fatal("internal key bytes were mutated")
+	}
+}

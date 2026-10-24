@@ -41,10 +41,23 @@ func OpenVault(path string) (*Vault, error) {
 			return nil, fmt.Errorf("%w: dpapi unprotect: %v", ErrCorrupt, err)
 		}
 		if err := v.decrypt(dek); err != nil {
+			clear(dek)
 			return nil, err
 		}
 	}
 	return v, nil
+}
+
+// RecoverCorrupt moves a damaged vault aside as <path>.corrupt (replacing an
+// older one) and opens a fresh DPAPI vault at path.
+func RecoverCorrupt(path string) (*Vault, error) {
+	if err := os.Remove(path + ".corrupt"); err != nil && !errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: path comes from appdir.Dir() or the caller
+		return nil, fmt.Errorf("remove old corrupt copy: %w", err)
+	}
+	if err := os.Rename(path, path+".corrupt"); err != nil && !errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: path comes from appdir.Dir() or the caller
+		return nil, fmt.Errorf("move corrupt vault: %w", err)
+	}
+	return OpenVault(path)
 }
 
 func createVault(path string) (*Vault, error) {
@@ -141,37 +154,65 @@ func (v *Vault) Save() error {
 	if err != nil {
 		return err
 	}
-	v.env.Nonce, v.env.Data = nonce, ct
-	return v.persist()
+	env := v.env
+	env.Nonce, env.Data = nonce, ct
+	if err := v.persist(env); err != nil {
+		return err
+	}
+	v.env = env
+	return nil
 }
 
-// persist writes the current envelope to disk via a temporary file.
-func (v *Vault) persist() error {
-	out, err := MarshalEnvelope(v.env)
+// writeFileSync writes data to name and flushes it to disk.
+func writeFileSync(name string, data []byte) error {
+	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600) //nolint:gosec // G304: sibling of the vault path
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close() //nolint:gosec // G104: best-effort cleanup after the primary error
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close() //nolint:gosec // G104: best-effort cleanup after the primary error
+		return err
+	}
+	return f.Close()
+}
+
+// persist writes env to disk via a synced temporary file and a rename.
+func (v *Vault) persist(env Envelope) error {
+	out, err := MarshalEnvelope(env)
 	if err != nil {
 		return err
 	}
 	if prev, err := os.ReadFile(v.path); err == nil { //nolint:gosec // G304: path comes from appdir.Dir() or the caller
-		if err := os.WriteFile(v.path+".bak", prev, 0o600); err != nil { //nolint:gosec // G703: sibling of the vault path
+		if err := writeFileSync(v.path+".bak", prev); err != nil {
 			return fmt.Errorf("write backup: %w", err)
 		}
 	}
 	tmp := v.path + ".tmp"
-	if err := os.WriteFile(tmp, out, 0o600); err != nil { //nolint:gosec // G703: sibling of the vault path
+	if err := writeFileSync(tmp, out); err != nil {
+		_ = os.Remove(tmp) //nolint:gosec // G104: best-effort cleanup after the primary error
 		return fmt.Errorf("write vault: %w", err)
 	}
 	if err := os.Rename(tmp, v.path); err != nil { //nolint:gosec // G703: sibling of the vault path
+		_ = os.Remove(tmp) //nolint:gosec // G104: best-effort cleanup after the primary error
 		return fmt.Errorf("replace vault: %w", err)
 	}
 	return nil
 }
 
 func (v *Vault) wrapDPAPI() error {
-	enc, err := dpapiProtect(v.dek)
+	return wrapDPAPI(&v.env, v.dek)
+}
+
+func wrapDPAPI(env *Envelope, dek []byte) error {
+	enc, err := dpapiProtect(dek)
 	if err != nil {
 		return fmt.Errorf("dpapi protect: %w", err)
 	}
-	v.env.Wrap, v.env.KDF, v.env.DEKNonce, v.env.DEKEnc = WrapDPAPI, nil, nil, enc
+	env.Wrap, env.KDF, env.DEKNonce, env.DEKEnc = WrapDPAPI, nil, nil, enc
 	return nil
 }
 
@@ -190,12 +231,12 @@ func (v *Vault) SetPassword(password []byte) error {
 	if err != nil {
 		return err
 	}
-	prev := v.env
-	v.env.Wrap, v.env.KDF, v.env.DEKNonce, v.env.DEKEnc = WrapPassword, &kdf, nonce, enc
-	if err := v.persist(); err != nil {
-		v.env = prev
+	env := v.env
+	env.Wrap, env.KDF, env.DEKNonce, env.DEKEnc = WrapPassword, &kdf, nonce, enc
+	if err := v.persist(env); err != nil {
 		return err
 	}
+	v.env = env
 	return nil
 }
 
@@ -206,14 +247,13 @@ func (v *Vault) RemovePassword() error {
 	if v.dek == nil {
 		return errors.New("vault is locked")
 	}
-	prev := v.env
-	if err := v.wrapDPAPI(); err != nil {
-		v.env = prev
+	env := v.env
+	if err := wrapDPAPI(&env, v.dek); err != nil {
 		return err
 	}
-	if err := v.persist(); err != nil {
-		v.env = prev
+	if err := v.persist(env); err != nil {
 		return err
 	}
+	v.env = env
 	return nil
 }

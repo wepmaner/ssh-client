@@ -27,6 +27,23 @@ func New() *App {
 	return &App{}
 }
 
+const vaultFile = "vault.json"
+
+// VaultResetCorrupt moves a damaged vault aside as vault.json.corrupt and
+// starts a fresh one.
+func (a *App) VaultResetCorrupt() error {
+	dir, err := appdir.Dir()
+	if err != nil {
+		return err
+	}
+	v, err := store.RecoverCorrupt(filepath.Join(dir, vaultFile))
+	if err != nil {
+		return err
+	}
+	a.vault, a.store, a.vaultErr = v, store.NewStore(v), nil
+	return nil
+}
+
 // openVault opens the vault file in the app directory. A damaged file is kept
 // untouched and its error is stored for the UI.
 func (a *App) openVault() {
@@ -35,7 +52,7 @@ func (a *App) openVault() {
 		a.vaultErr = err
 		return
 	}
-	v, err := store.OpenVault(filepath.Join(dir, "vault.json"))
+	v, err := store.OpenVault(filepath.Join(dir, vaultFile))
 	if err != nil {
 		a.vaultErr = err
 		if !errors.Is(err, store.ErrCorrupt) {
@@ -61,7 +78,11 @@ func (a *App) Startup(ctx context.Context) {
 	if a.storeUnlocked() {
 		ws = a.store.Settings().Window
 		// The untouched default of a brand-new vault carries no position.
+		// A fresh vault has no geometry yet; use an existing window.json once.
 		ok = ws != model.DefaultSettings().Window
+		if !ok {
+			ws, ok = loadWindowState()
+		}
 	} else {
 		ws, ok = loadWindowState()
 	}
