@@ -6,11 +6,13 @@ import (
 	"errors"
 	"log"
 	"path/filepath"
+	"sync"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"sshclient/internal/appdir"
 	"sshclient/internal/model"
+	"sshclient/internal/sshclient"
 	"sshclient/internal/store"
 )
 
@@ -20,6 +22,15 @@ type App struct {
 	vault    *store.Vault
 	store    *store.Store
 	vaultErr error
+
+	emit emitter // term:* events; Wails in Startup, a recorder in tests
+
+	sessMu   sync.Mutex
+	sessions map[string]*session
+	sessSeq  int
+
+	khMu sync.Mutex
+	kh   *sshclient.KnownHosts // opened on the first session
 }
 
 // New creates an App.
@@ -75,6 +86,7 @@ func (a *App) storeUnlocked() bool {
 // password vault falls back to the plain window.json geometry.
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
+	a.emit = wailsEmitter{ctx}
 	a.openVault()
 	var ws model.WindowState
 	ok := false
@@ -138,7 +150,8 @@ func (a *App) BeforeClose(ctx context.Context) bool {
 	return false
 }
 
-// Shutdown is called after the window has closed.
+// Shutdown is called after the window has closed; it ends every SSH session.
 func (a *App) Shutdown(ctx context.Context) {
 	_ = ctx
+	a.closeAllSessions()
 }
