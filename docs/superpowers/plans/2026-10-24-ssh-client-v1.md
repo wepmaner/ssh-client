@@ -367,7 +367,7 @@ git commit -m "feat: vault API, unlock screen and encryption dialog"
 - Produces:
   - `func Generate(kind string, comment string) (model.Key, error)` — `kind` `ed25519|rsa`; RSA 4096; `PrivatePEM` в формате OpenSSH (`ssh.MarshalPrivateKey`), `PublicLine` вида `ssh-ed25519 AAAA… comment`, `Source: generated`.
   - `var ErrPassphraseRequired = errors.New("keys: passphrase required")`
-  - `func ParsePrivate(data []byte, passphrase []byte) (model.Key, error)` — определяет формат по заголовку: `-----BEGIN OPENSSH PRIVATE KEY-----`/PEM → `ssh.ParseRawPrivateKey[WithPassphrase]`, `PuTTY-User-Key-File-` → `kayrus/putty`; при необходимости фразы без неё возвращает `ErrPassphraseRequired`; результат всегда перекодирован в OpenSSH без фразы (фраза хранилища защищает всё хранилище); `Source` `openssh|ppk`; `Comment` из ключа; `Type` только `ed25519|rsa`, иначе ошибка `ErrUnsupportedKeyType`.
+  - `func ParsePrivate(data []byte, passphrase []byte) (model.Key, error)` — определяет формат по заголовку: `-----BEGIN OPENSSH PRIVATE KEY-----`/PEM → `ssh.ParseRawPrivateKey[WithPassphrase]`, `PuTTY-User-Key-File-` → `kayrus/putty`; при необходимости фразы без неё возвращает `ErrPassphraseRequired`; результат всегда перекодирован в OpenSSH без фразы; `Source` `openssh|ppk`; `Comment` из ключа; `Type` только `ed25519|rsa`, иначе ошибка `ErrUnsupportedKeyType`. **Отменено решением от 2026-10-24: см. Task 9b, фраза ключа сохраняется.**
   - `func PublicLine(k model.Key) string`
   - `func PrivateOpenSSH(k model.Key) []byte`
   - `func PrivatePPK(k model.Key) ([]byte, error)` — PPK v3 через `liornabat/putty`, без фразы.
@@ -446,6 +446,31 @@ git commit -m "feat: keys API and Keys screen"
 ```
 
 ---
+
+## Этап C′. Переделка: парольная фраза ключа сохраняется
+
+### Task 9b: Ключи хранятся с собственной парольной фразой
+
+Решение владельца продукта (2026-10-24): фраза ключа — последний рубеж, приложение её не снимает и не сохраняет. Выполняется после Task 10, до Task 11.
+
+**Files:**
+- Modify: `internal/model/model.go` (`Key`: `PrivatePEM` → `Private []byte` исходные байты; новые поля `Format string` ∈ `openssh|pem|ppk`, `Encrypted bool`)
+- Modify: `internal/keys/parse.go`, `export.go`, `generate.go`, `keys_test.go`; Create: `internal/keys/signer.go`
+- Modify: `internal/sshclient/client.go` (`passphraseSigners` использует `keys.Signer`), `client_test.go`
+- Modify: `app/keys_api.go`, `app/keys_api_test.go`, `frontend/src/lib/keys/KeyImportPanel.svelte`, `KeyCreateDialog.svelte`, `KeyDetail.svelte`
+
+**Interfaces:**
+- `keys.Inspect(data []byte) (model.Key, error)` — без фразы: определяет `Format`, `Encrypted`, извлекает `PublicLine`, `Fingerprint`, `Comment`, `Type` из открытой части (OpenSSH-контейнер и PPK хранят публичный ключ открыто); для старого зашифрованного PEM (`Proc-Type: 4,ENCRYPTED`) без открытой части возвращает `ErrPassphraseRequired`, тогда вызывается `InspectWithPassphrase(data, passphrase)` — фраза используется только для чтения публичного ключа и не сохраняется; `Private` = исходные байты без изменений.
+- `keys.Signer(k model.Key, passphrase []byte) (ssh.Signer, error)` — разбирает `k.Private` по `k.Format`; `Encrypted && len(passphrase)==0` → `ErrPassphraseRequired`; неверная фраза → `ErrWrongPassphrase` (для PPK по MAC).
+- `keys.Generate(kind, comment string, passphrase []byte) (model.Key, error)` — при непустой фразе `ssh.MarshalPrivateKeyWithPassphrase`, `Encrypted=true`.
+- `keys.PrivateOpenSSH(k)` и `keys.PrivatePPK(k)` только для `!k.Encrypted`; для зашифрованного экспорт — `k.Private` как есть, в исходном формате (`keys.PrivateOriginal(k) ([]byte, ext string)`).
+- `sshclient.Dial`: цикл фразы (до трёх `AskSecret("Парольная фраза ключа <name>: ")`) через `keys.Signer`; работает для всех трёх форматов.
+- `app`: `KeyImportFile/Text` больше не возвращают `passphrase_required:` для OpenSSH/PPK; только для старого PEM; `KeyGenerate(name, kind, comment, passphrase string)`; `KeyDTO` получает `Encrypted bool`, `Format string`; `KeyExport` для зашифрованного ключа принимает только `format == "original"`.
+- UI: панель импорта без шага фразы (кроме старого PEM); диалог создания с необязательным полем «Парольная фраза» и повтором; карточка ключа показывает бейдж «с парольной фразой» и в экспорте для зашифрованного — одну кнопку «Приватный ключ (исходный файл)»; в хранении: «Фраза спрашивается при подключении».
+
+- [ ] **Step 1: Тесты** — `TestInspectOpenSSHEncryptedWithoutPassphrase` (fingerprint из открытой части, `Encrypted==true`), `TestInspectPPKEncrypted`, `TestInspectLegacyPEMNeedsPassphrase`, `TestSignerWrongPassphrase` (OpenSSH и PPK), `TestSignerCorrectPassphrase`, `TestGenerateWithPassphrase` (Signer без фразы → `ErrPassphraseRequired`), `TestExportEncryptedKeepsOriginalBytes`; в `client_test.go` тест с PPK-ключом с фразой при подключении.
+- [ ] **Step 2: Реализация и миграция хранилища** — при открытии хранилища ключи без `Format` считаются `openssh`, `Encrypted=false`.
+- [ ] **Step 3: `go test ./... -count=1`, `golangci-lint run ./...`, `npm test`, `svelte-check`, `wails build`; commit.**
 
 ## Этап D. SSH и терминал
 
