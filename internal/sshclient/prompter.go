@@ -82,6 +82,10 @@ func (p *Prompter) readLine(prompt string, echo bool) (string, error) {
 					return "", err
 				}
 			}
+		case r == 0x1b:
+			if err := p.skipEscape(); err != nil {
+				return "", err
+			}
 		case r < 0x20:
 			// Остальные управляющие символы игнорируем.
 		default:
@@ -93,4 +97,38 @@ func (p *Prompter) readLine(prompt string, echo bool) (string, error) {
 			}
 		}
 	}
+}
+
+// skipEscape пропускает остаток escape-последовательности (стрелки, Delete и т. п.), чтобы она не попала в ответ.
+func (p *Prompter) skipEscape() error {
+	r, _, err := p.in.ReadRune()
+	if err != nil {
+		return readErr(err)
+	}
+	switch r {
+	case '[': // CSI: параметры, затем конечный байт 0x40-0x7E
+		for {
+			c, _, err := p.in.ReadRune()
+			if err != nil {
+				return readErr(err)
+			}
+			if c >= 0x40 && c <= 0x7e {
+				return nil
+			}
+		}
+	case 'O': // SS3: ещё один символ
+		if _, _, err := p.in.ReadRune(); err != nil {
+			return readErr(err)
+		}
+	default: // одиночный ESC: следующий символ обработать обычным образом
+		return p.in.UnreadRune()
+	}
+	return nil
+}
+
+func readErr(err error) error {
+	if errors.Is(err, io.EOF) {
+		return ErrCancelled
+	}
+	return err
 }

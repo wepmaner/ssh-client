@@ -119,3 +119,14 @@ func TestConfirmEOFCancels(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestAskSkipsEscapeSequences(t *testing.T) {
+	p, out := newTestPrompter("ab\x1b[Dc\x1b[3~\x1bOA\r")
+	got, err := p.Ask("")
+	if err != nil || got != "abc" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	if out.String() != "abc\r\n" {
+		t.Fatalf("out = %q", out.String())
+	}
+}
