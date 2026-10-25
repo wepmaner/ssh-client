@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { app } from '../api'
   import { hosts } from '../stores.svelte'
+  import { forwardAsksTrust } from '../trust.svelte'
   import Button from '../ui/Button.svelte'
   import Menu from '../ui/Menu.svelte'
   import { outputSize, startForward, stopForward } from './forwards.svelte'
@@ -25,7 +26,10 @@
   let moreEl: HTMLButtonElement | undefined = $state()
 
   const active = $derived(forward.status === 'running' || forward.status === 'starting')
-  const prompting = $derived(forward.status === 'starting' && (outputSize[forward.id] ?? 0) > 0)
+  // The trust dialog asks about an unknown server key; the mini-terminal is for the prompts after it.
+  const prompting = $derived(
+    forward.status === 'starting' && (outputSize[forward.id] ?? 0) > 0 && !forwardAsksTrust(forward.id),
+  )
   const connected = $derived(hosts.find((h) => h.id === forward.host_id)?.connected ?? false)
 </script>
 

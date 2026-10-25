@@ -40,6 +40,7 @@ vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { proposeDimensions() { ret
 
 import Sidebar from '../sidebar/Sidebar.svelte'
 import { hosts } from '../stores.svelte'
+import { trust } from '../trust.svelte'
 import { forwards, refreshForwards } from './forwards.svelte'
 import ForwardsView from './ForwardsView.svelte'
 
@@ -57,6 +58,7 @@ describe('ForwardsView', () => {
     vi.resetAllMocks()
     handlers.clear()
     written.length = 0
+    trust.queue.length = 0
     api.EventsOn.mockImplementation((name: string, h: Handler) => {
       handlers.set(name, h)
       return () => handlers.delete(name)
@@ -121,6 +123,20 @@ describe('ForwardsView', () => {
     expect(written.join('')).toBe('Password: ')
     handlers.get('fwd:state:f2')?.({ status: 'running', error: '', conns: 0, retryable: true })
     await vi.waitFor(() => expect(within(card('SOCKS')).queryByTestId('mini-terminal')).toBeNull())
+  })
+
+  it('keeps the mini-terminal closed while the trust dialog asks for the forward', async () => {
+    render(ForwardsView)
+    const q = { id: 'q1', session_id: '', forward_id: 'f2', host: 'prod.example.test', port: 22, user: 'deploy', key_type: 'ssh-ed25519', fingerprint: 'SHA256:x' }
+    trust.queue.push(q)
+    handlers.get('fwd:state:f2')?.({ status: 'starting', error: '', conns: 0, retryable: true })
+    handlers.get('fwd:data:f2')?.(btoa('unknown server, SHA256:x\r\n'))
+    await vi.waitFor(() => expect(within(card('SOCKS')).getByText('подключение')).toBeTruthy())
+    expect(within(card('SOCKS')).queryByTestId('mini-terminal')).toBeNull()
+    trust.queue.length = 0
+    handlers.get('fwd:data:f2')?.(btoa('Password: '))
+    await vi.waitFor(() => expect(within(card('SOCKS')).getByTestId('mini-terminal')).toBeTruthy())
+    expect(written.join('')).toBe('unknown server, SHA256:x\r\nPassword: ')
   })
 
   it('right-click in the mini-terminal pastes and does not open the card menu', async () => {

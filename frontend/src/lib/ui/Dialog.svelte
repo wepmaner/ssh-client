@@ -9,14 +9,18 @@
     children: Snippet
     footer?: Snippet
     width?: number
+    /** Stacking level of the scrim; an app-modal dialog sits above the others. */
+    layer?: number
+    /** What gets focus on open; by default the first field. */
+    autofocus?: string
   }
-  let { open, title, onclose, children, footer, width = 500 }: Props = $props()
+  let { open, title, onclose, children, footer, width = 500, layer = 10, autofocus = 'input, select, textarea' }: Props = $props()
 
   let panel: HTMLDivElement | undefined = $state()
 
   // Move focus into the first field once the panel is mounted.
   $effect(() => {
-    if (open && panel) panel.querySelector<HTMLElement>('input, select, textarea')?.focus()
+    if (open && panel) panel.querySelector<HTMLElement>(autofocus)?.focus()
   })
 
   function onkeydown(e: KeyboardEvent) {
@@ -30,7 +34,7 @@
 <svelte:window {onkeydown} />
 
 {#if open}
-  <div class="scrim" role="presentation" onmousedown={(e) => e.target === e.currentTarget && onclose()}>
+  <div class="scrim" role="presentation" style:z-index={layer} onmousedown={(e) => e.target === e.currentTarget && onclose()}>
     <div class="panel" role="dialog" aria-modal="true" aria-label={title} bind:this={panel} style:width="{width}px">
       <header>
         <h2>{title}</h2>

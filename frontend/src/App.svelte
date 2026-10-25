@@ -14,6 +14,7 @@
   import TerminalView from './lib/terminal/TerminalView.svelte'
   import TitleBar from './lib/titlebar/TitleBar.svelte'
   import Toast from './lib/ui/Toast.svelte'
+  import TrustDialog from './lib/ui/TrustDialog.svelte'
 
   const titles: Record<View, string> = {
     hosts: 'Хосты',
@@ -84,6 +85,8 @@
     </div>
     <StatusBar />
   {/if}
+  <!-- Mounted before load(): trust questions of autostarted forwards arrive once ForwardAttach runs. -->
+  <TrustDialog />
   <Toast />
 </div>
 

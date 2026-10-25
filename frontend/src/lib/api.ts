@@ -34,6 +34,7 @@ export {
   SessionOpen,
   SessionResize,
   SessionWrite,
+  TrustAnswer,
   VaultCounts,
   VaultRemovePassword,
   VaultResetCorrupt,

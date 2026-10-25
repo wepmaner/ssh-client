@@ -280,6 +280,15 @@ export function SessionWrite(id: string, dataB64: string): $CancellablePromise<v
 }
 
 /**
+ * TrustAnswer answers the open trust question id: true trusts the key (it is written to
+ * known_hosts and the dial goes on), false ends the dial with «Подключение отменено: сервер не
+ * подтверждён». An unknown, answered or withdrawn id is an error.
+ */
+export function TrustAnswer(id: string, trust: boolean): $CancellablePromise<void> {
+    return $Call.ByID(3022572017, id, trust);
+}
+
+/**
  * VaultCounts returns how many keys and hosts are stored.
  */
 export function VaultCounts(): $CancellablePromise<$models.VaultCountsDTO> {
