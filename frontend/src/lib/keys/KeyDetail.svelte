@@ -122,21 +122,31 @@
       />
     {:else}
       <h1>{key.name}</h1>
+      <button type="button" class="icon-btn" title="Переименовать" aria-label="Переименовать" onclick={startRename}>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9.5 2.5l2 2L5 11l-2.75.75L3 9z" />
+          <path d="M8.25 3.75l2 2" />
+        </svg>
+      </button>
     {/if}
     <span class="chip">{typeLabel(key.type)}</span>
     {#if key.encrypted}<span class="chip">с парольной фразой</span>{/if}
     <span class="spacer"></span>
-    <Button variant="ghost" onclick={startRename}>Переименовать</Button>
     <Button variant="ghost" onclick={() => (confirmDelete = true)} style="color:var(--error)">Удалить</Button>
   </header>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 
   <div class="block">
-    <div class="label">
-      <h2>Публичный ключ</h2>
-      <Button variant="outline" onclick={copy}>Скопировать</Button>
+    <h2>Публичный ключ</h2>
+    <div class="pub">
+      <pre>{key.public_line}</pre>
+      <button type="button" class="icon-btn" title="Скопировать" aria-label="Скопировать публичный ключ" onclick={copy}>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" aria-hidden="true">
+          <rect x="4.5" y="4.5" width="8" height="8" rx="1.5" />
+          <path d="M9.5 2.5v-.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h.5" />
+        </svg>
+      </button>
     </div>
-    <pre>{key.public_line}</pre>
   </div>
 
   <dl>
@@ -236,16 +246,46 @@
   .block {
     margin-bottom: 18px;
   }
-  .label {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 8px;
-  }
   .block > h2 {
     margin-bottom: 8px;
   }
+  .icon-btn {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-control);
+    background: transparent;
+    color: var(--muted);
+    cursor: default;
+    transition: background-color 80ms;
+  }
+  .icon-btn:hover {
+    background: #262b33;
+    color: var(--text);
+  }
+  .icon-btn:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
+  }
+  header .icon-btn {
+    margin-left: -6px;
+  }
+  /* The box is as wide as the key: a short Ed25519 line stays short, a long RSA one wraps inside. */
+  .pub {
+    display: flex;
+    align-items: flex-start;
+    gap: 4px;
+    max-width: 100%;
+  }
   pre {
+    flex: 0 1 auto;
+    width: fit-content;
+    max-width: 100%;
+    min-width: 0;
     margin: 0;
     padding: 10px 12px;
     background: #15181c;
@@ -254,7 +294,7 @@
     font-family: var(--font-mono);
     font-size: 12px;
     white-space: pre-wrap;
-    word-break: break-all;
+    overflow-wrap: anywhere;
     user-select: text;
   }
   dl {

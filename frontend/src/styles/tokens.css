@@ -11,6 +11,8 @@
   --ok: #3fb950;
   --danger: #c42b1c;
   --error: #f08c7d;
+  /* Keyboard focus ring of every control: outline 2px var(--focus). */
+  --focus: #5b9cf8;
 
   --radius-control: 4px;
   --radius-card: 6px;
