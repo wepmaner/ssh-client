@@ -12,6 +12,9 @@ var (
 	ErrHostNotTrusted = errors.New("сервер не подтверждён")
 	// ErrTimeout означает превышение времени ожидания.
 	ErrTimeout = errors.New("превышено время ожидания")
+	// ErrHandshakeCap означает, что рукопожатие вместе с вопросами не уложилось в общий предел;
+	// приходит вместе с ErrTimeout.
+	ErrHandshakeCap = errors.New("превышен общий предел подключения")
 	// ErrAuthDenied означает, что сервер не принял ни ключ, ни ответы пользователя.
 	ErrAuthDenied = errors.New("доступ запрещён")
 )

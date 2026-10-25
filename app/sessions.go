@@ -272,6 +272,8 @@ func errorState(err error) SessionStateDTO {
 		st.Message = "Подключение отменено"
 	case errors.Is(err, sshclient.ErrHostKeyChanged):
 		st.Kind, st.Retryable = "hostkey", false
+	case errors.Is(err, sshclient.ErrHandshakeCap):
+		st.Kind = "other" // the card's timeout text is about the 10-second silence
 	case errors.Is(err, sshclient.ErrTimeout):
 		st.Kind = "timeout"
 	case errors.Is(err, sshclient.ErrAuthDenied):

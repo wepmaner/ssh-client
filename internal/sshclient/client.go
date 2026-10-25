@@ -111,7 +111,7 @@ func Dial(ctx context.Context, t Target, p *Prompter, kh *KnownHosts) (*ssh.Clie
 		}
 		if ctx.Err() == nil && errors.Is(hctx.Err(), context.DeadlineExceeded) {
 			// Сработал общий предел, а не молчание сервера.
-			return nil, &userError{msg: msgHandshakeCap, cause: errors.Join(ErrTimeout, hctx.Err())}
+			return nil, &userError{msg: msgHandshakeCap, cause: errors.Join(ErrTimeout, ErrHandshakeCap, hctx.Err())}
 		}
 		if errors.Is(hctx.Err(), context.DeadlineExceeded) {
 			return nil, timeoutError(hctx.Err())

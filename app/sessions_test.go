@@ -379,6 +379,8 @@ func TestErrorStateKinds(t *testing.T) {
 		retryable bool
 	}{
 		{fmt.Errorf("x: %w", sshclient.ErrTimeout), "timeout", true},
+		// The card shows the message itself: its timeout text speaks of 10 seconds.
+		{errors.Join(sshclient.ErrTimeout, sshclient.ErrHandshakeCap), "other", true},
 		{fmt.Errorf("x: %w", sshclient.ErrHostKeyChanged), "hostkey", false},
 		{fmt.Errorf("x: %w", sshclient.ErrAuthDenied), "auth", true},
 		{sshclient.ErrCancelled, "cancelled", true},

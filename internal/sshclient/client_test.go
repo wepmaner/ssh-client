@@ -335,7 +335,7 @@ func TestDialHandshakeWallTimeCapped(t *testing.T) {
 	if !errors.Is(err, ErrTimeout) {
 		t.Fatalf("err = %v", err)
 	}
-	if err.Error() != "Подключение не завершилось за 10 минут" {
+	if !errors.Is(err, ErrHandshakeCap) || err.Error() != "Подключение не завершилось за 10 минут" {
 		t.Fatalf("message = %q", err.Error())
 	}
 	if d := time.Since(start); d > 5*time.Second {
