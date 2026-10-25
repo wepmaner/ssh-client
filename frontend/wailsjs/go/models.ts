@@ -1,5 +1,39 @@
 export namespace app {
 	
+	export class ForwardDTO {
+	    id: string;
+	    name: string;
+	    kind: string;
+	    host_id: string;
+	    host_name: string;
+	    listen: string;
+	    target: string;
+	    auto_start: boolean;
+	    status: string;
+	    error: string;
+	    conns: number;
+	    retryable: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ForwardDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.kind = source["kind"];
+	        this.host_id = source["host_id"];
+	        this.host_name = source["host_name"];
+	        this.listen = source["listen"];
+	        this.target = source["target"];
+	        this.auto_start = source["auto_start"];
+	        this.status = source["status"];
+	        this.error = source["error"];
+	        this.conns = source["conns"];
+	        this.retryable = source["retryable"];
+	    }
+	}
 	export class GroupDTO {
 	    id: string;
 	    name: string;

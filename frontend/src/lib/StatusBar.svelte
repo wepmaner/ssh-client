@@ -1,19 +1,25 @@
 <script lang="ts">
+  import { forwards, runningOfHost } from './forwards/forwards.svelte'
   import { activeSession, sessions } from './sessions.svelte'
   import { hosts } from './stores.svelte'
 
   const tab = $derived(activeSession())
   const host = $derived(tab ? hosts.find((h) => h.id === tab.hostId) : undefined)
   const address = $derived(host ? `${host.user}@${host.address}:${host.port}` : '')
+  const hostForwards = $derived(tab ? runningOfHost(tab.hostId) : 0)
+  const runningForwards = $derived(forwards.list.filter((f) => f.status === 'running').length)
 
-  /** «N сессий» with Russian plural forms. */
-  function sessionsLabel(n: number): string {
+  /** Russian plural: one (1, 21), few (2–4, 22–24), many. */
+  function plural(n: number, one: string, few: string, many: string): string {
     const m10 = n % 10
     const m100 = n % 100
-    if (m10 === 1 && m100 !== 11) return `${n} сессия`
-    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return `${n} сессии`
-    return `${n} сессий`
+    if (m10 === 1 && m100 !== 11) return one
+    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few
+    return many
   }
+
+  const sessionsLabel = (n: number) => `${n} ${plural(n, 'сессия', 'сессии', 'сессий')}`
+  const forwardsLabel = (n: number) => `${n} ${plural(n, 'проброс активен', 'проброса активны', 'пробросов активны')}`
 </script>
 
 <footer class="status">
@@ -28,6 +34,7 @@
       <span class="item"><span class="dot"></span>Сессия завершена</span>
     {/if}
     {#if address}<span class="item mono">{address}</span>{/if}
+    {#if hostForwards > 0}<span class="item">Пробросы: {hostForwards}</span>{/if}
     {#if host?.key_name}
       <span class="item">
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -41,6 +48,7 @@
     <span class="item mono">{tab.cols}×{tab.rows}</span>
   {:else}
     <span class="item">{sessionsLabel(sessions.list.length)}</span>
+    {#if runningForwards > 0}<span class="item">{forwardsLabel(runningForwards)}</span>{/if}
     <span class="spacer"></span>
     <span class="item">Хосты и ключи хранятся только на этом компьютере</span>
   {/if}

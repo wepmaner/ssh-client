@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { refreshForwards } from './lib/forwards/forwards.svelte'
+  import ForwardsView from './lib/forwards/ForwardsView.svelte'
   import HostsView from './lib/hosts/HostsView.svelte'
   import KeysView from './lib/keys/KeysView.svelte'
   import { goHome, retrySession, sessions } from './lib/sessions.svelte'
@@ -28,7 +30,13 @@
     goHome()
   }
 
-  onMount(refreshAll)
+  /** Loads everything; forwards subscribe to their events, which releases autostart prompts. */
+  async function load(): Promise<void> {
+    await refreshAll()
+    if (!vault.locked && !vault.corrupt) await refreshForwards().catch(() => {})
+  }
+
+  onMount(load)
 </script>
 
 <div class="window">
@@ -36,9 +44,9 @@
   {#if !vault.ready}
     <div class="fill"></div>
   {:else if vault.corrupt}
-    <CorruptScreen error={vault.error} onreset={refreshAll} />
+    <CorruptScreen error={vault.error} onreset={load} />
   {:else if vault.locked}
-    <UnlockScreen onunlocked={refreshAll} />
+    <UnlockScreen onunlocked={load} />
   {:else}
     <div class="shell" class:hidden={!home}>
       <Sidebar />
@@ -47,6 +55,8 @@
           <KeysView />
         {:else if ui.view === 'hosts'}
           <HostsView />
+        {:else if ui.view === 'forwards'}
+          <ForwardsView />
         {:else}
           <h1 class="placeholder">{titles[ui.view]}</h1>
         {/if}

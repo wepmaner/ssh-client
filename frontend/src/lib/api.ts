@@ -1,5 +1,12 @@
 // Thin typed layer over the generated Wails bindings.
 export {
+  ForwardAttach,
+  ForwardDelete,
+  ForwardSave,
+  ForwardStart,
+  ForwardStop,
+  ForwardWrite,
+  ForwardsList,
   GetSettings,
   GroupDelete,
   GroupRename,

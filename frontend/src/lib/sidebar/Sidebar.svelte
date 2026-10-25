@@ -1,11 +1,12 @@
 <script lang="ts">
+  import { anyRunning } from '../forwards/forwards.svelte'
   import { hosts, keys, ui, type View } from '../stores.svelte'
 
-  // dot marks a section with something running; the forwards screen (Task 13) feeds it.
+  // dot marks a section with something running: a forward in the running state.
   const items: { view: View; label: string; count?: () => number; dot?: () => boolean; icon: string }[] = [
     { view: 'hosts', label: 'Хосты', count: () => hosts.length, icon: 'M2.5 3.5h11v4h-11zM2.5 8.5h11v4h-11zM4.5 5.5h.01M4.5 10.5h.01' },
     { view: 'keys', label: 'Ключи', count: () => keys.length, icon: 'M6 10a3 3 0 1 1 1.2-2.4L13.5 2.5M11 5l1.5 1.5M9.5 6.5 11 8' },
-    { view: 'forwards', label: 'Пробросы', dot: () => false, icon: 'M2.5 5.5h9M9 3l2.5 2.5L9 8M13.5 10.5h-9M7 8l-2.5 2.5L7 13' },
+    { view: 'forwards', label: 'Пробросы', dot: anyRunning, icon: 'M2.5 5.5h9M9 3l2.5 2.5L9 8M13.5 10.5h-9M7 8l-2.5 2.5L7 13' },
   ]
   const settingsIcon =
     'M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4'
