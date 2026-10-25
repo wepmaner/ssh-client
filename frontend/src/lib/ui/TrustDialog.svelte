@@ -34,7 +34,7 @@
 
 <!-- Keyed by question: the next one in the queue opens as a fresh dialog with its own focus. -->
 {#each current as q (q.id)}
-  <Dialog open title={trustTitle} onclose={() => answerTrust(q.id, false)} layer={15} autofocus="[data-cancel]">
+  <Dialog open title={trustTitle} onclose={() => answerTrust(q.id, false)} layer={15} autofocus="[data-cancel]" restoreFocus={false}>
     <p class="target">{q.user}@{hostPort(q.host, q.port)}</p>
     <div class="label">Ключ {q.key_type}, отпечаток SHA256</div>
     <div class="fp">

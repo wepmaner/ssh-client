@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte'
+  import { tick, type Snippet } from 'svelte'
   import Button from './Button.svelte'
 
   interface Props {
@@ -13,14 +13,38 @@
     layer?: number
     /** What gets focus on open; by default the first field. */
     autofocus?: string
+    /** Give focus back to what had it before the dialog opened; off for callers that do it themselves. */
+    restoreFocus?: boolean
   }
-  let { open, title, onclose, children, footer, width = 500, layer = 10, autofocus = 'input, select, textarea' }: Props = $props()
+  let {
+    open,
+    title,
+    onclose,
+    children,
+    footer,
+    width = 500,
+    layer = 10,
+    autofocus = 'input, select, textarea',
+    restoreFocus = true,
+  }: Props = $props()
 
   let panel: HTMLDivElement | undefined = $state()
 
-  // Move focus into the first field once the panel is mounted.
+  // Move focus into the first field once the panel is mounted; on close, hand it back to the
+  // element that had it, unless that left the page or the closing code focused something else.
   $effect(() => {
-    if (open && panel) panel.querySelector<HTMLElement>(autofocus)?.focus()
+    if (!open || !panel) return
+    const opener = document.activeElement
+    const self = panel
+    self.querySelector<HTMLElement>(autofocus)?.focus()
+    return () => {
+      if (!restoreFocus) return
+      void tick().then(() => {
+        const now = document.activeElement
+        const lost = now === null || now === document.body || self.contains(now)
+        if (lost && opener instanceof HTMLElement && opener.isConnected && opener !== document.body) opener.focus()
+      })
+    }
   })
 
   function onkeydown(e: KeyboardEvent) {
