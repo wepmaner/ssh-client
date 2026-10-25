@@ -735,11 +735,11 @@ git commit -m "feat: forwards API, autostart and Forwards screen"
 - Контекстные меню хостов, ключей и пробросов переводятся на системные (`application.NewContextMenu` / `window.ShowContextMenu` в v3) там, где v3 это поддерживает на Windows; `ui/Menu.svelte` остаётся для случаев, где системное меню недоступно, с пометкой в CLAUDE.md.
 - Баг DPI (Task 15 Step 1b) закрывается здесь: `UseVisualHosting: true` + `fixRestoreScale(window)` на `events.Windows.WindowUnMinimise`.
 
-- [ ] **Step 1: Ветка и инвентаризация** — `git grep -n "wailsjs\|wailsapp/wails/v2"`; зафиксировать список точек контакта в отчёте.
-- [ ] **Step 2: Go** — `go get github.com/wailsapp/wails/v3@v3.0.0-beta.25`, `main.go`, сервис, события, окно, диалоги; `go build ./... && go test ./... -count=1 && golangci-lint run ./...`.
-- [ ] **Step 3: Фронтенд** — `wails3 generate bindings`, `@wailsio/runtime`, правка `api.ts` и импортов, тесты (`npm test`, `svelte-check`), сборка `wails3 build`.
+- [x] **Step 1: Ветка и инвентаризация** — `git grep -n "wailsjs\|wailsapp/wails/v2"`; зафиксировать список точек контакта в отчёте.
+- [x] **Step 2: Go** — `go get github.com/wailsapp/wails/v3@v3.0.0-beta.25`, `main.go`, сервис, события, окно, диалоги; `go build ./... && go test ./... -count=1 && golangci-lint run ./...`.
+- [x] **Step 3: Фронтенд** — `wails3 generate bindings`, `@wailsio/runtime`, правка `api.ts` и импортов, тесты (`npm test`, `svelte-check`), сборка `wails3 build`.
 - [ ] **Step 4: Живая проверка контроллером** по списку правил нативного поведения, плюс: терминал печатает в том же кадре, события пробросов доходят, системное контекстное меню на хосте/ключе, баг DPI (развернуть → свернуть → восстановить, на двух мониторах с разным масштабом).
-- [ ] **Step 5: Документы** — CLAUDE.md «Стек» (v3 beta.25, причина), «Правила нативного поведения» (меню системные), Task 15 (сборка через `wails3 build`, `-X main.version` в `build/windows/Taskfile.yml`, Step 1b закрыт здесь); commit `feat: migrate the shell to Wails v3`.
+- [x] **Step 5: Документы** — CLAUDE.md «Стек» (v3 beta.25, причина), «Правила нативного поведения» (меню системные), Task 15 (сборка через `wails3 build`, `-X main.version` в `build/windows/Taskfile.yml`, Step 1b закрыт здесь); commit `feat: migrate the shell to Wails v3`.
 
 ### Task 13b: Окно доверия неизвестному серверу
 
@@ -806,9 +806,9 @@ git commit -m "feat: settings screen, idle lock, ssh_config and PuTTY import"
 Программа распространяется через лаунчер Stash: он ставит её как папку файлов в `%LOCALAPPDATA%\Stash\apps\<id>\` без установщика и прав администратора, сверяет файлы пакета с эталоном и обновляет по тегам GitHub-релизов. Поэтому установщика NSIS нет, а программа портативна: рядом с exe ничего не пишет, все данные держит в `%APPDATA%\sshclient\`.
 
 **Files:**
-- Modify: `main.go` (переменная версии, `WebviewUserDataPath`), `internal/appdir/appdir.go` и тест, `app/settings_api.go` (отдать версию), `frontend/src/lib/settings/*` (показ версии), `frontend/src/styles/tokens.css`, `frontend/src/lib/ui/Dialog.svelte`, `wails.json` (`info.productVersion` не трогать: версию задаёт CI)
+- Modify: `internal/appdir/appdir.go` и тест, `app/settings_api.go` (отдать версию), `frontend/src/lib/settings/*` (показ версии), `frontend/src/styles/tokens.css`, `frontend/src/lib/ui/Dialog.svelte`, `build/config.yml` (`info.version` не трогать: версию задаёт CI через `VERSION`)
 - Create: `stash.json`, `assets/icon.png` (256×256, PNG ≤ 512 КБ, допустимо плейсхолдер в стиле палитры), `.github/workflows/release.yml`, `.github/workflows/stash-ping.yml`
-- Delete: `build/darwin/*` (под Windows не нужно)
+- Уже сделано в Task 13a: `var version = "dev"` и `WebviewUserDataPath` в `main.go`, удалены `build/darwin/*` и NSIS.
 
 - [ ] **Step 1: Движение и фокус**
 
@@ -822,7 +822,9 @@ git commit -m "feat: settings screen, idle lock, ssh_config and PuTTY import"
 - Тёмный блок со значением публичного ключа не растягивается на всю ширину: `width: fit-content; max-width: 100%`, длинный RSA переносится по словам внутри (`overflow-wrap: anywhere`), короткий Ed25519 занимает ровно свою длину.
 - Тесты `KeyDetail.test.ts` обновить под иконки (поиск по `aria-label`).
 
-- [ ] **Step 1b: Масштаб растёт после «развернуть → свернуть → восстановить» (баг, 2026-10-25)**
+- [x] **Step 1b: Масштаб растёт после «развернуть → свернуть → восстановить» (баг, 2026-10-25)**
+
+Закрыт задачей 13a: на Wails v3 перенесён `restorefix_windows.go` из Stash как есть (`app/restorefix_windows.go`, `fixRestoreScale(window)` на `events.Windows.WindowUnMinimise`) и включён `UseVisualHosting: true`. Описанный ниже обход для v2 не нужен; живая проверка на двух мониторах — Task 13a Step 4.
 
 Симптом воспроизведён владельцем и контроллером (снимок после сворачивания в 1,5 раза крупнее). Причина описана в руководстве Stash (раздел 6, Wails v3, но механизм тот же): свёрнутое окно Windows паркует за экраном и числит за соседним монитором с другим масштабом; после восстановления `GetDpiForWindow` ещё ~150 мс отдаёт чужой DPI, по нему выставляется масштаб WebView2.
 
@@ -834,7 +836,7 @@ git commit -m "feat: settings screen, idle lock, ssh_config and PuTTY import"
 
 - [ ] **Step 2: Snap-раскладки при наведении на «Развернуть»**
 
-Проверить в `wails dev`. Если Wails v2 не показывает раскладки для кастомной кнопки, зафиксировать в CLAUDE.md как известное ограничение v2 и оставить двойной щелчок по заголовку и Win+Z как путь.
+Проверить в `wails3 dev`. Если Wails v3 не показывает раскладки для кастомной кнопки, зафиксировать в CLAUDE.md как известное ограничение и оставить двойной щелчок по заголовку и Win+Z как путь.
 
 - [ ] **Step 3: Шрифты**
 
@@ -843,8 +845,8 @@ git commit -m "feat: settings screen, idle lock, ssh_config and PuTTY import"
 - [ ] **Step 4: Портативность под Stash**
 
 - `internal/appdir.Dir()` возвращает `%APPDATA%\sshclient` (`os.UserConfigDir()`), а не `%LOCALAPPDATA%`; ошибка, если `APPDATA` пуст. Тесты appdir и те тесты `app`, что подменяют `LOCALAPPDATA`, переводятся на `APPDATA`. Миграция: если `%LOCALAPPDATA%\sshclient\vault.json` существует, а в новой папке ничего нет, при первом старте перенести содержимое старой папки в новую (`os.Rename`, при ошибке копирование) и записать в журнал; тест с двумя временными папками.
-- `main.go`: `Windows.WebviewUserDataPath = filepath.Join(appdir.Dir(), "WebView2")`, чтобы кэш WebView2 не создавал `%APPDATA%\sshclient.exe`.
-- `main.go`: `var version = "dev"`; CI заполняет через `-ldflags "-X main.version=X.Y.Z"`. `App.Version()` отдаёт её, экран Настроек показывает «Версия X.Y.Z» внизу.
+- `main.go`: `Windows.WebviewUserDataPath = filepath.Join(appdir.Dir(), "WebView2")` уже стоит (Task 13a); после переноса папки данных кэш переезжает вместе с ней.
+- `main.go`: `var version = "dev"` уже есть (Task 13a); CI заполняет через `wails3 build VERSION=X.Y.Z` (`-X main.version` в `build/windows/Taskfile.yml`). `App.Version()` отдаёт её, экран Настроек показывает «Версия X.Y.Z» внизу.
 - Проверить, что ни один код не пишет файлы рядом с exe и не читает пути от текущей папки (`grep -rn "os.Getwd\|\"./" --include=*.go`); известный `known_hosts` и геометрия окна уже в папке данных.
 - Публичный репозиторий: в коде, тестах, документах и `go.mod` нет локальных путей, адресов серверов и ключей, кроме фикстур `internal/keys/testdata` (происхождение описано в `testdata/README.md`). Проверка: `git grep -n -i -E "c:\\users|/c/users|@proton|BEGIN .*PRIVATE" -- . ':!internal/keys/testdata'` даёт пусто.
 
@@ -876,7 +878,7 @@ git commit -m "feat: settings screen, idle lock, ssh_config and PuTTY import"
 
 1. `actions/checkout@v5` с `fetch-depth: 0`; `actions/setup-go@v6` (`go-version-file: go.mod`); `actions/setup-node@v4` (Node 22, `cache: npm`, `cache-dependency-path: frontend/package-lock.json`).
 2. Проверки: `go vet ./...`, `go test ./... -race -count=1`, `golangci-lint run ./...` (через `golangci/golangci-lint-action@v7`), `npm ci && npm test && npx svelte-check` в `frontend`.
-3. Сборка: `go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0`; `VERSION="${GITHUB_REF_NAME#v}"`; `wails build -clean -trimpath -ldflags "-X main.version=${VERSION}"`; `mkdir dist && cp build/bin/sshclient.exe dist/`.
+3. Сборка: `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.25`; `VERSION="${GITHUB_REF_NAME#v}"`; `wails3 build VERSION=${VERSION}` (Taskfile добавляет `-trimpath` и `-X main.version`); `mkdir dist && cp build/bin/sshclient.exe dist/`.
 4. Пакет: `go run github.com/wepmaner/stash-pack/cmd/stash-pack@v0.1.5 -dir dist -manifest stash.json -version "${GITHUB_REF_NAME}" -out stash-out`.
 5. «Что нового»: текст аннотированного тега (строки `- …` — пункты, `Раздел:` — заголовок; `#` в теге не работает), иначе заголовки коммитов с прошлого тега; `[ -s notes.md ] || echo "- Без описания" > notes.md`. Шаг пишется в bash (`shell: bash`).
 6. Релиз: `gh release create "${GITHUB_REF_NAME}" stash-out/* dist/sshclient.exe --notes-file notes.md` (без `--generate-notes`).
