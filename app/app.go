@@ -161,7 +161,8 @@ func (a *App) ServiceStartup(_ context.Context, _ application.ServiceOptions) er
 	a.initVault()
 
 	ws, ok := a.startupWindowState()
-	a.mainWin = a.wapp.Window.NewWithOptions(mainWindowOptions(a.window, ws, ok))
+	// The monitors are known by now: Wails reads them when the application is created.
+	a.mainWin = a.wapp.Window.NewWithOptions(mainWindowOptions(a.window, ws, ok, a.wapp.Screen))
 	// The hook runs before the window goes away, while its geometry is readable;
 	// it never cancels the close.
 	a.mainWin.RegisterHook(events.Common.WindowClosing, func(*application.WindowEvent) {
@@ -205,7 +206,10 @@ func (a *App) previousWindowState() (model.WindowState, bool) {
 // saveWindowGeometry stores the window geometry into the vault when unlocked,
 // otherwise into window.json.
 func (a *App) saveWindowGeometry(w geometryWindow) {
-	ws := captureWindowState(w, a.previousWindowState)
+	ws, ok := captureWindowState(w, a.previousWindowState)
+	if !ok {
+		return // minimised with nothing saved before: the next start opens centred
+	}
 	if a.storeUnlocked() {
 		set := a.storeRef().Settings()
 		set.Window = ws

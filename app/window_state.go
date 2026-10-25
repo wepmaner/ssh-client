@@ -48,36 +48,84 @@ type geometryWindow interface {
 	Position() (int, int)
 	Size() (int, int)
 	IsMaximised() bool
+	IsMinimised() bool
 }
 
+// screenList is the part of the Wails screen manager the startup geometry is checked against.
+type screenList interface {
+	GetAll() []*application.Screen
+}
+
+// minimisedCoord is where Windows parks a minimised window: (-32000, -32000).
+const minimisedCoord = -32000
+
 // mainWindowOptions puts the saved geometry into the window options, so the
-// window is created in place and size instead of jumping after it shows.
-func mainWindowOptions(base application.WebviewWindowOptions, ws model.WindowState, ok bool) application.WebviewWindowOptions {
+// window is created in place and size instead of jumping after it shows. A saved
+// place that no monitor shows any more (a disconnected monitor, a minimised
+// window saved by an older build) keeps the size but opens centred.
+func mainWindowOptions(base application.WebviewWindowOptions, ws model.WindowState, ok bool, screens screenList) application.WebviewWindowOptions {
 	if !ok || ws.W <= 0 || ws.H <= 0 {
 		return base
 	}
-	base.X, base.Y = ws.X, ws.Y
 	base.Width, base.Height = ws.W, ws.H
-	base.InitialPosition = application.WindowXY
+	if onScreen(application.Rect{X: ws.X, Y: ws.Y, Width: ws.W, Height: ws.H}, screens) {
+		base.X, base.Y = ws.X, ws.Y
+		base.InitialPosition = application.WindowXY
+	}
 	if ws.Maximized {
 		base.StartState = application.WindowStateMaximised
 	}
 	return base
 }
 
+// onScreen reports whether r overlaps the work area of a monitor. Without a monitor list
+// there is nothing to check against, and the saved place is used.
+func onScreen(r application.Rect, screens screenList) bool {
+	if r.X <= minimisedCoord || r.Y <= minimisedCoord {
+		return false
+	}
+	if screens == nil {
+		return true
+	}
+	all := screens.GetAll()
+	if len(all) == 0 {
+		return true
+	}
+	for _, s := range all {
+		if s != nil && !r.Intersect(s.WorkArea).IsEmpty() {
+			return true
+		}
+	}
+	return false
+}
+
 // captureWindowState reads the geometry to save. A maximised window keeps the
-// previous un-maximised geometry to restore into.
-func captureWindowState(w geometryWindow, previous func() (model.WindowState, bool)) model.WindowState {
+// previous un-maximised geometry to restore into; a minimised one keeps the
+// previous state as it is, and with none ok is false: there is nothing to save.
+func captureWindowState(w geometryWindow, previous func() (model.WindowState, bool)) (model.WindowState, bool) {
 	var ws model.WindowState
+	if w.IsMinimised() {
+		return minimisedState(previous)
+	}
 	if w.IsMaximised() {
 		var ok bool
 		if ws, ok = previous(); !ok || ws.W <= 0 {
 			ws = model.DefaultSettings().Window
 		}
 		ws.Maximized = true
-		return ws
+		return ws, true
 	}
 	ws.X, ws.Y = w.Position()
+	if ws.X <= minimisedCoord || ws.Y <= minimisedCoord {
+		return minimisedState(previous)
+	}
 	ws.W, ws.H = w.Size()
-	return ws
+	return ws, true
+}
+
+func minimisedState(previous func() (model.WindowState, bool)) (model.WindowState, bool) {
+	if ws, ok := previous(); ok && ws.W > 0 {
+		return ws, true
+	}
+	return model.WindowState{}, false
 }
