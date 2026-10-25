@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-const { getSettings, vaultState, keysList } = vi.hoisted(() => ({
+const { getSettings, vaultState, keysList, vaultLock } = vi.hoisted(() => ({
   getSettings: vi.fn(),
   vaultState: vi.fn(),
   keysList: vi.fn(() => Promise.resolve([])),
+  vaultLock: vi.fn(() => Promise.resolve()),
 }))
 vi.mock('./api', async () => {
   const model = await import('../../bindings/sshclient/internal/model/models')
@@ -13,12 +14,14 @@ vi.mock('./api', async () => {
     GroupsList: () => Promise.resolve([]),
     KeysList: keysList,
     VaultState: vaultState,
+    VaultLock: vaultLock,
     errorText: String,
     model,
   }
 })
 
-import { refreshAll, refreshSettings, settings, vault } from './stores.svelte'
+import { forwards } from './forwards/forwards.svelte'
+import { hosts, lockVault, refreshAll, refreshSettings, settings, vault } from './stores.svelte'
 
 describe('stores', () => {
   it('settings changes notify subscribers after refreshSettings', async () => {
@@ -42,5 +45,15 @@ describe('stores', () => {
     await refreshAll()
     expect(vault.ready).toBe(true)
     expect(vault.error).toBe('boom')
+  })
+
+  it('the idle lock drops the forwards with the hosts', async () => {
+    hosts.push({ id: 'h1', name: 'prod-1' } as never)
+    forwards.list.push({ id: 'f1', name: 'Postgres', host_name: 'prod-1', listen: '127.0.0.1:5432' } as never)
+    vaultState.mockResolvedValue({ locked: true, has_password: true, corrupt: false })
+    await lockVault()
+    expect(vaultLock).toHaveBeenCalled()
+    expect(hosts).toHaveLength(0)
+    expect(forwards.list).toHaveLength(0)
   })
 })

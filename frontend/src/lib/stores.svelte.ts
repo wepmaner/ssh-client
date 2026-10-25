@@ -1,4 +1,6 @@
 import { GetSettings, GroupsList, HostsList, KeysList, VaultLock, VaultState, app, errorText, model } from './api'
+// A cycle (forwards.svelte imports toast from here); both sides use the other only inside functions.
+import { forwards } from './forwards/forwards.svelte'
 
 export const vault = $state({
   ready: false,
@@ -82,8 +84,9 @@ export async function refreshAll(): Promise<void> {
 
 /**
  * Locks the vault after the idle timeout: Go wipes the key, the UI drops its copies of the
- * hosts and keys and shows the unlock screen. Open sessions keep running behind it. A refusal
- * is shown as a toast and rethrown, so the idle timer counts down again.
+ * hosts, keys and forwards and shows the unlock screen. Open sessions and running forwards keep
+ * running behind it; the forwards list is fetched again on unlock. A refusal is shown as a toast
+ * and rethrown, so the idle timer counts down again.
  */
 export async function lockVault(): Promise<void> {
   try {
@@ -95,5 +98,7 @@ export async function lockVault(): Promise<void> {
   keys.splice(0, keys.length)
   hosts.splice(0, hosts.length)
   groups.splice(0, groups.length)
+  // The event subscriptions stay: the next refreshForwards keeps them for the same ids.
+  forwards.list.splice(0, forwards.list.length)
   await refreshVault().catch(() => Object.assign(vault, { locked: true }))
 }
