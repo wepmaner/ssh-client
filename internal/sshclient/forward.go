@@ -71,9 +71,11 @@ type ForwardRunner struct {
 	state        ForwardState
 	events       chan ForwardState // сам канал не меняется; закрывается в Stop
 	eventsClosed bool
-	started      bool // Start успешно завершился
-	stopped      bool // вызван Stop
-	closing      bool // ресурсы закрыты (Stop или отмена ctx), новые не устанавливаются
+	started      bool            // Start успешно завершился
+	stopped      bool            // вызван Stop
+	closing      bool            // ресурсы закрыты (Stop или отмена ctx), новые не устанавливаются
+	failed       bool            // локальный слушатель сломался: статус error окончательный, переподключения нет
+	ctx          context.Context // контекст работы после успешного Start; для SOCKS-подключений
 	cancel       context.CancelFunc
 	ln           net.Listener // локальный слушатель L/D
 	client       *ssh.Client  // nil во время переподключения
@@ -83,6 +85,11 @@ type ForwardRunner struct {
 
 // NewForwardRunner создаёт остановленный раннер. dial вызывается при Start и при каждом
 // переподключении; возвращённый клиент принадлежит раннеру и закрывается им.
+//
+// Контракт dial: при отмене ctx он должен быстро вернуться (Stop отменяет ctx и ждёт все
+// вызовы dial). Интерактивные вопросы внутри dial (парольная фраза, пароль, доверие ключу
+// сервера) тоже обязаны следить за ctx, иначе Stop будет ждать ответа пользователя.
+// Переподключение вызывает dial без участия пользователя.
 func NewForwardRunner(f model.Forward, dial func(ctx context.Context) (*ssh.Client, error)) *ForwardRunner {
 	r := &ForwardRunner{
 		f:       f,
@@ -167,6 +174,7 @@ func (r *ForwardRunner) Start(ctx context.Context) error {
 		return ErrForwardStopped
 	}
 	r.ln, r.client, r.rln = ln, client, rln
+	r.ctx = runCtx
 	r.started = true
 	r.setLocked(ForwardState{Status: ForwardRunning})
 	r.wg.Add(3)
@@ -184,7 +192,7 @@ func (r *ForwardRunner) Start(ctx context.Context) error {
 	go func() {
 		defer r.wg.Done()
 		if ln != nil {
-			r.acceptLocal(ln)
+			r.acceptLocal(runCtx, ln)
 		} else {
 			r.acceptRemote(runCtx, rln)
 		}
@@ -212,7 +220,7 @@ func (r *ForwardRunner) open(ctx context.Context) (ln net.Listener, client *ssh.
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		rln, err = r.listenRemote(client)
+		rln, err = r.listenRemote(ctx, client)
 		if err != nil {
 			closeQuietly(client)
 			return nil, nil, nil, err
@@ -223,8 +231,12 @@ func (r *ForwardRunner) open(ctx context.Context) (ln net.Listener, client *ssh.
 	}
 }
 
-func (r *ForwardRunner) listenRemote(client *ssh.Client) (net.Listener, error) {
+// listenRemote запрашивает порт на сервере. Запрос ждёт ответа сервера, поэтому отмена ctx
+// закрывает клиент: иначе Stop ждал бы зависший сервер.
+func (r *ForwardRunner) listenRemote(ctx context.Context, client *ssh.Client) (net.Listener, error) {
+	stop := context.AfterFunc(ctx, func() { closeQuietly(client) })
 	rln, err := client.Listen("tcp", r.f.Listen)
+	stop()
 	if err != nil {
 		return nil, fmt.Errorf("сервер не открыл порт %s: %w", r.f.Listen, err)
 	}
@@ -283,7 +295,7 @@ func (r *ForwardRunner) supervise(ctx context.Context, client *ssh.Client) {
 	for {
 		_ = client.Wait() //nolint:gosec // G104: причина обрыва не нужна, важен сам факт
 		r.mu.Lock()
-		if r.closing {
+		if r.closing || r.failed {
 			r.mu.Unlock()
 			return
 		}
@@ -313,14 +325,14 @@ func (r *ForwardRunner) reconnect(ctx context.Context) *ssh.Client {
 		client, err := r.dial(ctx)
 		var rln net.Listener
 		if err == nil && r.f.Kind == "R" {
-			if rln, err = r.listenRemote(client); err != nil {
+			if rln, err = r.listenRemote(ctx, client); err != nil {
 				closeQuietly(client)
 				client = nil
 			}
 		}
 
 		r.mu.Lock()
-		if r.closing {
+		if r.closing || r.failed {
 			r.mu.Unlock()
 			closeAll(nil, rln, client)
 			return nil
@@ -345,7 +357,7 @@ func (r *ForwardRunner) reconnect(ctx context.Context) *ssh.Client {
 }
 
 // acceptLocal принимает соединения на локальном порту L/D.
-func (r *ForwardRunner) acceptLocal(ln net.Listener) {
+func (r *ForwardRunner) acceptLocal(ctx context.Context, ln net.Listener) {
 	for {
 		c, err := ln.Accept()
 		if err != nil {
@@ -365,7 +377,7 @@ func (r *ForwardRunner) acceptLocal(ln net.Listener) {
 				_ = r.socks.ServeConn(c) //nolint:gosec // G104: ошибка клиента SOCKS касается только этого соединения
 				return
 			}
-			remote, err := client.Dial("tcp", r.f.Target)
+			remote, err := client.DialContext(ctx, "tcp", r.f.Target)
 			if err != nil {
 				return
 			}
@@ -399,14 +411,20 @@ func (r *ForwardRunner) acceptRemote(ctx context.Context, rln net.Listener) {
 	}
 }
 
-// listenerFailed переводит раннер в error, если локальный слушатель сломался не из-за остановки.
+// listenerFailed обрабатывает поломку локального слушателя не из-за остановки: слушатель и клиент
+// закрываются, статус error остаётся до Stop, переподключения не будет.
 func (r *ForwardRunner) listenerFailed(err error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closing {
+	if r.closing || r.failed {
+		r.mu.Unlock()
 		return
 	}
+	r.failed = true
+	ln, client, rln := r.ln, r.client, r.rln
+	r.ln, r.client, r.rln = nil, nil, nil
 	r.setLocked(ForwardState{Status: ForwardError, Error: fmt.Sprintf("локальный порт %s: %v", r.f.Listen, err), Conns: r.state.Conns})
+	r.mu.Unlock()
+	closeAll(ln, rln, client)
 }
 
 // track регистрирует принятое соединение. needClient — нужен живой клиент (L/D); false в ok
@@ -414,7 +432,7 @@ func (r *ForwardRunner) listenerFailed(err error) {
 func (r *ForwardRunner) track(c net.Conn, needClient bool) (*ssh.Client, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closing || (needClient && r.client == nil) {
+	if r.closing || r.failed || (needClient && r.client == nil) {
 		return nil, false
 	}
 	r.conns[c] = struct{}{}
@@ -431,14 +449,15 @@ func (r *ForwardRunner) untrack(c net.Conn) {
 }
 
 // socksDial открывает соединение к цели SOCKS-запроса через текущий SSH-клиент.
+// Контекст библиотеки (context.Background) не отменяется, поэтому используется контекст раннера.
 func (r *ForwardRunner) socksDial(_ context.Context, network, addr string) (net.Conn, error) {
 	r.mu.Lock()
-	client := r.client
+	client, ctx := r.client, r.ctx
 	r.mu.Unlock()
-	if client == nil {
+	if client == nil || ctx == nil {
 		return nil, errReconnecting
 	}
-	return client.Dial(network, addr)
+	return client.DialContext(ctx, network, addr)
 }
 
 // setLocked меняет состояние и отправляет событие; вызывается под r.mu. Отправка не блокирует:
@@ -513,15 +532,17 @@ func (p wgPool) Submit(f func()) error {
 	return nil
 }
 
-// closeAll закрывает то, что не nil.
+// closeAll закрывает то, что не nil. Клиент закрывается первым: Close слушателя R отправляет
+// cancel-tcpip-forward и ждёт ответа, на зависшем соединении это заблокировало бы Stop; с
+// закрытым клиентом запрос сразу завершается ошибкой.
 func closeAll(ln, rln net.Listener, client *ssh.Client) {
-	for _, l := range []net.Listener{ln, rln} {
+	if client != nil {
+		closeQuietly(client)
+	}
+	for _, l := range []net.Listener{rln, ln} {
 		if l != nil {
 			closeQuietly(l)
 		}
-	}
-	if client != nil {
-		closeQuietly(client)
 	}
 }
 

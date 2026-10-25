@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
@@ -33,6 +34,7 @@ type Server struct {
 	addr    string
 	hostKey ssh.PublicKey
 	wg      sync.WaitGroup
+	frozen  atomic.Bool
 
 	mu     sync.Mutex
 	conns  []net.Conn
@@ -182,6 +184,10 @@ func (s *Server) Addr() string { return s.addr }
 // HostKey — публичный ключ сервера.
 func (s *Server) HostKey() ssh.PublicKey { return s.hostKey }
 
+// FreezeConnections имитирует зависшее соединение без FIN/RST: сервер перестаёт отвечать на
+// глобальные запросы (tcpip-forward, cancel-tcpip-forward и прочие), соединения остаются открытыми.
+func (s *Server) FreezeConnections() { s.frozen.Store(true) }
+
 // DropConnections рвёт все живые клиентские соединения, как при обрыве сети.
 // Сервер продолжает принимать новые подключения.
 func (s *Server) DropConnections() {
@@ -218,6 +224,9 @@ func (s *Server) serveConn(c net.Conn, cfg *ssh.ServerConfig) {
 	go func() {
 		defer s.wg.Done()
 		for req := range reqs {
+			if s.frozen.Load() {
+				continue // зависший сервер: запрос остаётся без ответа, соединение открыто
+			}
 			if fw.handle(req) {
 				continue
 			}

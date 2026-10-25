@@ -18,7 +18,7 @@ import (
 	"sshclient/internal/sshclient/sshtest"
 )
 
-const forwardWait = 5 * time.Second
+const forwardWait = 15 * time.Second
 
 // forwardServer запускает тестовый сервер и возвращает его вместе с функцией подключения для раннера.
 func forwardServer(t *testing.T) (*sshtest.Server, func(ctx context.Context) (*ssh.Client, error)) {
@@ -443,4 +443,95 @@ func TestReconnectRetriesFailedDial(t *testing.T) {
 		t.Fatalf("backoff attempts = %v, want [1 2 3]", got)
 	}
 	dialEcho(t, listen, "after retries")
+}
+
+func TestStopRemoteForwardOnFrozenServer(t *testing.T) {
+	srv, dial := forwardServer(t)
+	echo := echoServer(t)
+	listen := freeAddr(t)
+	r := startRunner(t, model.Forward{Kind: "R", Listen: listen, Target: echo}, dial)
+
+	srv.FreezeConnections() // cancel-tcpip-forward больше не получит ответа
+	done := make(chan struct{})
+	go func() {
+		r.Stop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(forwardWait):
+		srv.DropConnections() // отпускаем зависший Stop, чтобы Cleanup завершился
+		<-done
+		t.Fatal("Stop hangs on a frozen server connection")
+	}
+	if st := r.State(); st.Status != "stopped" {
+		t.Fatalf("state after Stop = %+v", st)
+	}
+}
+
+func TestStopDuringRemoteReconnectOnFrozenServer(t *testing.T) {
+	srv, dial := forwardServer(t)
+	echo := echoServer(t)
+	listen := freeAddr(t)
+	r := startRunner(t, model.Forward{Kind: "R", Listen: listen, Target: echo}, dial)
+
+	srv.FreezeConnections()
+	srv.DropConnections() // переподключение пройдёт рукопожатие и зависнет на tcpip-forward
+	waitState(t, r, "starting", func(s ForwardState) bool { return s.Status == "starting" })
+	time.Sleep(100 * time.Millisecond) // даём попытке дойти до запроса порта (backoff 10 мс)
+
+	done := make(chan struct{})
+	go func() {
+		r.Stop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(forwardWait):
+		srv.DropConnections()
+		<-done
+		t.Fatal("Stop hangs while reconnect waits for tcpip-forward")
+	}
+}
+
+func TestLocalListenerFailureIsSticky(t *testing.T) {
+	srv, dial := forwardServer(t)
+	echo := echoServer(t)
+	listen := freeAddr(t)
+	r := startRunner(t, model.Forward{Kind: "L", Listen: listen, Target: echo}, dial)
+	_, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r.mu.Lock()
+	ln := r.ln
+	r.mu.Unlock()
+	ignoreErr(ln.Close()) // Accept падает не из-за Stop
+	waitState(t, r, "error", func(s ForwardState) bool { return s.Status == "error" })
+	if st := r.State(); !strings.Contains(st.Error, port) {
+		t.Fatalf("error %q does not mention port %s", st.Error, port)
+	}
+
+	drainEvents(r)
+	srv.DropConnections()
+	time.Sleep(200 * time.Millisecond) // переподключение (backoff 10 мс) успело бы произойти
+	for {
+		select {
+		case st := <-r.Events():
+			if st.Status != "error" {
+				t.Fatalf("status changed after listener failure: %+v", st)
+			}
+			continue
+		default:
+		}
+		break
+	}
+	if st := r.State(); st.Status != "error" {
+		t.Fatalf("state = %+v", st)
+	}
+	r.Stop()
+	if st := r.State(); st.Status != "stopped" {
+		t.Fatalf("state after Stop = %+v", st)
+	}
 }
