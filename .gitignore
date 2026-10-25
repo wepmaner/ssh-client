@@ -13,3 +13,4 @@ notes.md
 *.exe
 *.syso
 .task/
+!assets/icon.png

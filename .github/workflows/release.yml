@@ -1,0 +1,91 @@
+name: release
+
+# A pushed tag vX.Y.Z builds sshclient.exe, packs it for Stash and publishes the release.
+# Windows runner: Wails v3 builds natively there, and go test -race needs cgo (gcc is preinstalled).
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      APP_ID: ssh-client # id from stash.json; never changes
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the whole history and tags, for the release notes
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Go checks
+        env:
+          CGO_ENABLED: '1' # -race needs cgo
+        run: |
+          go vet ./...
+          go test ./... -race -count=1
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.15.0
+
+      - name: Frontend checks
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test
+          npx svelte-check
+
+      - name: Build
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.25
+          wails3 build VERSION="${VERSION}"
+          mkdir -p dist
+          cp build/bin/sshclient.exe dist/
+
+      - name: Stash package
+        run: go run github.com/wepmaner/stash-pack/cmd/stash-pack@v0.1.5 -dir dist -manifest stash.json -version "${GITHUB_REF_NAME}" -out stash-out
+
+      - name: Release notes # the annotated tag text, else commit subjects since the previous tag
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          git fetch --force --tags --quiet
+          if [ "$(git cat-file -t "$tag")" = "tag" ]; then
+            git tag -l --format='%(contents)' "$tag" | sed '/-----BEGIN PGP/,$d' \
+              | sed -E 's/^([^-#[:space:]].*):[[:space:]]*$/## \1/' > notes.md
+          else
+            prev=$(git describe --tags --abbrev=0 "${tag}^" 2>/dev/null || true)
+            git log --no-merges --format='%s' ${prev:+$prev..}"$tag" \
+              | grep -vE '^[[:space:].]*$' | sed 's/^/- /' > notes.md
+          fi
+          [ -s notes.md ] || echo "- Без описания" > notes.md
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" stash-out/* dist/sshclient.exe --notes-file notes.md
+
+      - name: Refresh the Stash catalogue # fails until the app has a CI token in Stash
+        continue-on-error: true
+        env:
+          STASH_CI_TOKEN: ${{ secrets.STASH_CI_TOKEN }}
+        run: |
+          curl -fsS -X POST -H "Authorization: Bearer ${STASH_CI_TOKEN}" \
+            "https://stash.stash-worker.workers.dev/v1/admin/refresh?app=${APP_ID}"

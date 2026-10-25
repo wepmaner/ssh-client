@@ -1,0 +1,15 @@
+{
+  "id": "ssh-client",
+  "name": "SSH-клиент",
+  "description": "Лёгкий SSH-клиент для Windows 11: хосты, ключи, терминал с вкладками, пробросы портов.",
+  "icon": "terminal",
+  "image": "assets/icon.png",
+  "hue": 215,
+  "kind": "exe",
+  "entry": "sshclient.exe",
+  "data": ["${APPDATA}\\sshclient"],
+  "requirements": [
+    { "label": "Windows 10 2004+ (WebView2 Runtime)", "check": { "type": "os", "min": "10.0.19041" } }
+  ],
+  "minStash": "0.1.9"
+}
