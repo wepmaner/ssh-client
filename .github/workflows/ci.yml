@@ -1,0 +1,68 @@
+name: ci
+
+# The release checks on every push to v1/main and on pull requests: vet, race tests, lint,
+# frontend tests and types, and a full wails3 build. Nothing is packed or released here.
+# Windows runner for the same reasons as release.yml (native Wails build, cgo for -race).
+
+on:
+  push:
+    branches: [v1, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Go version # the toolchain line of go.mod, not the minimum go line
+        run: |
+          want=$(sed -n 's/^toolchain //p' go.mod | tr -d '\r')
+          got=$(go env GOVERSION)
+          echo "go.mod toolchain ${want}, running ${got}"
+          [ -n "$want" ] && [ "$got" = "$want" ]
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Go checks
+        env:
+          CGO_ENABLED: '1' # -race needs cgo
+        run: |
+          go vet ./...
+          go test ./... -race -count=1
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.15.0
+
+      - name: Frontend checks
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test
+          npx svelte-check
+
+      - name: Build
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.25
+          wails3 build VERSION=0.0.0-ci
+          test -f build/bin/sshclient.exe

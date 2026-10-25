@@ -2,10 +2,13 @@ name: release
 
 # A pushed tag vX.Y.Z builds sshclient.exe, packs it for Stash and publishes the release.
 # Windows runner: Wails v3 builds natively there, and go test -race needs cgo (gcc is preinstalled).
+# Run workflow by hand (workflow_dispatch) is the dry run before a tag: the same checks, build
+# and Stash package as version 0.0.0-dev, uploaded as a run artifact; nothing is released.
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,6 +18,9 @@ jobs:
     runs-on: windows-latest
     env:
       APP_ID: ssh-client # id from stash.json; never changes
+      # The release tag; a dry run packs a placeholder version and releases nothing.
+      TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.0.0-dev' }}
+      IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
     defaults:
       run:
         shell: bash
@@ -26,6 +32,13 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+
+      - name: Go version # the toolchain line of go.mod, not the minimum go line
+        run: |
+          want=$(sed -n 's/^toolchain //p' go.mod | tr -d '\r')
+          got=$(go env GOVERSION)
+          echo "go.mod toolchain ${want}, running ${got}"
+          [ -n "$want" ] && [ "$got" = "$want" ]
 
       - uses: actions/setup-node@v4
         with:
@@ -54,18 +67,28 @@ jobs:
 
       - name: Build
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${TAG#v}"
           go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.25
           wails3 build VERSION="${VERSION}"
           mkdir -p dist
           cp build/bin/sshclient.exe dist/
 
       - name: Stash package
-        run: go run github.com/wepmaner/stash-pack/cmd/stash-pack@v0.1.5 -dir dist -manifest stash.json -version "${GITHUB_REF_NAME}" -out stash-out
+        run: go run github.com/wepmaner/stash-pack/cmd/stash-pack@v0.1.5 -dir dist -manifest stash.json -version "${TAG}" -out stash-out
+
+      - name: Dry-run artifact
+        if: env.IS_TAG != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshclient-dry-run
+          path: |
+            stash-out/*
+            dist/sshclient.exe
 
       - name: Release notes # the annotated tag text, else commit subjects since the previous tag
+        if: env.IS_TAG == 'true'
         run: |
-          tag="${GITHUB_REF_NAME}"
+          tag="${TAG}"
           git fetch --force --tags --quiet
           if [ "$(git cat-file -t "$tag")" = "tag" ]; then
             git tag -l --format='%(contents)' "$tag" | sed '/-----BEGIN PGP/,$d' \
@@ -78,11 +101,13 @@ jobs:
           [ -s notes.md ] || echo "- Без описания" > notes.md
 
       - name: Release
+        if: env.IS_TAG == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" stash-out/* dist/sshclient.exe --notes-file notes.md
+        run: gh release create "${TAG}" stash-out/* dist/sshclient.exe --notes-file notes.md
 
       - name: Refresh the Stash catalogue # fails until the app has a CI token in Stash
+        if: env.IS_TAG == 'true'
         continue-on-error: true
         env:
           STASH_CI_TOKEN: ${{ secrets.STASH_CI_TOKEN }}
