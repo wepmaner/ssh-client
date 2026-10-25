@@ -320,3 +320,55 @@ func TestRecoverCorruptWithoutVaultKeepsOlderCorrupt(t *testing.T) {
 		t.Fatalf("older corrupt copy = %q, %v", got, err)
 	}
 }
+
+func TestStoreLockDropsKeyMaterial(t *testing.T) {
+	path := newVaultPath(t)
+	v := mustOpen(t, path)
+	s := NewStore(v)
+	if err := s.Lock(); !errors.Is(err, ErrNoPassword) {
+		t.Fatalf("lock without a password: %v", err)
+	}
+	if _, err := s.SaveKey(model.Key{Name: "k", Private: []byte("secret key bytes")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SaveHost(model.Host{Address: "h.example.test", User: "u"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.SetPassword([]byte("correct horse")); err != nil {
+		t.Fatal(err)
+	}
+	dek := v.dek
+	priv := v.data.Keys[0].Private
+
+	if err := s.Lock(); err != nil {
+		t.Fatal(err)
+	}
+	if !v.Locked() || v.Data() != nil || len(s.Keys()) != 0 || len(s.Hosts()) != 0 {
+		t.Fatal("locked store still serves data")
+	}
+	if !zeroed(dek) || !zeroed(priv) {
+		t.Fatal("key material left in memory")
+	}
+	if _, err := s.SaveHost(model.Host{Address: "x"}); err == nil {
+		t.Fatal("save while locked")
+	}
+	if err := s.Lock(); err != nil {
+		t.Fatalf("second lock: %v", err)
+	}
+
+	if err := v.Unlock([]byte("correct horse")); err != nil {
+		t.Fatal(err)
+	}
+	if k := s.Keys(); len(k) != 1 || string(k[0].Private) != "secret key bytes" || len(s.Hosts()) != 1 {
+		t.Fatalf("unlock did not restore the data: %+v", k)
+	}
+}
+
+func zeroed(b []byte) bool {
+	for _, c := range b {
+		if c != 0 {
+			return false
+		}
+	}
+	return len(b) > 0
+}

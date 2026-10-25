@@ -111,6 +111,35 @@ func (s *Store) Hosts() []model.Host {
 	return read(s, func(d *model.VaultData) []model.Host { return slices.Clone(d.Hosts) })
 }
 
+// AddHosts inserts new hosts in one save and returns them with their IDs. An empty name
+// becomes the address, as in SaveHost.
+func (s *Store) AddHosts(hosts []model.Host) ([]model.Host, error) {
+	out := make([]model.Host, 0, len(hosts))
+	err := s.mutate(func(d *model.VaultData) error {
+		now := time.Now().UTC()
+		for _, h := range hosts {
+			if h.Name == "" {
+				h.Name = h.Address
+			}
+			h.ID, h.CreatedAt = uuid.NewString(), now
+			d.Hosts = append(d.Hosts, h)
+			out = append(out, h)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Lock locks the vault under the store lock, so no read or save runs on the data being wiped.
+func (s *Store) Lock() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.v.Lock()
+}
+
 // SaveHost inserts or updates a host and returns the stored value.
 func (s *Store) SaveHost(h model.Host) (model.Host, error) {
 	err := s.mutate(func(d *model.VaultData) error {

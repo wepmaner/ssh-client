@@ -139,6 +139,26 @@ func (v *Vault) Unlock(password []byte) error {
 	return nil
 }
 
+// Lock forgets the DEK and the decrypted data, zeroing the key bytes and the private keys,
+// so only the password opens the vault again. A vault without a password cannot be locked;
+// locking a locked vault does nothing.
+func (v *Vault) Lock() error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.env.Wrap != WrapPassword {
+		return ErrNoPassword
+	}
+	if v.dek == nil {
+		return nil
+	}
+	clear(v.dek)
+	for i := range v.data.Keys {
+		clear(v.data.Keys[i].Private)
+	}
+	v.dek, v.data = nil, nil
+	return nil
+}
+
 // Save encrypts the data and writes it atomically, keeping the previous file
 // as <path>.bak.
 func (v *Vault) Save() error {

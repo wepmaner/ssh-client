@@ -15,6 +15,8 @@ var (
 	ErrWrongPassword = errors.New("store: wrong password")
 	// ErrCorrupt is returned when the vault file is damaged or belongs to another user.
 	ErrCorrupt = errors.New("store: vault file is corrupt or belongs to another user")
+	// ErrNoPassword is returned when locking a vault that only DPAPI protects: nothing could unlock it again.
+	ErrNoPassword = errors.New("store: vault has no password")
 )
 
 const keyLen = 32

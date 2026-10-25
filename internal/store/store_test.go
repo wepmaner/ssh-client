@@ -181,3 +181,18 @@ func TestKeyFormatSurvivesReopen(t *testing.T) {
 		t.Fatalf("reopened key: %+v", k)
 	}
 }
+
+func TestAddHostsSavesAllAtOnce(t *testing.T) {
+	s := newTestStore(t)
+	added, err := s.AddHosts([]model.Host{{Address: "a.example.test", User: "u"}, {Name: "b", Address: "b.example.test", User: "u"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := s.Hosts()
+	if len(added) != 2 || len(all) != 2 || all[0].ID == "" || all[0].ID == all[1].ID || all[0].Name != "a.example.test" || all[1].CreatedAt.IsZero() {
+		t.Fatalf("hosts %+v", all)
+	}
+	if added[1].ID != all[1].ID {
+		t.Fatalf("returned %+v", added)
+	}
+}
