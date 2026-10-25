@@ -60,6 +60,8 @@ func UnmarshalEnvelope(b []byte) (Envelope, error) {
 const (
 	kdfSaltLen      = 16
 	kdfMaxMemoryKiB = 1 << 20 // 1 GiB ceiling against absurd allocations from a damaged file
+	kdfMaxTime      = 64      // passes; a damaged file must not hang the unlock for minutes
+	kdfMaxThreads   = 64
 	dekNonceLen     = 12
 )
 
@@ -70,7 +72,7 @@ func validatePasswordWrap(e Envelope) error {
 		return errors.New("missing kdf")
 	case len(k.Salt) != kdfSaltLen:
 		return errors.New("bad kdf salt")
-	case k.Time < 1 || k.Threads < 1:
+	case k.Time < 1 || k.Time > kdfMaxTime || k.Threads < 1 || k.Threads > kdfMaxThreads:
 		return errors.New("bad kdf time or threads")
 	case k.MemoryKiB < 8*uint32(k.Threads) || k.MemoryKiB > kdfMaxMemoryKiB:
 		return errors.New("bad kdf memory")
