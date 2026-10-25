@@ -83,10 +83,7 @@ func Dial(ctx context.Context, t Target, p *Prompter, kh *KnownHosts) (*ssh.Clie
 	nd := net.Dialer{Timeout: dialTimeout}
 	conn, err := nd.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		if isTimeout(err) {
-			return nil, timeoutError(err)
-		}
-		return nil, fmt.Errorf("подключение к %s: %w", addr, err)
+		return nil, dialError(addr, err)
 	}
 	d.conn = conn
 

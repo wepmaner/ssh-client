@@ -1,0 +1,87 @@
+package sshclient
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net"
+	"os"
+	"strings"
+	"testing"
+)
+
+// opError is the shape net.Dialer returns: dial tcp → connectex (or connect) → errno.
+func opError(errno error) error {
+	return &net.OpError{Op: "dial", Net: "tcp", Err: &os.SyscallError{Syscall: "connectex", Err: errno}}
+}
+
+func TestDialErrorTexts(t *testing.T) {
+	const addr = "example.test:2222"
+	cases := []struct {
+		name  string
+		err   error
+		want  string
+		isErr error
+	}{
+		{"refused", opError(errRefused), "Сервер example.test отклонил подключение к порту 2222: SSH на нём не запущен или порт закрыт", nil},
+		{"timeout", opError(errTimedOut), msgTimeout, ErrTimeout},
+		{"host unreachable", opError(errHostUnreachable), "Нет маршрута до example.test: сеть недоступна или адрес вне вашей сети", nil},
+		{"network unreachable", opError(errNetUnreachable), "Нет маршрута до example.test: сеть недоступна или адрес вне вашей сети", nil},
+		{"dns not found", &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "example.test", IsNotFound: true}},
+			"Адрес example.test не найден: проверьте имя хоста", nil},
+		{"dns failure", &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "server misbehaving", Name: "example.test", IsTemporary: true}},
+			"Не удалось узнать адрес example.test: нет связи с DNS-сервером", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := dialError(addr, c.err)
+			if err.Error() != c.want {
+				t.Fatalf("message %q, want %q", err.Error(), c.want)
+			}
+			if !errors.Is(err, c.err) {
+				t.Fatal("the original error is not kept for the details")
+			}
+			if c.isErr != nil && !errors.Is(err, c.isErr) {
+				t.Fatalf("not %v", c.isErr)
+			}
+		})
+	}
+}
+
+func TestDialErrorOtherKeepsCause(t *testing.T) {
+	cause := errors.New("something odd")
+	err := dialError("h:22", cause)
+	if err.Error() != "подключение к h:22: something odd" {
+		t.Fatalf("message %q", err.Error())
+	}
+}
+
+func TestDialRefusedPortInRussian(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Dial(context.Background(), targetFor(t, addr, nil), NewPrompter(io.Discard, strings.NewReader("")), trustedKnownHosts(t, addr, testKey(t)))
+	if err == nil {
+		t.Fatal("dial to a closed port succeeded")
+	}
+	if !strings.Contains(err.Error(), "отклонил подключение") {
+		t.Fatalf("message %q", err.Error())
+	}
+	if !strings.Contains(errorChain(err), "refused") && !strings.Contains(errorChain(err), "connectex") {
+		t.Fatalf("the system text is lost: %q", errorChain(err))
+	}
+}
+
+// errorChain joins the messages of err and its causes, as the details on the error card do.
+func errorChain(err error) string {
+	var b strings.Builder
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		b.WriteString(e.Error() + "\n")
+	}
+	return b.String()
+}
