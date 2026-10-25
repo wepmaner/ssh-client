@@ -107,9 +107,10 @@ func (a *App) hostDTO(id string) (HostDTO, error) {
 	return HostDTO{}, errHostNotFound
 }
 
-// validateHost trims the form values and checks them; the first problem is
-// returned as a field error.
-func (a *App) validateHost(in HostDTO) (model.Host, error) {
+// normalizeHost trims the connection fields and checks them: port 0 means 22, an empty name
+// means the address. The first problem is returned as a field error. Imports use it without
+// the key check of validateHost.
+func normalizeHost(in HostDTO) (model.Host, error) {
 	h := model.Host{
 		ID: in.ID, Name: strings.TrimSpace(in.Name), Address: strings.TrimSpace(in.Address), Port: in.Port,
 		User: strings.TrimSpace(in.User), GroupID: in.GroupID, KeyID: in.KeyID, OS: in.OS,
@@ -126,7 +127,21 @@ func (a *App) validateHost(in HostDTO) (model.Host, error) {
 		return h, fieldError("port", "Порт от 1 до 65535")
 	case h.User == "":
 		return h, fieldError("user", "Укажите пользователя")
-	case h.KeyID == "":
+	}
+	if h.Name == "" {
+		h.Name = h.Address
+	}
+	return h, nil
+}
+
+// validateHost checks the form values of the host dialog; the first problem is returned as a
+// field error.
+func (a *App) validateHost(in HostDTO) (model.Host, error) {
+	h, err := normalizeHost(in)
+	if err != nil {
+		return h, err
+	}
+	if h.KeyID == "" {
 		return h, fieldError("key", "Выберите или импортируйте ключ")
 	}
 	if _, err := a.findKey(h.KeyID); err != nil {
@@ -137,9 +152,6 @@ func (a *App) validateHost(in HostDTO) (model.Host, error) {
 	}
 	if h.ID != "" && !slices.ContainsFunc(a.store.Hosts(), func(x model.Host) bool { return x.ID == h.ID }) {
 		return h, errHostNotFound
-	}
-	if h.Name == "" {
-		h.Name = h.Address
 	}
 	return h, nil
 }

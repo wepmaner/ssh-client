@@ -160,27 +160,30 @@ func newSessionsApp(t *testing.T, opts sshtest.Opts, withKey bool) sessionsApp {
 	ev := newFakeEmitter()
 	a.emit = ev
 
-	var keyID string
+	// Every host has a key (a host without one is refused before dialling); without withKey
+	// the server rejects it and authentication goes on with the password prompts.
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := ssh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "rejected"
 	if withKey {
-		pub, priv, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			t.Fatal(err)
-		}
-		block, err := ssh.MarshalPrivateKey(priv, "")
-		if err != nil {
-			t.Fatal(err)
-		}
 		sshPub, err := ssh.NewPublicKey(pub)
 		if err != nil {
 			t.Fatal(err)
 		}
 		opts.AcceptKey = sshPub
-		k, err := a.store.SaveKey(model.Key{Name: "work", Type: "ed25519", Private: pem.EncodeToMemory(block), Format: "openssh"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		keyID = k.ID
+		name = "work"
 	}
+	k, err := a.store.SaveKey(model.Key{Name: name, Type: "ed25519", Private: pem.EncodeToMemory(block), Format: "openssh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyID := k.ID
 
 	srv := sshtest.StartServer(t, opts)
 	addr, hostKey := srv.Addr(), srv.HostKey()
@@ -459,5 +462,28 @@ func TestOutStreamUnderCapKeepsEverything(t *testing.T) {
 	o.Attach()
 	if ev.data(t, "s") != "abc" {
 		t.Fatalf("data %q", ev.data(t, "s"))
+	}
+}
+
+// An imported host has no key yet: opening it, or dialling a forward through it, says so.
+func TestHostWithoutKeyRefusesToConnect(t *testing.T) {
+	s := newForwardsApp(t, sshtest.Opts{}, true)
+	h := s.store.Hosts()[0]
+	h.KeyID = ""
+	if _, err := s.store.SaveHost(h); err != nil {
+		t.Fatal(err)
+	}
+	if l := s.HostsList(); len(l) != 1 || l[0].KeyID != "" || l[0].KeyName != "" {
+		t.Fatalf("list %+v", l)
+	}
+	if _, err := s.SessionOpen(s.hostID, 80, 24); err == nil || err.Error() != "У хоста не выбран ключ" {
+		t.Fatalf("open: %v", err)
+	}
+	f := s.saveL(t, freePort(t), echoServer(t), false)
+	if err := s.ForwardStart(f.ID); err != nil {
+		t.Fatal(err)
+	}
+	if st := s.ev.waitFwdState(t, f.ID, "error", 0, 5*time.Second); st.Error != "У хоста не выбран ключ" {
+		t.Fatalf("forward %+v", st)
 	}
 }

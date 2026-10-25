@@ -16,6 +16,7 @@ import (
 //nolint:staticcheck // ST1005: Russian UI text starts with a capital letter
 var (
 	errHostNotFound    = errors.New("Хост не найден")
+	errHostNoKey       = errors.New("У хоста не выбран ключ")
 	errSessionNotFound = errors.New("Сессия не найдена")
 	errBadInput        = errors.New("Некорректные данные ввода")
 	errBadSize         = errors.New("Некорректный размер терминала")
@@ -58,15 +59,14 @@ func (a *App) hostTarget(hostID string) (model.Host, sshclient.Target, error) {
 		return model.Host{}, sshclient.Target{}, errHostNotFound
 	}
 	h := all[i]
-	t := sshclient.Target{Address: h.Address, Port: h.Port, User: h.User}
-	if h.KeyID != "" {
-		k, err := a.findKey(h.KeyID)
-		if err != nil {
-			return model.Host{}, sshclient.Target{}, err
-		}
-		t.Key = &k
+	if h.KeyID == "" { // an imported host waits for its key in the host dialog
+		return model.Host{}, sshclient.Target{}, errHostNoKey
 	}
-	return h, t, nil
+	k, err := a.findKey(h.KeyID)
+	if err != nil {
+		return model.Host{}, sshclient.Target{}, err
+	}
+	return h, sshclient.Target{Address: h.Address, Port: h.Port, User: h.User, Key: &k}, nil
 }
 
 // SessionWrite sends base64-encoded keystrokes: to the connection prompts while connecting,

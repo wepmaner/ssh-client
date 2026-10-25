@@ -16,8 +16,8 @@ import (
 var assets embed.FS
 
 // version is set by CI from the release tag through -X main.version=X.Y.Z
-// (build/windows/Taskfile.yml); Settings shows it (Task 15).
-var version = "dev" //nolint:unused // read only after -X links it into Settings
+// (build/windows/Taskfile.yml); Settings shows it.
+var version = "dev"
 
 func main() {
 	a := app.New(application.WebviewWindowOptions{
@@ -34,7 +34,7 @@ func main() {
 			Theme:                             application.Dark,
 			DisableFramelessWindowDecorations: false,
 		},
-	})
+	}, version)
 
 	wapp := application.New(application.Options{
 		Name:     "sshclient",

@@ -19,6 +19,7 @@ var (
 	errVaultMissing  = errors.New("Хранилище недоступно")
 	errWrongPassword = errors.New("Неверный пароль")
 	errPasswordShort = errors.New("Пароль короче 8 символов")
+	errNoPassword    = errors.New("Хранилище не защищено паролем")
 )
 
 // VaultStateDTO tells the UI which screen to show.
@@ -65,8 +66,24 @@ func (a *App) VaultUnlock(password string) error {
 	if a.store == nil {
 		a.store = store.NewStore(a.vault)
 	}
-	a.autostartForwards()
+	a.autostartOnce()
 	return nil
+}
+
+// VaultLock locks a password vault after the idle timeout: the key and the decrypted data are
+// wiped from memory until VaultUnlock. Open sessions and running forwards keep their own clients;
+// a forward that has to redial meanwhile fails that attempt and retries.
+func (a *App) VaultLock() error {
+	if a.vault == nil {
+		return errVaultMissing
+	}
+	if !a.vault.HasPassword() {
+		return errNoPassword
+	}
+	if a.store == nil {
+		return a.vault.Lock()
+	}
+	return a.store.Lock()
 }
 
 // VaultSetPassword protects the vault with a password.

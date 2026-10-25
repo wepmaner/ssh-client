@@ -7,12 +7,14 @@ import (
 	"log"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"sshclient/internal/appdir"
+	"sshclient/internal/importers"
 	"sshclient/internal/model"
 	"sshclient/internal/sshclient"
 	"sshclient/internal/store"
@@ -45,12 +47,16 @@ type App struct {
 	fwdMu        sync.Mutex
 	fwds         map[string]*fwdEntry // forward runtimes by forward ID
 	fwdKeepalive time.Duration        // keepalive interval of forward clients; 0 means keepaliveInterval
+	autostarted  atomic.Bool          // the autostart forwards have been started in this run
+
+	version string                   // the release version, "dev" in local builds
+	putty   importers.RegistryReader // PuTTY sessions source; nil means the Windows registry
 }
 
 // New creates an App. window is the main window, created in ServiceStartup
-// once the saved geometry is known.
-func New(window application.WebviewWindowOptions) *App {
-	return &App{window: window}
+// once the saved geometry is known; version is shown in Settings.
+func New(window application.WebviewWindowOptions, version string) *App {
+	return &App{window: window, version: version}
 }
 
 const vaultFile = "vault.json"
@@ -96,6 +102,16 @@ func (a *App) openVault() {
 // A password vault starts them in VaultUnlock.
 func (a *App) initVault() {
 	a.openVault()
+	a.autostartOnce()
+}
+
+// autostartOnce starts the autostart forwards the first time the vault is open in this run.
+// An unlock after the idle lock starts nothing: running forwards go on by themselves, and
+// forwards the user stopped stay stopped.
+func (a *App) autostartOnce() {
+	if !a.storeUnlocked() || !a.autostarted.CompareAndSwap(false, true) {
+		return
+	}
 	a.autostartForwards()
 }
 
