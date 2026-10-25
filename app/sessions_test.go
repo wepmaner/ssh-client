@@ -150,7 +150,7 @@ type sessionsApp struct {
 func newSessionsApp(t *testing.T, opts sshtest.Opts, withKey bool) sessionsApp {
 	t.Helper()
 	tmp := t.TempDir()
-	t.Setenv("LOCALAPPDATA", tmp)
+	t.Setenv("APPDATA", tmp)
 	t.Setenv("XDG_CACHE_HOME", tmp) // os.UserCacheDir on Linux
 	a := &App{}
 	a.openVault()

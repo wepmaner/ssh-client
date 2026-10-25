@@ -11,7 +11,7 @@ import (
 )
 
 func TestWindowStateRoundTrip(t *testing.T) {
-	t.Setenv("LOCALAPPDATA", t.TempDir())
+	t.Setenv("APPDATA", t.TempDir())
 	if _, ok := loadWindowState(); ok {
 		t.Fatal("expected no state before save")
 	}
@@ -27,7 +27,7 @@ func TestWindowStateRoundTrip(t *testing.T) {
 
 func TestLoadWindowStateCorrupt(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("LOCALAPPDATA", root)
+	t.Setenv("APPDATA", root)
 	dir := filepath.Join(root, "sshclient")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -40,8 +40,8 @@ func TestLoadWindowStateCorrupt(t *testing.T) {
 	}
 }
 
-func TestSaveWindowStateNoLocalAppData(t *testing.T) {
-	t.Setenv("LOCALAPPDATA", "")
+func TestSaveWindowStateNoAppData(t *testing.T) {
+	t.Setenv("APPDATA", "")
 	if err := saveWindowState(model.WindowState{W: 1}); err == nil {
 		t.Fatal("expected error")
 	}
@@ -107,7 +107,7 @@ func TestCaptureWindowState(t *testing.T) {
 }
 
 func TestSaveWindowGeometryLockedGoesToFile(t *testing.T) {
-	t.Setenv("LOCALAPPDATA", t.TempDir())
+	t.Setenv("APPDATA", t.TempDir())
 	a := &App{}
 	a.saveWindowGeometry(&fakeWindow{x: 3, y: 4, w: 950, h: 650})
 	got, ok := loadWindowState()

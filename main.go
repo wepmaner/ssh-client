@@ -20,6 +20,14 @@ var assets embed.FS
 var version = "dev"
 
 func main() {
+	// Before the first appdir.Dir: older builds kept the data in %LOCALAPPDATA%.
+	// The outcome also goes to migrate.log in the data folder (no console in release builds).
+	if res, err := appdir.Migrate(); err != nil {
+		log.Printf("data folder: %v", err)
+	} else if res != appdir.NothingToMove {
+		log.Printf("data folder: %s", res)
+	}
+
 	a := app.New(mainWindow(), version)
 
 	wapp := application.New(application.Options{

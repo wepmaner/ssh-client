@@ -10,7 +10,7 @@ import (
 )
 
 func TestVaultPasswordLifecycle(t *testing.T) {
-	t.Setenv("LOCALAPPDATA", t.TempDir())
+	t.Setenv("APPDATA", t.TempDir())
 	a := &App{}
 	a.openVault()
 

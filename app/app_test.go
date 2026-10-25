@@ -12,7 +12,7 @@ import (
 )
 
 func TestVaultResetCorruptGuardedAndRecovers(t *testing.T) {
-	t.Setenv("LOCALAPPDATA", t.TempDir())
+	t.Setenv("APPDATA", t.TempDir())
 	dir, err := appdir.Dir()
 	if err != nil {
 		t.Fatal(err)

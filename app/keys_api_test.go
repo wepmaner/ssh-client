@@ -16,7 +16,7 @@ import (
 
 func newKeysApp(t *testing.T) *App {
 	t.Helper()
-	t.Setenv("LOCALAPPDATA", t.TempDir())
+	t.Setenv("APPDATA", t.TempDir())
 	a := &App{}
 	a.openVault()
 	if !a.storeUnlocked() {
