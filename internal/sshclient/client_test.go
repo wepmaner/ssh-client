@@ -507,6 +507,39 @@ func TestDialZeroesPassphraseBuffers(t *testing.T) {
 			t.Fatalf("cached %q, OnPassphrase %q", cached, rec.copies)
 		}
 	})
+	t.Run("prompt cancelled", func(t *testing.T) {
+		key, pub := testClientKey(t, "work", "right")
+		cached := []byte("stale")
+		_, rec, err := dialWithPassphrase(t, sshtest.Opts{AcceptKey: pub}, key, cached, "\x03")
+		if !errors.Is(err, ErrCancelled) {
+			t.Fatalf("err = %v", err)
+		}
+		if !allZero(cached) || len(rec.copies) != 0 {
+			t.Fatalf("cached %q, OnPassphrase %q", cached, rec.copies)
+		}
+	})
+	t.Run("context cancelled during prompt", func(t *testing.T) {
+		key, pub := testClientKey(t, "work", "right")
+		addr, hostKey := sshtest.Start(t, sshtest.Opts{AcceptKey: pub})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		pr, pw := io.Pipe() // the user never answers
+		stop := time.AfterFunc(300*time.Millisecond, func() { cancel(); ignoreErr(pw.Close()) })
+		defer stop.Stop()
+		cached := []byte("stale")
+		tg := targetFor(t, addr, key)
+		tg.Passphrase = cached
+		called := false
+		tg.OnPassphrase = func([]byte) { called = true }
+		c, err := Dial(ctx, tg, NewPrompter(io.Discard, pr), trustedKnownHosts(t, addr, hostKey))
+		if c != nil {
+			ignoreErr(c.Close())
+			t.Fatal("connected without an answer")
+		}
+		if err == nil || !allZero(cached) || called {
+			t.Fatalf("err %v, cached %q, OnPassphrase called %v", err, cached, called)
+		}
+	})
 	t.Run("unreachable server", func(t *testing.T) {
 		key, _ := testClientKey(t, "work", "right")
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -540,5 +573,32 @@ func TestDialOnPassphraseOnlyWhenServerAcceptsKey(t *testing.T) {
 	}
 	if !allZero(cached) {
 		t.Fatalf("cached passphrase not zeroed: %q", cached)
+	}
+}
+
+func TestPassphraseSignersSecondCallAsks(t *testing.T) {
+	// После частичного успеха publickey x/crypto может вызвать колбэк ключа снова: кэшированная
+	// фраза уже потрачена и затёрта, второй вызов сразу задаёт вопрос.
+	key, _ := testClientKey(t, "work", "right")
+	out := &bytes.Buffer{}
+	d := &dialState{p: NewPrompter(out, strings.NewReader("right\n"))}
+	c1, c2 := net.Pipe()
+	t.Cleanup(func() { ignoreErr(c1.Close()); ignoreErr(c2.Close()) })
+	d.conn = c1
+	defer d.forgetPassphrase()
+	cached := []byte("right")
+	signers := d.passphraseSigners(key, cached)
+
+	if s, err := signers(); err != nil || len(s) != 1 {
+		t.Fatalf("first call: %v, %v", s, err)
+	}
+	if out.Len() != 0 || !allZero(cached) {
+		t.Fatalf("first call asked %q or kept cached %q", out.String(), cached)
+	}
+	if s, err := signers(); err != nil || len(s) != 1 {
+		t.Fatalf("second call: %v, %v", s, err)
+	}
+	if n := strings.Count(out.String(), "Парольная фраза ключа work: "); n != 1 {
+		t.Fatalf("second call asked %d times: %q", n, out.String())
 	}
 }

@@ -102,7 +102,7 @@ func Dial(ctx context.Context, t Target, p *Prompter, kh *KnownHosts) (*ssh.Clie
 		// Вопрос о доверии снимается и по общему пределу, и по отмене ctx.
 		HostKeyCallback: d.hostKeyCallback(kh.Callback(hctx, trust)),
 		Auth:            auth,
-		AuthCallback:    d.abortIfCancelled,
+		AuthCallback:    d.authStep,
 	}
 	stop := context.AfterFunc(hctx, func() { _ = conn.Close() }) //nolint:gosec // G104: closing aborts the handshake; its error is irrelevant
 	d.armDeadline()
@@ -216,9 +216,9 @@ func (d *dialState) isCancelled() bool {
 	return d.cancelled
 }
 
-// abortIfCancelled вызывается перед каждой попыткой после первой: прерывает аутентификацию после
+// authStep вызывается перед каждой попыткой после первой: прерывает аутентификацию после
 // отмены и запоминает, что сервер отверг ключ (метод publickey среди неудачных).
-func (d *dialState) abortIfCancelled(ctx *ssh.ClientAuthContext) (ssh.AuthMethod, error) {
+func (d *dialState) authStep(ctx *ssh.ClientAuthContext) (ssh.AuthMethod, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if slices.Contains(ctx.TriedMethods, "publickey") {
@@ -300,6 +300,7 @@ func (d *dialState) passphraseSigners(k *model.Key, cached []byte) func() ([]ssh
 				d.keepPassphrase(bytes.Clone(cached))
 			}
 			clear(cached)
+			cached = nil // повторный вызов (после частичного успеха publickey) сразу спрашивает
 			if err == nil {
 				return []ssh.Signer{signer}, nil
 			}
