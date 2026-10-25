@@ -44,7 +44,12 @@ type outStream struct {
 }
 
 func newOutStream(e emitter, id string) *outStream {
-	return &outStream{emit: e, dataEvent: "term:data:" + id}
+	return newOutStreamFor(e, "term:data:"+id)
+}
+
+// newOutStreamFor is an outStream whose output goes out as dataEvent (a forward's mini-terminal).
+func newOutStreamFor(e emitter, dataEvent string) *outStream {
+	return &outStream{emit: e, dataEvent: dataEvent}
 }
 
 // Write implements io.Writer for the Prompter and the shell output. It never blocks on the UI.

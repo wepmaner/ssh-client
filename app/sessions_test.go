@@ -142,6 +142,7 @@ type sessionsApp struct {
 	*App
 	ev     *fakeEmitter
 	hostID string
+	srv    *sshtest.Server
 }
 
 // newSessionsApp starts a test server, trusts its host key and saves a host for it.
@@ -181,7 +182,8 @@ func newSessionsApp(t *testing.T, opts sshtest.Opts, withKey bool) sessionsApp {
 		keyID = k.ID
 	}
 
-	addr, hostKey := sshtest.Start(t, opts)
+	srv := sshtest.StartServer(t, opts)
+	addr, hostKey := srv.Addr(), srv.HostKey()
 	dir, err := appdir.Dir()
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +205,7 @@ func newSessionsApp(t *testing.T, opts sshtest.Opts, withKey bool) sessionsApp {
 		t.Fatal(err)
 	}
 	t.Cleanup(a.closeAllSessions)
-	return sessionsApp{App: a, ev: ev, hostID: h.ID}
+	return sessionsApp{App: a, ev: ev, hostID: h.ID, srv: srv}
 }
 
 // open opens a session and attaches the view the way TerminalView does: by reporting its size.

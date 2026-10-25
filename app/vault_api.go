@@ -48,7 +48,8 @@ func (a *App) VaultState() VaultStateDTO {
 	return VaultStateDTO{Locked: a.vault.Locked(), HasPassword: a.vault.HasPassword()}
 }
 
-// VaultUnlock unlocks a password vault and makes the typed store available.
+// VaultUnlock unlocks a password vault, makes the typed store available and starts the
+// autostart forwards.
 func (a *App) VaultUnlock(password string) error {
 	if a.vault == nil {
 		return errVaultMissing
@@ -64,6 +65,7 @@ func (a *App) VaultUnlock(password string) error {
 	if a.store == nil {
 		a.store = store.NewStore(a.vault)
 	}
+	a.autostartForwards()
 	return nil
 }
 

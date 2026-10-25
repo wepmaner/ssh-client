@@ -7,6 +7,7 @@ import (
 	"log"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -31,6 +32,10 @@ type App struct {
 
 	khMu sync.Mutex
 	kh   *sshclient.KnownHosts // opened on the first session
+
+	fwdMu        sync.Mutex
+	fwds         map[string]*fwdEntry // forward runtimes by forward ID
+	fwdKeepalive time.Duration        // keepalive interval of forward clients; 0 means keepaliveInterval
 }
 
 // New creates an App.
@@ -77,6 +82,13 @@ func (a *App) openVault() {
 	a.vault, a.store = v, store.NewStore(v)
 }
 
+// initVault opens the vault and, when it needs no password, starts the autostart forwards.
+// A password vault starts them in VaultUnlock.
+func (a *App) initVault() {
+	a.openVault()
+	a.autostartForwards()
+}
+
 // storeUnlocked reports whether window state can live in the vault.
 func (a *App) storeUnlocked() bool {
 	return a.store != nil && !a.vault.Locked()
@@ -87,7 +99,7 @@ func (a *App) storeUnlocked() bool {
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 	a.emit = wailsEmitter{ctx}
-	a.openVault()
+	a.initVault()
 	var ws model.WindowState
 	ok := false
 	if a.storeUnlocked() {
@@ -150,8 +162,9 @@ func (a *App) BeforeClose(ctx context.Context) bool {
 	return false
 }
 
-// Shutdown is called after the window has closed; it ends every SSH session.
+// Shutdown is called after the window has closed; it ends every SSH session and forward.
 func (a *App) Shutdown(ctx context.Context) {
 	_ = ctx
 	a.closeAllSessions()
+	a.stopAllForwards()
 }
