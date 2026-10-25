@@ -23,10 +23,8 @@
   class:selected
   class:menu-open={menuOpen}
   role="listitem"
-  oncontextmenu={(e) => {
-    e.preventDefault()
-    menuOpen = true
-  }}
+  style:--custom-contextmenu="group"
+  style:--custom-contextmenu-data={group.id}
 >
   <button type="button" class="main" aria-pressed={selected} onclick={onselect}>
     <span class="icon" aria-hidden="true">

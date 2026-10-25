@@ -6,7 +6,7 @@ const { getSettings, vaultState, keysList } = vi.hoisted(() => ({
   keysList: vi.fn(() => Promise.resolve([])),
 }))
 vi.mock('./api', async () => {
-  const models = await import('../../wailsjs/go/models')
+  const model = await import('../../bindings/sshclient/internal/model/models')
   return {
     GetSettings: getSettings,
     HostsList: () => Promise.resolve([]),
@@ -14,7 +14,7 @@ vi.mock('./api', async () => {
     KeysList: keysList,
     VaultState: vaultState,
     errorText: String,
-    model: models.model,
+    model,
   }
 })
 
@@ -29,7 +29,7 @@ describe('stores', () => {
       })
     })
     await Promise.resolve()
-    const model = (await import('../../wailsjs/go/models')).model
+    const model = await import('../../bindings/sshclient/internal/model/models')
     getSettings.mockResolvedValue(model.Settings.createFrom({ terminal_size: 17, window: { w: 5 } }))
     await refreshSettings()
     await Promise.resolve()

@@ -15,27 +15,20 @@
      * overflow of a parent clips it, and pressing the button again does not count as an outside click.
      */
     anchor?: HTMLElement
-    /** A viewport point to open at instead of the anchor (right-click). The anchor still gets focus back. */
-    at?: { x: number; y: number }
   }
-  let { items, onclose, anchor, at }: Props = $props()
+  let { items, onclose, anchor }: Props = $props()
 
   const GAP = 4
 
   let el: HTMLDivElement | undefined = $state()
   let pos = $state<{ top: number; left: number } | null>(null)
 
-  // At the cursor point, or below the anchor with right edges aligned; flipped when there is no room.
+  // Below the anchor with right edges aligned; flipped when there is no room.
+  // Right-click opens the native menus instead (lib/menus.ts).
   function place() {
     if (!el) return
     const h = el.offsetHeight
     const w = el.offsetWidth
-    if (at) {
-      const top = at.y + h > window.innerHeight ? Math.max(0, at.y - h) : at.y
-      const left = at.x + w > window.innerWidth ? Math.max(0, at.x - w) : at.x
-      pos = { top, left }
-      return
-    }
     if (!anchor) return
     const r = anchor.getBoundingClientRect()
     const below = r.bottom + GAP
@@ -89,7 +82,7 @@
 
 <div
   class="menu"
-  class:fixed={!!anchor || !!at}
+  class:fixed={!!anchor}
   role="menu"
   tabindex="-1"
   bind:this={el}

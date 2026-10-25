@@ -1,7 +1,10 @@
 import { fireEvent, render, screen, within } from '@testing-library/svelte'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+type Handler = (p: unknown) => void
+const menuHandlers = vi.hoisted(() => [] as Handler[])
 const api = vi.hoisted(() => ({
+  EventsOn: vi.fn(),
   HostSave: vi.fn(),
   HostDelete: vi.fn(),
   GroupSave: vi.fn(),
@@ -23,8 +26,8 @@ const sess = vi.hoisted(() => ({
   sessions: { list: [] as { id: string; hostId: string; state: string }[] },
 }))
 vi.mock('../api', async () => {
-  const models = await import('../../../wailsjs/go/models')
-  return { ...api, errorText: String, model: models.model }
+  const model = await import('../../../bindings/sshclient/internal/model/models')
+  return { ...api, errorText: String, model }
 })
 vi.mock('../sessions.svelte', () => sess)
 
@@ -45,9 +48,26 @@ function load(items: typeof list) {
 
 const names = () => screen.queryAllByTestId('host-name').map((e) => e.textContent)
 
+/** Emits menu:action as Go does after a click in a native context menu. */
+async function menuAction(menu: string, action: string, id: string) {
+  for (const h of menuHandlers) h({ menu, action, id })
+  await Promise.resolve()
+}
+
+/** The CSS custom properties the Wails runtime reads on right-click. */
+function nativeMenu(el: HTMLElement | null): [string, string] {
+  const tile = el?.closest<HTMLElement>('[role="listitem"]')
+  return [tile?.style.getPropertyValue('--custom-contextmenu') ?? '', tile?.style.getPropertyValue('--custom-contextmenu-data') ?? '']
+}
+
 describe('HostsView', () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    menuHandlers.length = 0
+    api.EventsOn.mockImplementation((name: string, h: Handler) => {
+      if (name === 'menu:action') menuHandlers.push(h)
+      return () => menuHandlers.splice(menuHandlers.indexOf(h), 1)
+    })
     groups.splice(0, groups.length)
     api.GroupsList.mockResolvedValue([])
     api.KeysList.mockResolvedValue([])
@@ -175,6 +195,43 @@ describe('HostsView', () => {
     expect(screen.queryByRole('menu')).toBeNull()
   })
 
+  it('host tiles and rows open the native host menu on right-click', async () => {
+    load(list)
+    render(HostsView)
+    expect(nativeMenu(screen.getAllByTestId('host-name')[1])).toEqual(['host', 'h2'])
+    await fireEvent.click(screen.getByRole('button', { name: 'Список' }))
+    expect(nativeMenu(screen.getAllByTestId('host-name')[0])).toEqual(['host', 'h1'])
+    await fireEvent.click(screen.getByRole('button', { name: 'Плитки' }))
+  })
+
+  it('native menu items edit, duplicate and delete the host they were opened on', async () => {
+    load(list)
+    render(HostsView)
+    await menuAction('host', 'edit', 'h2')
+    let dialog = screen.getByRole('dialog', { name: 'Изменить хост' })
+    expect((within(dialog).getByLabelText('Адрес') as HTMLInputElement).value).toBe('db.example.test')
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Отмена' }))
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    await menuAction('host', 'duplicate', 'h1')
+    dialog = screen.getByRole('dialog', { name: 'Новый хост' })
+    expect((within(dialog).getByLabelText('Название') as HTMLInputElement).value).toBe('prod-1 (копия)')
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Отмена' }))
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    await menuAction('host', 'delete', 'h3')
+    expect(screen.getByRole('dialog', { name: 'Удалить хост nas?' })).toBeTruthy()
+    expect(api.HostDelete).not.toHaveBeenCalled()
+  })
+
+  it('native menu actions of other menus or unknown hosts are ignored', async () => {
+    load(list)
+    render(HostsView)
+    await menuAction('key', 'delete', 'h1')
+    await menuAction('host', 'delete', 'gone')
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
   it('a failed delete keeps the host tabs', async () => {
     load(list)
     sess.sessions.list = [{ id: 's1', hostId: 'h1', state: 'connected' }]
@@ -230,6 +287,19 @@ describe('HostsView', () => {
       expect(api.GroupDelete).not.toHaveBeenCalled()
       await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Удалить' }))
       await vi.waitFor(() => expect(api.GroupDelete).toHaveBeenCalledWith('g1'))
+    })
+
+    it('group tiles open the native group menu; its items rename and delete', async () => {
+      render(HostsView)
+      expect(nativeMenu(screen.getByRole('button', { name: /^Production/ }))).toEqual(['group', 'g1'])
+      await menuAction('group', 'rename', 'g1')
+      const dialog = screen.getByRole('dialog', { name: 'Переименовать группу' })
+      expect((within(dialog).getByLabelText('Название группы') as HTMLInputElement).value).toBe('Production')
+      await fireEvent.click(within(dialog).getByRole('button', { name: 'Отмена' }))
+      await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      await menuAction('group', 'delete', 'g1')
+      expect(screen.getByRole('dialog', { name: 'Удалить группу Production?' })).toBeTruthy()
+      expect(api.GroupDelete).not.toHaveBeenCalled()
     })
 
     it('a group tile filters the hosts', async () => {

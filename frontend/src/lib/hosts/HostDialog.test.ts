@@ -16,8 +16,8 @@ const api = vi.hoisted(() => ({
 }))
 const openSession = vi.hoisted(() => vi.fn())
 vi.mock('../api', async () => {
-  const models = await import('../../../wailsjs/go/models')
-  return { ...api, errorText: String, model: models.model }
+  const model = await import('../../../bindings/sshclient/internal/model/models')
+  return { ...api, errorText: String, model }
 })
 vi.mock('../sessions.svelte', () => ({ openSession }))
 

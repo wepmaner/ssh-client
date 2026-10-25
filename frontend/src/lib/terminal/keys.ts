@@ -1,5 +1,5 @@
 // Keyboard shortcuts and clipboard access of the terminal, as in Windows Terminal.
-import { ClipboardGetText, ClipboardSetText } from '../../../wailsjs/runtime/runtime'
+import { ClipboardGetText, ClipboardSetText } from '../api'
 
 export type TerminalAction = 'copy' | 'paste' | 'search'
 export type TabAction = 'next' | 'prev' | 'close'

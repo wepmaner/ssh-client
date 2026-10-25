@@ -12,3 +12,4 @@ stash-out/
 notes.md
 *.exe
 *.syso
+.task/

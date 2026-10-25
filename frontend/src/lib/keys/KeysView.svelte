@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { onMount, tick } from 'svelte'
   import { VaultRemovePassword, type app } from '../api'
+  import { onMenuAction } from '../menus'
   import VaultDialog from '../settings/VaultDialog.svelte'
   import { keys, refreshKeys, refreshVault, vault } from '../stores.svelte'
   import Button from '../ui/Button.svelte'
@@ -10,7 +12,6 @@
   import KeyCreateDialog from './KeyCreateDialog.svelte'
   import KeyDetail from './KeyDetail.svelte'
   import KeyImportPanel from './KeyImportPanel.svelte'
-  import Menu from '../ui/Menu.svelte'
 
   let query = $state('')
   let selectedId = $state('')
@@ -19,13 +20,22 @@
   let encrypting = $state(false)
   let decrypting = $state(false)
   let detail: ReturnType<typeof KeyDetail> | undefined = $state()
-  let menuAt = $state<{ x: number; y: number } | null>(null)
 
-  function openMenu(e: MouseEvent, id: string) {
-    e.preventDefault()
+  /** A native menu item acts on its key: select it, then ask the detail pane once it shows that key. */
+  async function onKey(id: string, run: (d: ReturnType<typeof KeyDetail>) => void) {
+    if (!keys.some((k) => k.id === id)) return
+    query = ''
     selectedId = id
-    menuAt = { x: e.clientX, y: e.clientY }
+    await tick()
+    if (detail) run(detail)
   }
+
+  onMount(() =>
+    onMenuAction('key', {
+      rename: (id) => void onKey(id, (d) => d.requestRename()),
+      delete: (id) => void onKey(id, (d) => d.requestDelete()),
+    }),
+  )
 
   const filtered = $derived.by(() => {
     const q = query.trim().toLowerCase()
@@ -104,7 +114,7 @@
       <ul class="list" aria-label="Ключи">
         {#each filtered as k (k.id)}
           <li>
-            <button type="button" class="row" class:sel={k.id === selected?.id} aria-current={k.id === selected?.id} onclick={() => (selectedId = k.id)} oncontextmenu={(e) => openMenu(e, k.id)}>
+            <button type="button" class="row" class:sel={k.id === selected?.id} aria-current={k.id === selected?.id} onclick={() => (selectedId = k.id)} oncontextmenu={() => (selectedId = k.id)} style:--custom-contextmenu="key" style:--custom-contextmenu-data={k.id}>
               <span class="type">{typeTile(k.type)}</span>
               <span class="info">
                 <span class="name">{k.name}</span>
@@ -118,16 +128,6 @@
       </ul>
       {#if selected}
         <KeyDetail bind:this={detail} key={selected} onchanged={refreshKeys} />
-      {/if}
-      {#if menuAt}
-        <Menu
-          at={menuAt}
-          onclose={() => (menuAt = null)}
-          items={[
-            { label: 'Переименовать', onselect: () => detail?.requestRename() },
-            { label: 'Удалить', onselect: () => detail?.requestDelete(), danger: true },
-          ]}
-        />
       {/if}
     </div>
   {/if}

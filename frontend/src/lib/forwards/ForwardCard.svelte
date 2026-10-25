@@ -21,7 +21,6 @@
   }
 
   let menuOpen = $state(false)
-  let menuAt = $state<{ x: number; y: number } | null>(null)
   let moreEl: HTMLButtonElement | undefined = $state()
 
   const active = $derived(forward.status === 'running' || forward.status === 'starting')
@@ -33,11 +32,8 @@
   class="card"
   class:idle={!active}
   aria-label={forward.name}
-  oncontextmenu={(e) => {
-    e.preventDefault()
-    menuAt = { x: e.clientX, y: e.clientY }
-    menuOpen = true
-  }}
+  style:--custom-contextmenu="forward"
+  style:--custom-contextmenu-data={forward.id}
 >
   <div class="head">
     <span class="kind kind-{forward.kind}" aria-label="Тип {forward.kind}">{forward.kind}</span>
@@ -76,10 +72,7 @@
         aria-haspopup="menu"
         aria-expanded={menuOpen}
         bind:this={moreEl}
-        onclick={() => {
-          menuAt = null
-          menuOpen = !menuOpen
-        }}
+        onclick={() => (menuOpen = !menuOpen)}
       >
         <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
           <circle cx="3.5" cy="8" r="1.4" /><circle cx="8" cy="8" r="1.4" /><circle cx="12.5" cy="8" r="1.4" />
@@ -88,7 +81,6 @@
       {#if menuOpen}
         <Menu
           anchor={moreEl}
-          at={menuAt ?? undefined}
           onclose={() => (menuOpen = false)}
           items={[
             { label: 'Изменить', onselect: onedit },

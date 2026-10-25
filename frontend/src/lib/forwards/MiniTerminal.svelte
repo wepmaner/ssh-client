@@ -71,13 +71,15 @@
   })
 </script>
 
-<!-- Right click pastes, as in the session terminal. -->
+<!-- Right click pastes, as in the session terminal. It stops there: the card's native menu
+     (inherited --custom-contextmenu) must not open over the prompt. -->
 <div
   class="mini"
   data-testid="mini-terminal"
   role="presentation"
   oncontextmenu={(e) => {
     e.preventDefault()
+    e.stopPropagation()
     paste()
   }}
 >

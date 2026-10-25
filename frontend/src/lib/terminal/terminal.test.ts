@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../../wailsjs/runtime/runtime', () => ({
+vi.mock('../api', () => ({
   ClipboardGetText: vi.fn(),
   ClipboardSetText: vi.fn(),
 }))

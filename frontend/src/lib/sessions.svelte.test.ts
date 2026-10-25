@@ -6,7 +6,7 @@ const { handlers, sessionOpen, sessionClose } = vi.hoisted(() => ({
   sessionClose: vi.fn(() => Promise.resolve()),
 }))
 vi.mock('./api', async () => {
-  const models = await import('../../wailsjs/go/models')
+  const model = await import('../../bindings/sshclient/internal/model/models')
   return {
     EventsOn: (name: string, cb: (p: unknown) => void) => {
       handlers.set(name, cb)
@@ -21,7 +21,7 @@ vi.mock('./api', async () => {
     KeysList: vi.fn(),
     VaultState: vi.fn(),
     errorText: String,
-    model: models.model,
+    model,
   }
 })
 

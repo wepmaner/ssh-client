@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Quit, WindowMinimise, WindowToggleMaximise } from '../../../wailsjs/runtime/runtime'
+  import { WindowClose, WindowMinimise, WindowToggleMaximise } from '../api'
   import { activate, activeSession, closeSession, cycleTab, goHome, sessions } from '../sessions.svelte'
   import { ui } from '../stores.svelte'
   import { tabAction } from '../terminal/keys'
@@ -84,7 +84,7 @@
         <rect x="0.5" y="0.5" width="9" height="9" />
       </svg>
     </button>
-    <button type="button" class="btn close" aria-label="Закрыть" onclick={Quit} ondblclick={stop}>
+    <button type="button" class="btn close" aria-label="Закрыть" onclick={WindowClose} ondblclick={stop}>
       <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true">
         <path d="M0 0l10 10M10 0 0 10" />
       </svg>
