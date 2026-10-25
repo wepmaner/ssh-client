@@ -16,6 +16,7 @@
 
   let menuOpen = $state(false)
   let moreEl: HTMLButtonElement | undefined = $state()
+  let menuAt = $state<{ x: number; y: number } | null>(null)
 </script>
 
 <div
@@ -24,7 +25,9 @@
   class:menu-open={menuOpen}
   role="listitem"
   oncontextmenu={(e) => {
+    if ((e.target as HTMLElement).closest('[role="menu"]')) return
     e.preventDefault()
+    menuAt = e.clientX === 0 && e.clientY === 0 ? null : { x: e.clientX, y: e.clientY }
     menuOpen = true
   }}
 >
@@ -62,6 +65,7 @@
     {#if menuOpen}
       <Menu
         anchor={moreEl}
+        at={menuAt ?? undefined}
         onclose={() => (menuOpen = false)}
         items={[
           { label: 'Переименовать', onselect: onrename },
