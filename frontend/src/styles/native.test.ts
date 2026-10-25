@@ -1,13 +1,11 @@
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import dialog from '../lib/ui/Dialog.svelte?raw'
 import titlebar from '../lib/titlebar/TitleBar.svelte?raw'
+// Not empty only because vite.config.ts lets Vitest process this CSS file.
+import tokens from './tokens.css?raw'
 
 // CLAUDE.md «Правила нативного поведения»: the motion and focus rules are CSS, which jsdom
 // does not apply, so these tests read the sources.
-
-// Vitest empties CSS imports, even with ?raw: read the file itself.
-const tokens = readFileSync('src/styles/tokens.css', 'utf8') // vitest runs in frontend/
 
 const components = import.meta.glob('../lib/**/*.svelte', { query: '?raw', import: 'default', eager: true }) as Record<
   string,

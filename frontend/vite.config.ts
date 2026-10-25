@@ -13,6 +13,8 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    // Vitest empties CSS imports; native.test.ts reads tokens.css?raw to check the motion and focus rules.
+    css: { include: [/tokens\.css/] },
     alias: {
       // The real runtime calls the Go side on import.
       '@wailsio/runtime': fileURLToPath(new URL('./src/test/wails-runtime.ts', import.meta.url)),
