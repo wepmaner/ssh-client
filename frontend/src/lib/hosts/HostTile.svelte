@@ -50,7 +50,7 @@
     </span>
     {#if layout === 'row'}
       <span class="col">{host.group_name}</span>
-      <span class="col">{host.key_name}</span>
+      <span class="col">{host.key_id ? host.key_name : 'ключ не выбран'}</span>
     {/if}
   </button>
   {#if menuOpen}

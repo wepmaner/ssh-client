@@ -139,11 +139,36 @@ export function HostSave($in: $models.HostDTO): $CancellablePromise<$models.Host
 }
 
 /**
+ * HostsExport saves the hosts without keys as JSON to a file chosen in the system dialog.
+ */
+export function HostsExport(): $CancellablePromise<void> {
+    return $Call.ByID(3364943416);
+}
+
+/**
  * HostsList returns all saved hosts sorted by name.
  */
 export function HostsList(): $CancellablePromise<$models.HostDTO[]> {
     return $Call.ByID(1079401910).then(($result: any) => {
         return $$createType6($result);
+    });
+}
+
+/**
+ * ImportPuTTY adds the SSH sessions saved in PuTTY.
+ */
+export function ImportPuTTY(): $CancellablePromise<$models.ImportResult> {
+    return $Call.ByID(2012174936).then(($result: any) => {
+        return $$createType7($result);
+    });
+}
+
+/**
+ * ImportSSHConfig adds the hosts of %USERPROFILE%\.ssh\config.
+ */
+export function ImportSSHConfig(): $CancellablePromise<$models.ImportResult> {
+    return $Call.ByID(907787950).then(($result: any) => {
+        return $$createType7($result);
     });
 }
 
@@ -175,7 +200,7 @@ export function KeyExport(id: string, format: string, password: string): $Cancel
  */
 export function KeyGenerate(name: string, kind: string, comment: string, passphrase: string): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(1791015309, name, kind, comment, passphrase).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType8($result);
     });
 }
 
@@ -184,7 +209,7 @@ export function KeyGenerate(name: string, kind: string, comment: string, passphr
  */
 export function KeyImportFile(): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(3439102521).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType8($result);
     });
 }
 
@@ -194,7 +219,7 @@ export function KeyImportFile(): $CancellablePromise<$models.KeyDTO> {
  */
 export function KeyImportFileWithPassphrase(path: string, passphrase: string): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(829767293, path, passphrase).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType8($result);
     });
 }
 
@@ -204,7 +229,7 @@ export function KeyImportFileWithPassphrase(path: string, passphrase: string): $
  */
 export function KeyImportText(text: string, name: string): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(1982037696, text, name).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType8($result);
     });
 }
 
@@ -213,7 +238,7 @@ export function KeyImportText(text: string, name: string): $CancellablePromise<$
  */
 export function KeyImportTextWithPassphrase(text: string, name: string, passphrase: string): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(3955193724, text, name, passphrase).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType8($result);
     });
 }
 
@@ -229,12 +254,20 @@ export function KeyRename(id: string, name: string): $CancellablePromise<void> {
  */
 export function KeysList(): $CancellablePromise<$models.KeyDTO[]> {
     return $Call.ByID(1066303763).then(($result: any) => {
-        return $$createType8($result);
+        return $$createType9($result);
     });
 }
 
 /**
- * SaveSettings stores the user settings.
+ * OpenDataFolder shows the data folder (%LOCALAPPDATA%\sshclient) in Explorer.
+ */
+export function OpenDataFolder(): $CancellablePromise<void> {
+    return $Call.ByID(3968336675);
+}
+
+/**
+ * SaveSettings stores the user settings. The font comes from the fixed list, the size is
+ * 10–20, the idle lock is 0 (off), 5, 15 or 30 minutes; the window geometry is kept as stored.
  */
 export function SaveSettings(s: model$0.Settings): $CancellablePromise<void> {
     return $Call.ByID(1926621963, s);
@@ -252,7 +285,7 @@ export function SessionClose(id: string): $CancellablePromise<void> {
  */
 export function SessionList(): $CancellablePromise<$models.SessionDTO[]> {
     return $Call.ByID(491749225).then(($result: any) => {
-        return $$createType10($result);
+        return $$createType11($result);
     });
 }
 
@@ -293,8 +326,17 @@ export function TrustAnswer(id: string, trust: boolean): $CancellablePromise<voi
  */
 export function VaultCounts(): $CancellablePromise<$models.VaultCountsDTO> {
     return $Call.ByID(3202868421).then(($result: any) => {
-        return $$createType11($result);
+        return $$createType12($result);
     });
+}
+
+/**
+ * VaultLock locks a password vault after the idle timeout: the key and the decrypted data are
+ * wiped from memory until VaultUnlock. Open sessions and running forwards keep their own clients;
+ * a forward that has to redial meanwhile fails that attempt and retries.
+ */
+export function VaultLock(): $CancellablePromise<void> {
+    return $Call.ByID(388361346);
 }
 
 /**
@@ -325,7 +367,7 @@ export function VaultSetPassword(password: string): $CancellablePromise<void> {
  */
 export function VaultState(): $CancellablePromise<$models.VaultStateDTO> {
     return $Call.ByID(1454336566).then(($result: any) => {
-        return $$createType12($result);
+        return $$createType13($result);
     });
 }
 
@@ -337,6 +379,13 @@ export function VaultUnlock(password: string): $CancellablePromise<void> {
     return $Call.ByID(1461079957, password);
 }
 
+/**
+ * Version returns the release version set at build time, "dev" in local builds.
+ */
+export function Version(): $CancellablePromise<string> {
+    return $Call.ByID(2751814749);
+}
+
 // Private type creation functions
 const $$createType0 = $models.ForwardDTO.createFrom;
 const $$createType1 = $Create.Array($$createType0);
@@ -345,9 +394,10 @@ const $$createType3 = $models.GroupDTO.createFrom;
 const $$createType4 = $Create.Array($$createType3);
 const $$createType5 = $models.HostDTO.createFrom;
 const $$createType6 = $Create.Array($$createType5);
-const $$createType7 = $models.KeyDTO.createFrom;
-const $$createType8 = $Create.Array($$createType7);
-const $$createType9 = $models.SessionDTO.createFrom;
-const $$createType10 = $Create.Array($$createType9);
-const $$createType11 = $models.VaultCountsDTO.createFrom;
-const $$createType12 = $models.VaultStateDTO.createFrom;
+const $$createType7 = $models.ImportResult.createFrom;
+const $$createType8 = $models.KeyDTO.createFrom;
+const $$createType9 = $Create.Array($$createType8);
+const $$createType10 = $models.SessionDTO.createFrom;
+const $$createType11 = $Create.Array($$createType10);
+const $$createType12 = $models.VaultCountsDTO.createFrom;
+const $$createType13 = $models.VaultStateDTO.createFrom;

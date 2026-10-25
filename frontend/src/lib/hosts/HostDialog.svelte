@@ -37,7 +37,8 @@
       user: h?.user ?? '',
       name: h?.name ?? '',
       group_id: h?.group_id ?? '',
-      key_id: h?.key_id || (keys[0]?.id ?? ''),
+      // An imported host has no key yet: the dialog asks for one instead of picking the first.
+      key_id: h?.id ? h.key_id : h?.key_id || (keys[0]?.id ?? ''),
       os: h?.os ?? '',
     }
     newGroup = ''
@@ -267,6 +268,7 @@
                 aria-describedby={errors.key ? 'host-key-error' : undefined}
                 onchange={() => clearError('key')}
               >
+                {#if !form.key_id}<option value="" disabled>Выберите ключ</option>{/if}
                 {#each keys as k (k.id)}
                   <option value={k.id}>{k.name} · {typeLabel(k.type)}{k.encrypted ? ' · с фразой' : ''}</option>
                 {/each}

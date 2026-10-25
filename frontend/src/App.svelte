@@ -6,10 +6,12 @@
   import KeysView from './lib/keys/KeysView.svelte'
   import { goHome, retrySession, sessions } from './lib/sessions.svelte'
   import CorruptScreen from './lib/settings/CorruptScreen.svelte'
+  import { createIdleLock } from './lib/settings/idle'
+  import SettingsView from './lib/settings/SettingsView.svelte'
   import UnlockScreen from './lib/settings/UnlockScreen.svelte'
   import Sidebar from './lib/sidebar/Sidebar.svelte'
   import StatusBar from './lib/StatusBar.svelte'
-  import { refreshAll, ui, vault, type View } from './lib/stores.svelte'
+  import { lockVault, refreshAll, settings, ui, vault, type View } from './lib/stores.svelte'
   import ErrorCard from './lib/terminal/ErrorCard.svelte'
   import TerminalView from './lib/terminal/TerminalView.svelte'
   import TitleBar from './lib/titlebar/TitleBar.svelte'
@@ -38,6 +40,14 @@
   }
 
   onMount(load)
+
+  // Idle lock: only a password vault can be locked; 0 minutes switches it off.
+  const idle = createIdleLock(() => void lockVault())
+  $effect(() => {
+    const minutes = shell && vault.has_password ? settings.lock_after_min : 0
+    idle.start(minutes * 60_000)
+    return () => idle.stop()
+  })
 </script>
 
 <div class="window">
@@ -46,27 +56,30 @@
     <div class="fill"></div>
   {:else if vault.corrupt}
     <CorruptScreen error={vault.error} onreset={load} />
-  {:else if vault.locked}
-    <UnlockScreen onunlocked={load} />
   {:else}
-    <div class="shell" class:hidden={!home}>
-      <Sidebar />
-      <main class="fill">
-        {#if ui.view === 'keys'}
-          <KeysView />
-        {:else if ui.view === 'hosts'}
-          <HostsView />
-        {:else if ui.view === 'forwards'}
-          <ForwardsView />
-        {:else}
-          <h1 class="placeholder">{titles[ui.view]}</h1>
-        {/if}
-      </main>
-    </div>
-    <!-- Every terminal stays mounted so its scrollback survives tab switches. -->
-    <div class="terminals" class:hidden={home}>
+    {#if vault.locked}
+      <UnlockScreen onunlocked={load} />
+    {:else}
+      <div class="shell" class:hidden={!home}>
+        <Sidebar />
+        <main class="fill">
+          {#if ui.view === 'keys'}
+            <KeysView />
+          {:else if ui.view === 'hosts'}
+            <HostsView />
+          {:else if ui.view === 'forwards'}
+            <ForwardsView />
+          {:else}
+            <SettingsView />
+          {/if}
+        </main>
+      </div>
+    {/if}
+    <!-- Every terminal stays mounted so its scrollback survives tab switches and the idle lock:
+         sessions keep running behind the unlock screen. -->
+    <div class="terminals" class:hidden={home || vault.locked}>
       {#each sessions.list as tab (tab.id)}
-        {@const visible = !home && tab.id === sessions.activeId}
+        {@const visible = shell && !home && tab.id === sessions.activeId}
         <div class="pane" class:hidden={!visible}>
           <TerminalView sessionId={tab.id} {visible} />
           {#if tab.state === 'error'}
@@ -83,7 +96,7 @@
         </div>
       {/each}
     </div>
-    <StatusBar />
+    {#if shell}<StatusBar />{/if}
   {/if}
   <!-- Mounted before load(): trust questions of autostarted forwards arrive once ForwardAttach runs. -->
   <TrustDialog />
@@ -117,10 +130,5 @@
   .fill {
     flex: 1;
     min-width: 0;
-  }
-  h1.placeholder {
-    margin: 24px;
-    font-size: 16px;
-    font-weight: 600;
   }
 </style>

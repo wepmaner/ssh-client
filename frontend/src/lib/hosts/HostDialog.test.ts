@@ -123,6 +123,13 @@ describe('HostDialog', () => {
     expect(screen.getByRole('button', { name: 'Выбрать файл…' })).toBeTruthy()
   })
 
+  it('asks for a key when editing an imported host without one', () => {
+    setup({ ...saved, key_id: '', group_id: '', group_name: '', key_name: '', os: '', connected: false })
+    const select = screen.getByLabelText('Ключ') as HTMLSelectElement
+    expect(select.value).toBe('')
+    expect(select.selectedOptions[0].textContent).toBe('Выберите ключ')
+  })
+
   it('edits an existing host with its values', async () => {
     setup({ ...saved, name: 'prod', port: 2222, group_id: '', group_name: '', key_name: 'work', os: '', connected: false })
     expect((screen.getByLabelText('Адрес') as HTMLInputElement).value).toBe('srv.example.test')

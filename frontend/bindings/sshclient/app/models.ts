@@ -184,6 +184,43 @@ export class HostDTO {
 }
 
 /**
+ * ImportResult says what an import did. Warnings are shown as a list: keys to import
+ * separately, skipped duplicates, sessions and lines that could not be taken.
+ */
+export class ImportResult {
+    "added": number;
+    "skipped": number;
+    "warnings": string[];
+
+    /** Creates a new ImportResult instance. */
+    constructor($$source: Partial<ImportResult> = {}) {
+        if (!("added" in $$source)) {
+            this["added"] = 0;
+        }
+        if (!("skipped" in $$source)) {
+            this["skipped"] = 0;
+        }
+        if (!("warnings" in $$source)) {
+            this["warnings"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ImportResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ImportResult {
+        const $$createField2_0 = $$createType0;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("warnings" in $$parsedSource) {
+            $$parsedSource["warnings"] = $$createField2_0($$parsedSource["warnings"]);
+        }
+        return new ImportResult($$parsedSource as Partial<ImportResult>);
+    }
+}
+
+/**
  * KeyDTO is a key as shown in the UI. The private part never leaves Go.
  * Format is openssh|pem|ppk; Encrypted means the key has its own passphrase,
  * asked in the terminal on every connection.

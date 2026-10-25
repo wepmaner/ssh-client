@@ -17,7 +17,10 @@ export {
   GroupsList,
   HostDelete,
   HostSave,
+  HostsExport,
   HostsList,
+  ImportPuTTY,
+  ImportSSHConfig,
   KeyCopyPublic,
   KeyDelete,
   KeyExport,
@@ -28,6 +31,7 @@ export {
   KeyImportTextWithPassphrase,
   KeyRename,
   KeysList,
+  OpenDataFolder,
   SaveSettings,
   SessionClose,
   SessionList,
@@ -36,11 +40,13 @@ export {
   SessionWrite,
   TrustAnswer,
   VaultCounts,
+  VaultLock,
   VaultRemovePassword,
   VaultResetCorrupt,
   VaultSetPassword,
   VaultState,
   VaultUnlock,
+  Version,
 } from '../../bindings/sshclient/app/app'
 export * as app from '../../bindings/sshclient/app/models'
 export * as model from '../../bindings/sshclient/internal/model/models'

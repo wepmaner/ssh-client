@@ -87,15 +87,6 @@
     t.loadAddon(fit)
     t.loadAddon(s)
     t.open(host)
-    if (settings.webgl) {
-      try {
-        const gl = new WebglAddon()
-        gl.onContextLoss(() => gl.dispose()) // falls back to the DOM renderer
-        t.loadAddon(gl)
-      } catch {
-        // No WebGL2 context: xterm keeps its DOM renderer.
-      }
-    }
 
     t.attachCustomKeyEventHandler((e) => {
       if (!isAppShortcut(e)) return true
@@ -135,8 +126,37 @@
       offFocus()
       offData()
       for (const d of subs) d.dispose()
+      disposeWebgl()
       t.dispose()
       term = undefined
+    }
+  })
+
+  let webgl: WebglAddon | undefined
+
+  function disposeWebgl(): void {
+    webgl?.dispose()
+    webgl = undefined
+  }
+
+  /** The WebGL renderer follows the setting live; without WebGL2 xterm keeps its DOM renderer. */
+  $effect(() => {
+    const t = term
+    if (!t) return
+    if (!settings.webgl) {
+      disposeWebgl()
+      return
+    }
+    if (webgl) return
+    try {
+      const gl = new WebglAddon()
+      gl.onContextLoss(() => {
+        if (webgl === gl) disposeWebgl() // falls back to the DOM renderer
+      })
+      t.loadAddon(gl)
+      webgl = gl
+    } catch {
+      // No WebGL2 context.
     }
   })
 

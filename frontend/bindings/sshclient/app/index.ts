@@ -10,6 +10,7 @@ export {
     ForwardDTO,
     GroupDTO,
     HostDTO,
+    ImportResult,
     KeyDTO,
     SessionDTO,
     VaultCountsDTO,
