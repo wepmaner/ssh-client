@@ -37,6 +37,14 @@
   })
 
   const mismatch = $derived(repeat !== '' && repeat !== phrase)
+  const needsRepeat = $derived(phrase !== '' && repeat === '')
+
+  /** Every way out of the dialog drops the typed passphrase first. */
+  function close() {
+    phrase = ''
+    repeat = ''
+    onclose()
+  }
   const canSubmit = $derived(name.trim() !== '' && phrase === repeat && !busy)
 
   async function submit() {
@@ -45,10 +53,8 @@
     error = ''
     try {
       const key = await KeyGenerate(name, kind, comment, phrase)
-      phrase = ''
-      repeat = ''
       oncreated(key)
-      onclose()
+      close()
     } catch (e) {
       error = errorText(e)
     } finally {
@@ -57,7 +63,7 @@
   }
 </script>
 
-<Dialog {open} title="Новый ключ" {onclose} width={480}>
+<Dialog {open} title="Новый ключ" onclose={close} width={480}>
   <form
     id="key-create-form"
     onsubmit={(e) => {
@@ -102,6 +108,8 @@
     </div>
     {#if mismatch}
       <p class="error" role="alert">Фразы не совпадают</p>
+    {:else if needsRepeat}
+      <p class="hint phrase-hint">Повторите парольную фразу</p>
     {:else}
       <p class="hint phrase-hint">Без фразы ключ защищён только хранилищем. Фраза не сохраняется: терминал спросит её при каждом подключении, восстановить её нельзя.</p>
     {/if}
@@ -117,7 +125,7 @@
   {#snippet footer()}
     <span></span>
     <span class="actions">
-      <Button variant="ghost" onclick={onclose}>Отмена</Button>
+      <Button variant="ghost" onclick={close}>Отмена</Button>
       <Button variant="primary" type="submit" form="key-create-form" disabled={!canSubmit}>Создать</Button>
     </span>
   {/snippet}

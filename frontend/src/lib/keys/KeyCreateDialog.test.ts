@@ -10,8 +10,11 @@ const key = { id: 'k1', name: 'work' }
 
 function setup() {
   const oncreated = vi.fn()
-  render(KeyCreateDialog, { open: true, onclose: () => {}, oncreated })
+  const onclose = vi.fn()
+  const view = render(KeyCreateDialog, { open: true, onclose, oncreated })
   return {
+    view,
+    onclose,
     oncreated,
     name: screen.getByLabelText('Название'),
     phrase: screen.getByLabelText('Парольная фраза (необязательно)'),
@@ -54,4 +57,33 @@ describe('KeyCreateDialog', () => {
     expect(screen.queryByText('Фразы не совпадают')).toBeNull()
     expect(f.submit.disabled).toBe(false)
   })
+
+  it('asks to repeat a typed passphrase instead of silently blocking', async () => {
+    const f = setup()
+    await fireEvent.input(f.name, { target: { value: 'work' } })
+    await fireEvent.input(f.phrase, { target: { value: 'one' } })
+    expect(screen.getByText('Повторите парольную фразу')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(f.submit.disabled).toBe(true)
+    await fireEvent.input(f.repeat, { target: { value: 'one' } })
+    expect(screen.queryByText('Повторите парольную фразу')).toBeNull()
+  })
+
+  for (const how of ['cancel', 'escape'] as const) {
+    it(`forgets the passphrase on close (${how})`, async () => {
+      const f = setup()
+      await fireEvent.input(f.phrase, { target: { value: 'secret' } })
+      await fireEvent.input(f.repeat, { target: { value: 'secret' } })
+      if (how === 'cancel') await fireEvent.click(screen.getByRole('button', { name: 'Отмена' }))
+      else await fireEvent.keyDown(window, { key: 'Escape' })
+      expect(f.onclose).toHaveBeenCalled()
+      // The parent has not closed the dialog yet: the fields must already be empty.
+      expect((screen.getByLabelText('Парольная фраза (необязательно)') as HTMLInputElement).value).toBe('')
+      expect((screen.getByLabelText('Повторите фразу') as HTMLInputElement).value).toBe('')
+      await f.view.rerender({ open: false })
+      await f.view.rerender({ open: true })
+      expect((screen.getByLabelText('Парольная фраза (необязательно)') as HTMLInputElement).value).toBe('')
+      expect((screen.getByLabelText('Повторите фразу') as HTMLInputElement).value).toBe('')
+    })
+  }
 })
