@@ -43,8 +43,9 @@ const (
 	passphraseRetries = 3
 	promptRetries     = 3
 
-	msgTimeout    = "Сервер не ответил за 10 секунд"
-	msgAuthDenied = "Доступ запрещён: сервер отклонил ключ и пароль"
+	msgTimeout      = "Сервер не ответил за 10 секунд"
+	msgHandshakeCap = "Подключение не завершилось за 10 минут" // общий предел maxHandshakeTime
+	msgAuthDenied   = "Доступ запрещён: сервер отклонил ключ и пароль"
 )
 
 // handshakeTimeout ограничивает ожидание ответа сервера во время рукопожатия SSH.
@@ -107,6 +108,10 @@ func Dial(ctx context.Context, t Target, p *Prompter, kh *KnownHosts) (*ssh.Clie
 	if !stop() { // ctx или общий предел истёк во время рукопожатия и закрыл соединение
 		if err == nil {
 			_ = c.Close() //nolint:gosec // G104: best-effort cleanup, ctx error is reported
+		}
+		if ctx.Err() == nil && errors.Is(hctx.Err(), context.DeadlineExceeded) {
+			// Сработал общий предел, а не молчание сервера.
+			return nil, &userError{msg: msgHandshakeCap, cause: errors.Join(ErrTimeout, hctx.Err())}
 		}
 		if errors.Is(hctx.Err(), context.DeadlineExceeded) {
 			return nil, timeoutError(hctx.Err())
