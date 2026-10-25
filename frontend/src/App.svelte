@@ -42,7 +42,7 @@
   onMount(load)
 
   // Idle lock: only a password vault can be locked; 0 minutes switches it off.
-  const idle = createIdleLock(() => void lockVault())
+  const idle = createIdleLock(lockVault) // a failed lock is toasted and counts down again
   $effect(() => {
     const minutes = shell && vault.has_password ? settings.lock_after_min : 0
     idle.start(minutes * 60_000)

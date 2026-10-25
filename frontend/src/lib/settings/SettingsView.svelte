@@ -13,6 +13,7 @@
     type app,
   } from '../api'
   import { refreshHosts, refreshSettings, refreshVault, settings, toast, vault } from '../stores.svelte'
+  import { fieldError } from '../hosts/format'
   import { CANCELLED } from '../keys/format'
   import Button from '../ui/Button.svelte'
   import PasswordDialog from '../ui/PasswordDialog.svelte'
@@ -39,14 +40,27 @@
       .catch(() => {})
   })
 
-  /** Applies a change at once (open terminals follow the store) and saves it; a refusal reloads. */
+  /** Refusals of SaveSettings by field (font, size, lock), shown under the control. */
+  let fieldErrors = $state<Record<string, string>>({})
+
+  /**
+   * Applies a change at once (open terminals follow the store) and saves it. A refusal shows
+   * under its field (other errors as a toast) and reloads the stored settings.
+   */
   function update(patch: Partial<model.Settings>): void {
     Object.assign(settings, patch)
-    SaveSettings(model.Settings.createFrom(JSON.parse(JSON.stringify(settings)))).catch((e) => {
-      toast(errorText(e))
-      void refreshSettings().catch(() => {})
-    })
+    SaveSettings(model.Settings.createFrom(JSON.parse(JSON.stringify(settings))))
+      .then(() => (fieldErrors = {}))
+      .catch((e) => {
+        const msg = errorText(e)
+        const fe = fieldError(msg)
+        if (fe) fieldErrors = { [fe.field]: fe.text }
+        else toast(msg)
+        void refreshSettings().catch(() => {})
+      })
   }
+
+  const describedBy = (field: string) => (fieldErrors[field] ? `set-${field}-error` : undefined)
 
   async function disableEncryption(password: string): Promise<void> {
     await VaultRemovePassword(password)
@@ -83,21 +97,27 @@
   }
 </script>
 
+{#snippet err(field: string)}
+  {#if fieldErrors[field]}<span class="field-error" id="set-{field}-error" role="alert">{fieldErrors[field]}</span>{/if}
+{/snippet}
+
 <div class="view">
   <section class="card" aria-labelledby="set-terminal">
     <h2 id="set-terminal">Терминал</h2>
     <div class="grid">
       <label class="field">
         <span>Шрифт</span>
-        <select class="select" value={settings.terminal_font} onchange={(e) => update({ terminal_font: e.currentTarget.value })}>
+        <select class="select" aria-describedby={describedBy('font')} value={settings.terminal_font} onchange={(e) => update({ terminal_font: e.currentTarget.value })}>
           {#each fonts as f (f)}<option value={f}>{f}</option>{/each}
         </select>
+        {@render err('font')}
       </label>
       <label class="field">
         <span>Размер</span>
-        <select class="select mono" value={String(settings.terminal_size)} onchange={(e) => update({ terminal_size: Number(e.currentTarget.value) })}>
+        <select class="select mono" aria-describedby={describedBy('size')} value={String(settings.terminal_size)} onchange={(e) => update({ terminal_size: Number(e.currentTarget.value) })}>
           {#each sizes as s (s)}<option value={String(s)}>{s}</option>{/each}
         </select>
+        {@render err('size')}
       </label>
     </div>
     <label class="check">
@@ -144,11 +164,13 @@
         <select
           class="select"
           disabled={!vault.has_password}
+          aria-describedby={describedBy('lock')}
           value={String(vault.has_password ? settings.lock_after_min : 0)}
           onchange={(e) => update({ lock_after_min: Number(e.currentTarget.value) })}
         >
           {#each lockOptions as o (o.value)}<option value={String(o.value)}>{o.label}</option>{/each}
         </select>
+        {@render err('lock')}
       </label>
     </div>
     {#if !vault.has_password}
@@ -314,6 +336,10 @@
     font-size: 12px;
     line-height: 1.6;
     user-select: text;
+  }
+  .field-error {
+    color: var(--error);
+    font-size: 12px;
   }
   .version {
     margin: 0;

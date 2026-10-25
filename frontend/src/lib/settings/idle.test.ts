@@ -9,7 +9,7 @@ vi.mock('../api', async () => {
   return { ...api, errorText: String, model }
 })
 
-import { hosts, keys, vault } from '../stores.svelte'
+import { hosts, keys, toastState, vault } from '../stores.svelte'
 import { createIdleLock } from './idle'
 import { lockVault } from '../stores.svelte'
 
@@ -60,5 +60,34 @@ describe('idle lock', () => {
     idle.stop()
     await vi.advanceTimersByTimeAsync(60 * minute)
     expect(api.VaultLock).not.toHaveBeenCalled()
+  })
+})
+
+describe('idle lock activity and failures', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+  })
+  afterEach(() => vi.useRealTimers())
+
+  it('counts pointer movement as activity', async () => {
+    const idle = createIdleLock(lockVault)
+    idle.start(5 * minute)
+    await vi.advanceTimersByTimeAsync(4 * minute)
+    window.dispatchEvent(new Event('pointermove'))
+    await vi.advanceTimersByTimeAsync(4 * minute)
+    expect(api.VaultLock).not.toHaveBeenCalled()
+    idle.stop()
+  })
+
+  it('a failed lock shows the error and tries again after the next idle period', async () => {
+    api.VaultLock.mockRejectedValueOnce('Хранилище недоступно')
+    const idle = createIdleLock(lockVault)
+    idle.start(5 * minute)
+    await vi.advanceTimersByTimeAsync(5 * minute)
+    expect(api.VaultLock).toHaveBeenCalledTimes(1)
+    expect(toastState.message).toBe('Хранилище недоступно')
+    await vi.advanceTimersByTimeAsync(5 * minute)
+    expect(api.VaultLock).toHaveBeenCalledTimes(2)
   })
 })

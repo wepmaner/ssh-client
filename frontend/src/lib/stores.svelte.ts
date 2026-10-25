@@ -82,13 +82,15 @@ export async function refreshAll(): Promise<void> {
 
 /**
  * Locks the vault after the idle timeout: Go wipes the key, the UI drops its copies of the
- * hosts and keys and shows the unlock screen. Open sessions keep running behind it.
+ * hosts and keys and shows the unlock screen. Open sessions keep running behind it. A refusal
+ * is shown as a toast and rethrown, so the idle timer counts down again.
  */
 export async function lockVault(): Promise<void> {
   try {
     await VaultLock()
-  } catch {
-    return // no password or no vault: nothing to lock
+  } catch (e) {
+    toast(errorText(e))
+    throw e
   }
   keys.splice(0, keys.length)
   hosts.splice(0, hosts.length)

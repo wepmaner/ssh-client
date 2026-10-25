@@ -15,6 +15,7 @@ import (
 	"sshclient/internal/appdir"
 	"sshclient/internal/importers"
 	"sshclient/internal/model"
+	"sshclient/internal/store"
 )
 
 // User-facing messages of the import and export API.
@@ -109,7 +110,9 @@ func (a *App) importHosts(in []model.Host, warns []string) (ImportResult, error)
 		add = append(add, h)
 	}
 	if len(add) > 0 {
-		if _, err := a.store.AddHosts(add); err != nil {
+		if _, err := a.store.AddHosts(add); errors.Is(err, store.ErrLocked) {
+			return ImportResult{}, errVaultLocked // the idle lock came during the import
+		} else if err != nil {
 			return ImportResult{}, err
 		}
 	}

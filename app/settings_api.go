@@ -1,7 +1,6 @@
 package app
 
 import (
-	"errors"
 	"slices"
 
 	"sshclient/internal/model"
@@ -18,11 +17,6 @@ const (
 	maxTerminalSize = 20
 )
 
-// errBadSettings is shown verbatim by the UI.
-//
-//nolint:staticcheck // ST1005: Russian UI text starts with a capital letter
-var errBadSettings = errors.New("Недопустимое значение настройки")
-
 // GetSettings returns the user settings, defaults while the vault is locked.
 func (a *App) GetSettings() model.Settings {
 	if !a.storeUnlocked() {
@@ -33,13 +27,18 @@ func (a *App) GetSettings() model.Settings {
 
 // SaveSettings stores the user settings. The font comes from the fixed list, the size is
 // 10–20, the idle lock is 0 (off), 5, 15 or 30 minutes; the window geometry is kept as stored.
+// A refusal is a field error (field:font|size|lock: text).
 func (a *App) SaveSettings(s model.Settings) error {
 	if !a.storeUnlocked() {
 		return errVaultLocked
 	}
-	if !slices.Contains(terminalFonts, s.TerminalFont) || s.TerminalSize < minTerminalSize ||
-		s.TerminalSize > maxTerminalSize || !slices.Contains(lockMinutes, s.LockAfterMin) {
-		return errBadSettings
+	switch {
+	case !slices.Contains(terminalFonts, s.TerminalFont):
+		return fieldError("font", "Выберите шрифт из списка")
+	case s.TerminalSize < minTerminalSize || s.TerminalSize > maxTerminalSize:
+		return fieldError("size", "Размер от 10 до 20")
+	case !slices.Contains(lockMinutes, s.LockAfterMin):
+		return fieldError("lock", "Блокировка через 5, 15 или 30 минут или никогда")
 	}
 	s.Window = a.store.Settings().Window // the geometry is Go's: the window saves it on close
 	return a.store.SaveSettings(s)

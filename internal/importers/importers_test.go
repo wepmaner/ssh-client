@@ -169,3 +169,34 @@ func TestReadPuTTYSessionsError(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 }
+
+// bom is the UTF-8 byte order mark Notepad puts at the start of a file.
+var bom = string(rune(0xFEFF))
+
+func TestParseSSHConfigBOMAndUnknownGlobals(t *testing.T) {
+	hosts, warns := parse(t, bom+"Host prod\n    HostName prod.example.test\n    User deploy\n")
+	if len(hosts) != 1 || hosts[0].Address != "prod.example.test" || len(warns) != 0 {
+		t.Fatalf("BOM config: hosts %+v warnings %v", hosts, warns)
+	}
+	_, warns = parse(t, "Hots prod\nServerAliveInterval 30\nHost prod\n  User u\n  Hots x\n")
+	if !slices.Equal(warns, []string{"строка 1: неизвестный параметр Hots"}) {
+		t.Fatalf("warnings %v", warns)
+	}
+}
+
+func TestParseSSHConfigGlobalIdentityFileWarnsOnce(t *testing.T) {
+	_, warns := parse(t, `
+IdentityFile ~/.ssh/id_all
+Host a b c
+    User u
+Host *.example.test
+    IdentityFile ~/.ssh/id_ex
+`)
+	want := []string{
+		"ключ для всех хостов нужно импортировать отдельно: ~/.ssh/id_all",
+		"ключ для Host *.example.test нужно импортировать отдельно: ~/.ssh/id_ex",
+	}
+	if !slices.Equal(warns, want) {
+		t.Fatalf("warnings %v", warns)
+	}
+}

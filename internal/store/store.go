@@ -18,7 +18,8 @@ var ErrKeyInUse = errors.New("key is used by hosts")
 
 var errInvalidID = errors.New("invalid id")
 
-var errStoreLocked = errors.New("vault is locked")
+// ErrLocked is returned by a store write while the vault is locked.
+var ErrLocked = errors.New("vault is locked")
 
 // Store gives typed access to the vault contents; every mutation is saved.
 type Store struct {
@@ -47,7 +48,7 @@ func (s *Store) mutate(f func(d *model.VaultData) error) error {
 	defer s.mu.Unlock()
 	d := s.v.Data()
 	if d == nil {
-		return errStoreLocked
+		return ErrLocked
 	}
 	snapshot := *d
 	snapshot.Hosts = slices.Clone(d.Hosts)

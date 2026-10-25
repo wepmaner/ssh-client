@@ -1,8 +1,10 @@
-// Idle lock: after a set time without keyboard, mouse or wheel input the callback runs once.
+// Idle lock: after a set time without keyboard, mouse, wheel or pointer input the callback runs.
 // Input only stamps the time (listeners are passive, in the capture phase so the terminal cannot
-// swallow them); a single timer checks the stamp when the time is up and re-arms for the rest.
+// swallow them; pointer movement stamps at most once a second); a single timer checks the stamp
+// when the time is up and re-arms for the rest. A callback that rejects re-arms the countdown.
 
 const activityEvents = ['keydown', 'mousedown', 'wheel'] as const
+const moveThrottleMs = 1000
 
 export interface IdleLock {
   /** (Re)starts the countdown with a limit in ms; 0 or less switches the lock off. */
@@ -10,13 +12,17 @@ export interface IdleLock {
   stop(): void
 }
 
-export function createIdleLock(onidle: () => void, target: EventTarget = window): IdleLock {
+export function createIdleLock(onidle: () => void | Promise<void>, target: EventTarget = window): IdleLock {
   let limit = 0
   let last = 0
   let timer: ReturnType<typeof setTimeout> | undefined
 
   const activity = () => {
     last = Date.now()
+  }
+  const move = () => {
+    const now = Date.now()
+    if (now - last >= moveThrottleMs) last = now
   }
 
   function check(): void {
@@ -25,14 +31,19 @@ export function createIdleLock(onidle: () => void, target: EventTarget = window)
       timer = setTimeout(check, limit - idle)
       return
     }
+    const again = limit
     stop()
-    onidle()
+    // The lock did not happen (the error is the callback's to show): count down again.
+    Promise.resolve()
+      .then(onidle)
+      .catch(() => start(again))
   }
 
   function stop(): void {
     clearTimeout(timer)
     timer = undefined
     for (const type of activityEvents) target.removeEventListener(type, activity, { capture: true })
+    target.removeEventListener('pointermove', move, { capture: true })
   }
 
   function start(limitMs: number): void {
@@ -41,6 +52,7 @@ export function createIdleLock(onidle: () => void, target: EventTarget = window)
     limit = limitMs
     last = Date.now()
     for (const type of activityEvents) target.addEventListener(type, activity, { capture: true, passive: true })
+    target.addEventListener('pointermove', move, { capture: true, passive: true })
     timer = setTimeout(check, limit)
   }
 

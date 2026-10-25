@@ -16,16 +16,19 @@ func TestSaveSettingsValidates(t *testing.T) {
 	if got := a.GetSettings(); got != ok {
 		t.Fatalf("saved %+v", got)
 	}
-	for _, bad := range []func(s *model.Settings){
-		func(s *model.Settings) { s.TerminalFont = "Comic Sans" },
-		func(s *model.Settings) { s.TerminalSize = 9 },
-		func(s *model.Settings) { s.TerminalSize = 21 },
-		func(s *model.Settings) { s.LockAfterMin = 7 },
+	for _, tc := range []struct {
+		field, text string
+		bad         func(s *model.Settings)
+	}{
+		{"font", "Выберите шрифт из списка", func(s *model.Settings) { s.TerminalFont = "Comic Sans" }},
+		{"size", "Размер от 10 до 20", func(s *model.Settings) { s.TerminalSize = 9 }},
+		{"size", "Размер от 10 до 20", func(s *model.Settings) { s.TerminalSize = 21 }},
+		{"lock", "Блокировка через 5, 15 или 30 минут или никогда", func(s *model.Settings) { s.LockAfterMin = 7 }},
 	} {
 		s := ok
-		bad(&s)
-		if err := a.SaveSettings(s); err == nil {
-			t.Fatalf("accepted %+v", s)
+		tc.bad(&s)
+		if err := a.SaveSettings(s); err == nil || err.Error() != "field:"+tc.field+": "+tc.text {
+			t.Fatalf("%+v: %v", s, err)
 		}
 	}
 	if got := a.GetSettings(); got != ok {

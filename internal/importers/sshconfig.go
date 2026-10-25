@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -33,7 +34,8 @@ func ParseSSHConfig(r io.Reader) ([]model.Host, []string, error) {
 	}
 	var hosts []model.Host
 	seen := map[string]bool{}
-	for _, b := range blocks {
+	for i, b := range blocks {
+		warns = append(warns, wildcardKeyWarnings(i, b)...)
 		for _, alias := range b.patterns {
 			if isPattern(alias) || seen[alias] {
 				continue
@@ -55,16 +57,21 @@ func readSSHBlocks(r io.Reader) ([]sshBlock, []string, error) {
 	var warns []string
 	blocks := []sshBlock{{patterns: []string{"*"}}}
 	cur := &blocks[0]
-	inMatch := false
+	inMatch, global := false, true
 	sc := bufio.NewScanner(r)
 	for n := 1; sc.Scan(); n++ {
-		key, val := splitConfigLine(sc.Text())
+		line := sc.Text()
+		if n == 1 {
+			line = strings.TrimPrefix(line, utf8BOM) // Notepad saves UTF-8 with a BOM
+		}
+		rawKey, val := splitConfigLine(line)
+		key := strings.ToLower(rawKey)
 		switch key {
 		case "":
 			continue
 		case "host":
 			blocks = append(blocks, sshBlock{patterns: splitArgs(val)})
-			cur, inMatch = &blocks[len(blocks)-1], false
+			cur, inMatch, global = &blocks[len(blocks)-1], false, false
 			continue
 		case "match":
 			warns = append(warns, fmt.Sprintf("строка %d: секция Match пропущена", n))
@@ -72,6 +79,11 @@ func readSSHBlocks(r io.Reader) ([]sshBlock, []string, error) {
 			continue
 		case "include":
 			warns = append(warns, fmt.Sprintf("строка %d: Include %s не читается, перенесите хосты в основной файл", n, val))
+			continue
+		}
+		if global && !knownKeywords[key] {
+			// A misread line before the first Host would apply to every host: say so.
+			warns = append(warns, fmt.Sprintf("строка %d: неизвестный параметр %s", n, rawKey))
 			continue
 		}
 		if !inMatch {
@@ -108,6 +120,9 @@ func resolveAlias(alias string, blocks []sshBlock) (model.Host, []string, bool) 
 					port = kv[1]
 				}
 			case "identityfile":
+				if hasPattern(b.patterns) {
+					continue // reported once for the section by wildcardKeyWarnings
+				}
 				warns = append(warns, fmt.Sprintf("ключ для %s нужно импортировать отдельно: %s", alias, kv[1]))
 			}
 		}
@@ -128,7 +143,7 @@ func resolveAlias(alias string, blocks []sshBlock) (model.Host, []string, bool) 
 	return h, warns, true
 }
 
-// splitConfigLine returns the lower-case keyword and the rest of a config line;
+// splitConfigLine returns the keyword as written and the rest of a config line;
 // "Key value", "Key=value" and "Key = value" are all accepted, # starts a comment.
 func splitConfigLine(line string) (string, string) {
 	line = strings.TrimSpace(line)
@@ -137,9 +152,9 @@ func splitConfigLine(line string) (string, string) {
 	}
 	i := strings.IndexAny(line, " \t=")
 	if i < 0 {
-		return strings.ToLower(line), ""
+		return line, ""
 	}
-	key := strings.ToLower(line[:i])
+	key := line[:i]
 	val := strings.TrimLeft(line[i:], " \t")
 	val = strings.TrimPrefix(val, "=")
 	val = strings.TrimSpace(val)
@@ -196,6 +211,58 @@ func unquote(s string) string {
 }
 
 func isPattern(s string) bool { return strings.ContainsAny(s, "*?!") }
+
+func hasPattern(patterns []string) bool { return slices.ContainsFunc(patterns, isPattern) }
+
+// wildcardKeyWarnings reports each IdentityFile of a wildcard section once, not per matching
+// alias; block 0 is the part before the first Host line.
+func wildcardKeyWarnings(i int, b sshBlock) []string {
+	if !hasPattern(b.patterns) {
+		return nil
+	}
+	who := "всех хостов"
+	if i > 0 {
+		who = "Host " + strings.Join(b.patterns, " ")
+	}
+	var warns []string
+	for _, kv := range b.values {
+		if kv[0] == "identityfile" {
+			warns = append(warns, fmt.Sprintf("ключ для %s нужно импортировать отдельно: %s", who, kv[1]))
+		}
+	}
+	return warns
+}
+
+// utf8BOM is the byte order mark some editors put at the start of a UTF-8 file.
+var utf8BOM = string(rune(0xFEFF))
+
+// knownKeywords are the ssh_config(5) keywords (OpenSSH 9.x), lower-case. Before the first
+// Host line an unknown keyword is reported: it may be a misread Host line.
+var knownKeywords = map[string]bool{}
+
+func init() {
+	for _, k := range strings.Fields(`addkeystoagent addressfamily batchmode bindaddress bindinterface
+		canonicaldomains canonicalizefallbacklocal canonicalizehostname canonicalizemaxdots
+		canonicalizepermittedcnames casignaturealgorithms certificatefile channeltimeout
+		checkhostip ciphers clearallforwardings compression connectionattempts connecttimeout
+		controlmaster controlpath controlpersist dynamicforward enableechosshfp enablesshkeysign
+		escapechar exitonforwardfailure fingerprinthash forkafterauthentication forwardagent
+		forwardx11 forwardx11timeout forwardx11trusted gatewayports globalknownhostsfile
+		gssapiauthentication gssapidelegatecredentials hashknownhosts host hostbasedacceptedalgorithms
+		hostbasedauthentication hostkeyalgorithms hostkeyalias hostname identitiesonly identityagent
+		identityfile ignoreunknown include ipqos kbdinteractiveauthentication kbdinteractivedevices
+		kexalgorithms knownhostscommand localcommand localforward loglevel logverbose macs match
+		nohostauthenticationforlocalhost numberofpasswordprompts obscurekeystroketiming
+		passwordauthentication permitlocalcommand permitremoteopen pkcs11provider port
+		preferredauthentications proxycommand proxyjump proxyusefdpass pubkeyacceptedalgorithms
+		pubkeyacceptedkeytypes pubkeyauthentication rekeylimit remotecommand remoteforward
+		requesttty requiredrsasize revokedhostkeys securitykeyprovider sendenv serveralivecountmax
+		serveraliveinterval sessiontype setenv stdinnull streamlocalbindmask streamlocalbindunlink
+		stricthostkeychecking syslogfacility tag tcpkeepalive tunnel tunneldevice updatehostkeys
+		user userknownhostsfile verifyhostkeydns visualhostkey xauthlocation`) {
+		knownKeywords[k] = true
+	}
+}
 
 // matchesAny applies a Host line to alias as OpenSSH does: some pattern matches and no
 // negated !pattern does.

@@ -53,6 +53,19 @@ describe('SettingsView', () => {
     expect(api.SaveSettings).toHaveBeenLastCalledWith(expect.objectContaining({ webgl: false, terminal_size: 16 }))
   })
 
+  it('shows a refusal under its field and reloads the stored settings', async () => {
+    api.SaveSettings.mockRejectedValueOnce('field:size: Размер от 10 до 20')
+    api.GetSettings.mockResolvedValue({ ...JSON.parse(JSON.stringify(settings)), terminal_size: 13 })
+    render(SettingsView)
+    const size = screen.getByLabelText('Размер')
+    await fireEvent.change(size, { target: { value: '16' } })
+    await waitFor(() => expect(document.getElementById(size.getAttribute('aria-describedby') ?? '')?.textContent).toBe('Размер от 10 до 20'))
+    await waitFor(() => expect(settings.terminal_size).toBe(13))
+    // The next accepted change clears it.
+    await fireEvent.change(size, { target: { value: '14' } })
+    await waitFor(() => expect(size.getAttribute('aria-describedby')).toBeNull())
+  })
+
   it('offers the idle lock only with a vault password', async () => {
     render(SettingsView)
     const lock = screen.getByLabelText('Блокировать после бездействия') as HTMLSelectElement

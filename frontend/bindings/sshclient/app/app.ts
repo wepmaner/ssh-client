@@ -268,6 +268,7 @@ export function OpenDataFolder(): $CancellablePromise<void> {
 /**
  * SaveSettings stores the user settings. The font comes from the fixed list, the size is
  * 10–20, the idle lock is 0 (off), 5, 15 or 30 minutes; the window geometry is kept as stored.
+ * A refusal is a field error (field:font|size|lock: text).
  */
 export function SaveSettings(s: model$0.Settings): $CancellablePromise<void> {
     return $Call.ByID(1926621963, s);

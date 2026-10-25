@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+
+	"sshclient/internal/model"
 )
 
 // withHome points os.UserHomeDir at a temp folder holding cfg as .ssh/config.
@@ -179,5 +181,20 @@ func TestVersion(t *testing.T) {
 	a := New(application.WebviewWindowOptions{}, "1.2.3")
 	if a.Version() != "1.2.3" {
 		t.Fatal(a.Version())
+	}
+}
+
+// A lock that lands during an import (after the unlocked check) still reads as the UI text.
+func TestImportLockedMidwayIsUserFacing(t *testing.T) {
+	a := newKeysApp(t)
+	if err := a.VaultSetPassword("correct horse"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.VaultLock(); err != nil {
+		t.Fatal(err)
+	}
+	_, err := a.importHosts([]model.Host{{Name: "x", Address: "x.example.test", Port: 22, User: "u"}}, nil)
+	if err == nil || err.Error() != "Хранилище заблокировано" {
+		t.Fatalf("err %v", err)
 	}
 }
