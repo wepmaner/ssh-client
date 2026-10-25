@@ -826,11 +826,11 @@ git commit -m "feat: settings screen, idle lock, ssh_config and PuTTY import"
 - Create: `stash.json`, `assets/icon.png` (256×256, PNG ≤ 512 КБ, допустимо плейсхолдер в стиле палитры), `.github/workflows/release.yml`, `.github/workflows/stash-ping.yml`
 - Уже сделано в Task 13a: `var version = "dev"` и `WebviewUserDataPath` в `main.go`, удалены `build/darwin/*` и NSIS.
 
-- [ ] **Step 1: Движение и фокус**
+- [x] **Step 1: Движение и фокус**
 
 Проверить по списку CLAUDE.md «Правила нативного поведения»: диалог 150 мс / 0,97, наведение 80 мс, вкладки без анимации, `@media (prefers-reduced-motion: reduce)` отключает переходы; фокус-кольцо `2px #5b9cf8` на всех контролах с клавиатуры; Esc закрывает любой диалог; Alt+Space открывает системное меню окна (Wails отдаёт системе при `DisableFramelessWindowDecorations: false`, проверить).
 
-- [ ] **Step 1a: Замечания владельца по разделу «Ключи» (2026-10-25)**
+- [x] **Step 1a: Замечания владельца по разделу «Ключи» (2026-10-25)**
 
 В `frontend/src/lib/keys/KeyDetail.svelte`:
 - Вместо кнопки «Переименовать» — иконка карандаша (кнопка-иконка 28×28, `aria-label="Переименовать"`, подсказка) сразу справа от названия ключа; по щелчку то же инлайн-редактирование. Кнопка «Удалить» остаётся текстовой справа.
@@ -850,15 +850,17 @@ git commit -m "feat: settings screen, idle lock, ssh_config and PuTTY import"
 - Проверить, что Wails v2 обрабатывает `WM_DPICHANGED` пересчётом масштаба WebView2 (в `frontend/desktop/windows` v2.16); если нет — вызвать `webview.NotifyParentWindowPositionChanged`/обновить zoom через `ICoreWebView2Controller.put_RasterizationScale` тем же путём, что v2 делает при смене монитора. Остаточное мелькание одного кадра допустимо.
 - Проверка только на двух мониторах с разным масштабом (100 % и 150 %): развернуть, свернуть, восстановить — интерфейс прежнего размера; повторить пять раз. Записать в CLAUDE.md как известное ограничение WebView2 с обходом.
 
-- [ ] **Step 2: Snap-раскладки при наведении на «Развернуть»**
+- [x] **Step 2: Snap-раскладки при наведении на «Развернуть»**
 
 Проверить в `wails3 dev`. Если Wails v3 не показывает раскладки для кастомной кнопки, зафиксировать в CLAUDE.md как известное ограничение и оставить двойной щелчок по заголовку и Win+Z как путь.
 
-- [ ] **Step 3: Шрифты**
+Сделано (2026-10-25): `WebView2CompositionHosting` + `NonClientRegionSupport` в `mainWindow()`, `--wails-non-client-region: maximize` на кнопке; живая проверка контроллером (Snap, ввод в терминал, масштаб после восстановления) решает, остаются ли флаги.
+
+- [x] **Step 3: Шрифты**
 
 В `tokens.css` интерфейс `'Segoe UI Variable Text', 'Segoe UI', system-ui`; терминал по `Settings.TerminalFont` с откатом `Consolas`. Google Fonts не загружаются (приложение офлайн).
 
-- [ ] **Step 4: Портативность под Stash**
+- [x] **Step 4: Портативность под Stash**
 
 - `internal/appdir.Dir()` возвращает `%APPDATA%\sshclient` (`os.UserConfigDir()`), а не `%LOCALAPPDATA%`; ошибка, если `APPDATA` пуст. Тесты appdir и те тесты `app`, что подменяют `LOCALAPPDATA`, переводятся на `APPDATA`. Миграция: если `%LOCALAPPDATA%\sshclient\vault.json` существует, а в новой папке ничего нет, при первом старте перенести содержимое старой папки в новую (`os.Rename`, при ошибке копирование) и записать в журнал; тест с двумя временными папками.
 - `main.go`: `Windows.WebviewUserDataPath = filepath.Join(appdir.Dir(), "WebView2")` уже стоит (Task 13a); после переноса папки данных кэш переезжает вместе с ней.
@@ -866,7 +868,7 @@ git commit -m "feat: settings screen, idle lock, ssh_config and PuTTY import"
 - Проверить, что ни один код не пишет файлы рядом с exe и не читает пути от текущей папки (`grep -rn "os.Getwd\|\"./" --include=*.go`); известный `known_hosts` и геометрия окна уже в папке данных.
 - Публичный репозиторий: в коде, тестах, документах и `go.mod` нет локальных путей, адресов серверов и ключей, кроме фикстур `internal/keys/testdata` (происхождение описано в `testdata/README.md`). Проверка: `git grep -n -i -E "c:\\users|/c/users|@proton|BEGIN .*PRIVATE" -- . ':!internal/keys/testdata'` даёт пусто.
 
-- [ ] **Step 5: `stash.json` и иконка**
+- [x] **Step 5: `stash.json` и иконка**
 
 ```jsonc
 {
@@ -888,7 +890,7 @@ git commit -m "feat: settings screen, idle lock, ssh_config and PuTTY import"
 
 `id` не меняется никогда. Имя папки данных `sshclient` совпадает с именем exe (Stash сравнивает без регистра и дефисов), иначе `data` не пройдёт `stash-pack`. `preserve` не нужен: рядом с exe файлов нет.
 
-- [ ] **Step 6: Workflow релиза**
+- [x] **Step 6: Workflow релиза**
 
 `.github/workflows/release.yml`, триггер `push: tags: ['v*']`, `permissions: contents: write`, раннер `windows-latest` (нативная сборка Wails, `-race` требует cgo, на раннере есть gcc):
 
@@ -916,7 +918,7 @@ git push --tags
 
 Затем Stash → Админка → Приложения → «Добавить приложение» → `wepmaner/ssh-client` → «Записать в GitHub через gh» → включить. Проверка: `https://stash.stash-worker.workers.dev/v1/versions/ssh-client` показывает `0.1.0`.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add -A
