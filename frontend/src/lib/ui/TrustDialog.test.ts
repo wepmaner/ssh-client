@@ -39,6 +39,7 @@ async function emit(name: string, payload: unknown): Promise<void> {
 
 const dialog = () => screen.queryByRole('dialog', { name: 'Неизвестный сервер' })
 const primary = () => screen.getByRole('button', { name: 'Доверять и подключиться' })
+const cancel = () => screen.getByRole('button', { name: 'Отмена' })
 
 describe('TrustDialog', () => {
   beforeEach(() => {
@@ -58,7 +59,7 @@ describe('TrustDialog', () => {
     expect(dialog()).toBeNull()
   })
 
-  it('shows the server, the key type and the fingerprint with the primary button focused', async () => {
+  it('shows the server, the key type and the fingerprint with «Отмена» focused', async () => {
     await emit('trust:ask', q1)
     const d = dialog()!
     expect(d).toBeTruthy()
@@ -68,8 +69,9 @@ describe('TrustDialog', () => {
     expect(d.textContent).toContain(
       'Клиент видит этот сервер впервые. Если отпечаток совпадает с тем, что дал администратор, подключение безопасно.',
     )
-    expect(screen.getByRole('button', { name: 'Отмена' })).toBeTruthy()
-    expect(document.activeElement).toBe(primary())
+    // A security prompt defaults to the safe answer; trusting takes a deliberate click or Tab.
+    expect(document.activeElement).toBe(cancel())
+    expect(primary().className).toContain('primary')
   })
 
   it('copies the fingerprint', async () => {
@@ -104,7 +106,7 @@ describe('TrustDialog', () => {
     expect(dialog()!.textContent).toContain('alice@example.test:22')
     await fireEvent.click(primary())
     expect(dialog()!.textContent).toContain('deploy@127.0.0.1:2222')
-    expect(document.activeElement).toBe(primary())
+    expect(document.activeElement).toBe(cancel())
     await fireEvent.keyDown(window, { key: 'Escape' })
     expect(api.TrustAnswer.mock.calls).toEqual([
       ['q1', true],
@@ -135,7 +137,7 @@ describe('TrustDialog', () => {
       for (const close of [() => fireEvent.click(primary()), () => fireEvent.keyDown(window, { key: 'Escape' })]) {
         before.focus()
         await emit('trust:ask', { ...q2, id: 'q' + Math.random() })
-        expect(document.activeElement).toBe(primary())
+        expect(document.activeElement).toBe(cancel())
         await close()
         expect(dialog()).toBeNull()
         await vi.waitFor(() => expect(document.activeElement).toBe(before))

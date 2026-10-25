@@ -34,7 +34,7 @@
 
 <!-- Keyed by question: the next one in the queue opens as a fresh dialog with its own focus. -->
 {#each current as q (q.id)}
-  <Dialog open title={trustTitle} onclose={() => answerTrust(q.id, false)} layer={15} autofocus="[data-primary]">
+  <Dialog open title={trustTitle} onclose={() => answerTrust(q.id, false)} layer={15} autofocus="[data-cancel]">
     <p class="target">{q.user}@{hostPort(q.host, q.port)}</p>
     <div class="label">Ключ {q.key_type}, отпечаток SHA256</div>
     <div class="fp">
@@ -52,8 +52,9 @@
     {#snippet footer()}
       <span></span>
       <span class="actions">
-        <Button variant="outline" onclick={() => answerTrust(q.id, false)}>Отмена</Button>
-        <Button variant="primary" data-primary onclick={() => answerTrust(q.id, true)}>Доверять и подключиться</Button>
+        <!-- The safe answer has the focus: Enter on an unread prompt must not trust a server. -->
+        <Button variant="outline" data-cancel onclick={() => answerTrust(q.id, false)}>Отмена</Button>
+        <Button variant="primary" onclick={() => answerTrust(q.id, true)}>Доверять и подключиться</Button>
       </span>
     {/snippet}
   </Dialog>
