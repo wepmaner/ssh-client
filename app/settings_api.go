@@ -18,7 +18,10 @@ const (
 	maxTerminalSize = 20
 )
 
-var errBadSettings = errors.New("invalid settings")
+// errBadSettings is shown verbatim by the UI.
+//
+//nolint:staticcheck // ST1005: Russian UI text starts with a capital letter
+var errBadSettings = errors.New("Недопустимое значение настройки")
 
 // GetSettings returns the user settings, defaults while the vault is locked.
 func (a *App) GetSettings() model.Settings {
