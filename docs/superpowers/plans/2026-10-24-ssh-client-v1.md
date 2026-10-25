@@ -6,7 +6,7 @@
 
 **Architecture:** Go-ядро (`internal/*`) без зависимости от UI: хранилище-конверт с AES-GCM и DPAPI/Argon2id, пакет ключей, SSH-клиент с PTY-сессиями и менеджер пробросов. Тонкий слой биндингов Wails (`app/*`) публикует методы во фронтенд и шлёт события. Фронтенд Svelte 5 + TypeScript повторяет макеты 1:1, терминал на xterm.js, все запросы паролей и подтверждения отпечатков идут текстом через поток терминала, а не отдельными диалогами.
 
-**Tech Stack:** Go 1.23+, Wails v2.10 (WebView2), Svelte 5 + TypeScript + Vite, `@xterm/xterm` 6 (+ addon-webgl, addon-fit, addon-search), `golang.org/x/crypto/ssh` (+ `knownhosts`, `argon2`), `golang.org/x/sys/windows` (DPAPI, реестр), `github.com/kayrus/putty` (чтение .ppk), `github.com/liornabat/putty` (запись .ppk), `github.com/kevinburke/ssh_config`, `github.com/things-go/go-socks5`, `github.com/google/uuid`.
+**Tech Stack:** Go 1.23+, Wails v3 beta.25 (WebView2; переход с v2 — Task 13a), Svelte 5 + TypeScript + Vite, `@xterm/xterm` 6 (+ addon-webgl, addon-fit, addon-search), `golang.org/x/crypto/ssh` (+ `knownhosts`, `argon2`), `golang.org/x/sys/windows` (DPAPI, реестр), `github.com/kayrus/putty` (чтение .ppk), `github.com/liornabat/putty` (запись .ppk), `github.com/kevinburke/ssh_config`, `github.com/things-go/go-socks5`, `github.com/google/uuid`.
 
 **Spec:** `CLAUDE.md` в корне проекта плюс макеты https://claude.ai/artifact/7cyxKFMe6YDkds18e7ZN4B (артборды: Main, AddServer, Terminal, Keys, KeyCreate, VaultEncrypt, Forwards, Settings, Empty, Error).
 
@@ -720,6 +720,26 @@ git commit -m "feat: forwards API, autostart and Forwards screen"
 ```
 
 ---
+
+### Task 13a: Переход на Wails v3
+
+Решение владельца продукта (2026-10-25): перейти с Wails v2.16 на Wails v3 (`v3.0.0-beta.25`, как в Stash) до оставшихся задач оболочки (13b, 14, 15). Причины: системные контекстные меню, события окна и доступ к HWND (обход бага DPI из Stash переносится как есть), `UseVisualHosting`/`WebviewUserDataPath`, единый со Stash подход к сборке.
+
+**Files:**
+- Modify: `go.mod`/`go.sum`, `main.go` (`application.New`, `Services`, одно `WebviewWindow` 1280×800, `Frameless`, `BackgroundColour`, `Windows: {UseVisualHosting: true, WebviewUserDataPath: <папка данных>\WebView2, Theme dark}`), `app/app.go` (`Startup` → `ServiceStartup(ctx, opts)`, `BeforeClose`/`Shutdown` → события окна `WindowClosing`/`ServiceShutdown`), `app/events.go` (эмиттер через `app.Event.Emit`), `app/window_state.go` (размер и позиция через методы `WebviewWindow`), `app/keys_api.go`/`settings_api.go` (диалоги файлов через `application.OpenFileDialog`/`SaveFileDialog`), `wails.json` → `build/config.yml` + `Taskfile.yml` (образец: `wepmaner/stash/app`), `.golangci.yml`/`Makefile` (команды `wails3`), `frontend/package.json` (`@wailsio/runtime`), `frontend/src/lib/api.ts` (биндинги из `frontend/bindings/`), `frontend/src/lib/titlebar/TitleBar.svelte` (`Window.Minimise/ToggleMaximise/Close`, `--wails-draggable` остаётся), `TerminalView.svelte`/`sessions.svelte.ts`/`forwards.svelte.ts`/`MiniTerminal.svelte` (`Events.On` из `@wailsio/runtime`), все тесты с моками `../api` и рантайма, `frontend/wailsjs/` удаляется.
+- Create: `app/restorefix_windows.go` (копия из Stash с заменой имени окна; обход DPI после восстановления), `build/` по шаблону `wails3 init` (без `build/ios`, `build/darwin`, `build/linux`).
+
+**Interfaces:**
+- Все методы `App` остаются теми же публичными методами одного сервиса `application.NewService(app)`; имена событий (`term:*`, `fwd:*`) не меняются. Фронтенд меняет только импорт биндингов и рантайма.
+- Правила нативного поведения CLAUDE.md проверяются заново вживую: перетаскивание за заголовок, двойной щелчок разворачивает, Snap-раскладки на «Развернуть» (в v3 проверить `Window.ToggleMaximise` и hover), Alt+Space, восстановление геометрии при запуске, закрытие по крестику сохраняет геометрию, старт без сплэша.
+- Контекстные меню хостов, ключей и пробросов переводятся на системные (`application.NewContextMenu` / `window.ShowContextMenu` в v3) там, где v3 это поддерживает на Windows; `ui/Menu.svelte` остаётся для случаев, где системное меню недоступно, с пометкой в CLAUDE.md.
+- Баг DPI (Task 15 Step 1b) закрывается здесь: `UseVisualHosting: true` + `fixRestoreScale(window)` на `events.Windows.WindowUnMinimise`.
+
+- [ ] **Step 1: Ветка и инвентаризация** — `git grep -n "wailsjs\|wailsapp/wails/v2"`; зафиксировать список точек контакта в отчёте.
+- [ ] **Step 2: Go** — `go get github.com/wailsapp/wails/v3@v3.0.0-beta.25`, `main.go`, сервис, события, окно, диалоги; `go build ./... && go test ./... -count=1 && golangci-lint run ./...`.
+- [ ] **Step 3: Фронтенд** — `wails3 generate bindings`, `@wailsio/runtime`, правка `api.ts` и импортов, тесты (`npm test`, `svelte-check`), сборка `wails3 build`.
+- [ ] **Step 4: Живая проверка контроллером** по списку правил нативного поведения, плюс: терминал печатает в том же кадре, события пробросов доходят, системное контекстное меню на хосте/ключе, баг DPI (развернуть → свернуть → восстановить, на двух мониторах с разным масштабом).
+- [ ] **Step 5: Документы** — CLAUDE.md «Стек» (v3 beta.25, причина), «Правила нативного поведения» (меню системные), Task 15 (сборка через `wails3 build`, `-X main.version` в `build/windows/Taskfile.yml`, Step 1b закрыт здесь); commit `feat: migrate the shell to Wails v3`.
 
 ### Task 13b: Окно доверия неизвестному серверу
 
