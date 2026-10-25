@@ -1,9 +1,9 @@
 version: '3'
 
 tasks:
+  # Not a build dependency: CI must not rewrite go.mod/go.sum. Run by hand: wails3 task common:go:mod:tidy
   go:mod:tidy:
     summary: Runs `go mod tidy`
-    internal: true
     run: once
     cmds:
       - go mod tidy
@@ -47,8 +47,6 @@ tasks:
   generate:bindings:
     summary: Generates the TypeScript bindings in frontend/bindings
     run: once
-    deps:
-      - task: go:mod:tidy
     sources:
       - "**/*.go"
       - go.mod

@@ -23,8 +23,8 @@ const sess = vi.hoisted(() => ({
   sessions: { list: [] as { id: string; hostId: string; state: string }[] },
 }))
 vi.mock('../api', async () => {
-  const models = await import('../../../wailsjs/go/models')
-  return { ...api, errorText: String, model: models.model }
+  const model = await import('../../../bindings/sshclient/internal/model/models')
+  return { ...api, errorText: String, model }
 })
 vi.mock('../sessions.svelte', () => sess)
 
@@ -44,6 +44,8 @@ function load(items: typeof list) {
 }
 
 const names = () => screen.queryAllByTestId('host-name').map((e) => e.textContent)
+/** The tile or row of a host: one button that opens the session. */
+const tile = (name: string) => screen.getByRole('button', { name: new RegExp('^' + name) })
 
 describe('HostsView', () => {
   beforeEach(() => {
@@ -115,7 +117,7 @@ describe('HostsView', () => {
   it('duplicate opens the dialog with a copy that is not saved yet', async () => {
     load(list)
     render(HostsView)
-    await fireEvent.click(screen.getAllByRole('button', { name: 'Ещё' })[0])
+    await fireEvent.contextMenu(tile('prod-1'), { clientX: 40, clientY: 50 })
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Дублировать' }))
     const dialog = screen.getByRole('dialog', { name: 'Новый хост' })
     expect((within(dialog).getByLabelText('Название') as HTMLInputElement).value).toBe('prod-1 (копия)')
@@ -131,7 +133,7 @@ describe('HostsView', () => {
     ]
     api.HostDelete.mockResolvedValue(undefined)
     render(HostsView)
-    await fireEvent.click(screen.getAllByRole('button', { name: 'Ещё' })[0])
+    await fireEvent.contextMenu(tile('prod-1'), { clientX: 40, clientY: 50 })
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Удалить' }))
     expect(api.HostDelete).not.toHaveBeenCalled()
     const dialog = screen.getByRole('dialog')
@@ -150,26 +152,50 @@ describe('HostsView', () => {
     expect(ui.editHostId).toBe('')
   })
 
-  it('the list view menu is anchored to its button and closes on Esc', async () => {
+  it('tiles have no hover buttons: a click connects, right-click opens the menu', () => {
+    load(list)
+    render(HostsView)
+    expect(screen.queryByRole('button', { name: 'Ещё' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Подключить' })).toBeNull()
+  })
+
+  it('right-click on a list row opens the menu at the cursor; Esc closes it', async () => {
     load(list)
     render(HostsView)
     await fireEvent.click(screen.getByRole('button', { name: 'Список' }))
-    const more = screen.getAllByRole('button', { name: 'Ещё' })[2]
-    await fireEvent.click(more)
+    const row = tile('nas')
+    await fireEvent.contextMenu(row, { clientX: 120, clientY: 90 })
     const menu = screen.getByRole('menu')
     expect(within(menu).getAllByRole('menuitem').map((e) => e.textContent)).toEqual(['Изменить', 'Дублировать', 'Удалить'])
-    expect(menu.style.top).not.toBe('')
+    expect(menu.style.top).toBe('90px')
+    expect(menu.style.left).toBe('120px')
     expect(document.activeElement).toBe(within(menu).getAllByRole('menuitem')[0])
     await fireEvent.keyDown(menu, { key: 'Escape' })
     expect(screen.queryByRole('menu')).toBeNull()
-    expect(document.activeElement).toBe(more)
+    expect(document.activeElement).toBe(row)
     await fireEvent.click(screen.getByRole('button', { name: 'Плитки' }))
+  })
+
+  it('Shift+F10, the menu key or a keyboard contextmenu opens the menu at the tile', async () => {
+    load(list)
+    render(HostsView)
+    const nas = tile('nas')
+    await fireEvent.keyDown(nas, { key: 'F10', shiftKey: true })
+    expect(screen.getByRole('menu')).toBeTruthy()
+    await fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+    await fireEvent.keyDown(nas, { key: 'ContextMenu' })
+    expect(screen.getByRole('menu')).toBeTruthy()
+    await fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+    // The keyboard-generated event carries no pointer position.
+    await fireEvent.contextMenu(nas)
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Изменить' }))
+    expect((within(screen.getByRole('dialog', { name: 'Изменить хост' })).getByLabelText('Адрес') as HTMLInputElement).value).toBe('127.0.0.1')
   })
 
   it('Tab out of the menu closes it', async () => {
     load(list)
     render(HostsView)
-    await fireEvent.click(screen.getAllByRole('button', { name: 'Ещё' })[0])
+    await fireEvent.contextMenu(tile('prod-1'), { clientX: 40, clientY: 50 })
     const item = screen.getAllByRole('menuitem')[0]
     await fireEvent.focusOut(item, { relatedTarget: screen.getByLabelText('Поиск хостов по имени, адресу или пользователю') })
     expect(screen.queryByRole('menu')).toBeNull()
@@ -180,7 +206,7 @@ describe('HostsView', () => {
     sess.sessions.list = [{ id: 's1', hostId: 'h1', state: 'connected' }]
     api.HostDelete.mockRejectedValue('disk full')
     render(HostsView)
-    await fireEvent.click(screen.getAllByRole('button', { name: 'Ещё' })[0])
+    await fireEvent.contextMenu(tile('prod-1'), { clientX: 40, clientY: 50 })
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Удалить' }))
     await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Удалить' }))
     await vi.waitFor(() => expect(api.HostDelete).toHaveBeenCalledWith('h1'))

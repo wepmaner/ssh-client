@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"log"
+	"os"
 	"path/filepath"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -59,7 +60,16 @@ func webviewDataPath() string {
 	dir, err := appdir.Dir()
 	if err != nil {
 		log.Printf("webview data path: %v", err)
-		return ""
 	}
-	return filepath.Join(dir, "WebView2")
+	return webviewDataDir(dir, err)
+}
+
+// webviewDataDir is the WebView2 folder under the data folder. Without one it
+// falls back to the temp folder: an empty path would make WebView2 write next
+// to the exe.
+func webviewDataDir(dataDir string, err error) string {
+	if err != nil || dataDir == "" {
+		return filepath.Join(os.TempDir(), "sshclient", "WebView2")
+	}
+	return filepath.Join(dataDir, "WebView2")
 }

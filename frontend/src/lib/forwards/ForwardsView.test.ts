@@ -12,10 +12,11 @@ const api = vi.hoisted(() => ({
   ForwardDelete: vi.fn(),
   ForwardWrite: vi.fn(),
   EventsOn: vi.fn(),
+  ClipboardGetText: vi.fn(),
 }))
 vi.mock('../api', async () => {
-  const models = await import('../../../wailsjs/go/models')
-  return { ...api, errorText: String, model: models.model }
+  const model = await import('../../../bindings/sshclient/internal/model/models')
+  return { ...api, errorText: String, model }
 })
 const written = vi.hoisted(() => [] as string[])
 vi.mock('@xterm/xterm', () => ({
@@ -120,6 +121,17 @@ describe('ForwardsView', () => {
     expect(written.join('')).toBe('Password: ')
     handlers.get('fwd:state:f2')?.({ status: 'running', error: '', conns: 0, retryable: true })
     await vi.waitFor(() => expect(within(card('SOCKS')).queryByTestId('mini-terminal')).toBeNull())
+  })
+
+  it('right-click in the mini-terminal pastes and does not open the card menu', async () => {
+    api.ClipboardGetText.mockResolvedValue('')
+    render(ForwardsView)
+    handlers.get('fwd:state:f2')?.({ status: 'starting', error: '', conns: 0, retryable: true })
+    handlers.get('fwd:data:f2')?.(btoa('Password: '))
+    const mini = await vi.waitFor(() => within(card('SOCKS')).getByTestId('mini-terminal'))
+    await fireEvent.contextMenu(mini)
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(api.ClipboardGetText).toHaveBeenCalled()
   })
 
   it('deletes through the menu after confirmation', async () => {

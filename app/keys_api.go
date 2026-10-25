@@ -34,8 +34,11 @@ var (
 // ErrCancelled is returned when the user dismisses a system file dialog; the UI ignores it.
 var ErrCancelled = errors.New("cancelled")
 
-// dialogCancelledText is the error text of a dismissed file dialog in Wails v3
-// (cfd.ErrorCancelled, an internal package that cannot be imported).
+// dialogCancelledText is the error text of a dismissed file dialog in Wails
+// v3.0.0-beta.25: cfd.ErrorCancelled in internal/go-common-file-dialog/cfd/errors.go.
+// The package is internal to the Wails module, so the error value cannot be
+// imported and compared with errors.Is; TestDialogCancelledTextMatchesWails
+// checks the text against the module source.
 const dialogCancelledText = "cancelled by user"
 
 // dialogPath maps the result of a Wails file dialog: dismissing it, which v3

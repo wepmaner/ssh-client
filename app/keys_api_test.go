@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -296,5 +297,21 @@ func TestWindowlessCallsFailCleanly(t *testing.T) {
 	}
 	if err := a.KeyExport(k.ID, "public", ""); !errors.Is(err, errNoWindow) {
 		t.Fatalf("export: %v", err)
+	}
+}
+
+// The Wails dialog error lives in an internal package; compare its text with
+// the module source so a Wails upgrade that changes it fails here.
+func TestDialogCancelledTextMatchesWails(t *testing.T) {
+	out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/wailsapp/wails/v3").Output()
+	if err != nil {
+		t.Skipf("go list: %v", err)
+	}
+	src, err := os.ReadFile(filepath.Join(strings.TrimSpace(string(out)), "internal", "go-common-file-dialog", "cfd", "errors.go")) //nolint:gosec // G304: file in the Wails module
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), `ErrorCancelled = errors.New("`+dialogCancelledText+`")`) {
+		t.Fatalf("cfd.ErrorCancelled text changed:\n%s", src)
 	}
 }

@@ -16,21 +16,28 @@
 
   let menuOpen = $state(false)
   let menuAt = $state<{ x: number; y: number } | null>(null)
-  let moreEl: HTMLButtonElement | undefined = $state()
+  let mainEl: HTMLButtonElement | undefined = $state()
   const mono = $derived(monogram(host))
+
+  /** Right-click opens the menu at the cursor; Shift+F10 or the menu key, at the tile. */
+  function oncontextmenu(e: MouseEvent) {
+    e.preventDefault()
+    // A keyboard-generated contextmenu has no pointer position.
+    menuAt = e.clientX === 0 && e.clientY === 0 ? null : { x: e.clientX, y: e.clientY }
+    menuOpen = true
+  }
+
+  function onkeydown(e: KeyboardEvent) {
+    if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+      e.preventDefault()
+      menuAt = null
+      menuOpen = true
+    }
+  }
 </script>
 
-<div
-  class="host {layout}"
-  class:menu-open={menuOpen}
-  role="listitem"
-  oncontextmenu={(e) => {
-    e.preventDefault()
-    menuAt = { x: e.clientX, y: e.clientY }
-    menuOpen = true
-  }}
->
-  <button type="button" class="main" onclick={onconnect}>
+<div class="host {layout}" class:menu-open={menuOpen} role="listitem" {oncontextmenu}>
+  <button type="button" class="main" aria-haspopup="menu" bind:this={mainEl} onclick={onconnect} {onkeydown}>
     <span class="mono" style:background={mono.color} aria-hidden="true" data-testid="monogram">{mono.text}</span>
     <span class="info">
       <span class="name">
@@ -44,40 +51,18 @@
       <span class="col">{host.key_name}</span>
     {/if}
   </button>
-  <span class="actions">
-    <button type="button" class="act connect" title="Подключить" aria-label="Подключить" onclick={onconnect}>
-      <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7-4.5z" fill="currentColor" /></svg>
-    </button>
-    <button
-      type="button"
-      class="act"
-      title="Ещё"
-      aria-label="Ещё"
-      aria-haspopup="menu"
-      aria-expanded={menuOpen}
-      bind:this={moreEl}
-      onclick={() => {
-        menuAt = null
-        menuOpen = !menuOpen
-      }}
-    >
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-        <circle cx="3.5" cy="8" r="1.4" /><circle cx="8" cy="8" r="1.4" /><circle cx="12.5" cy="8" r="1.4" />
-      </svg>
-    </button>
-    {#if menuOpen}
-      <Menu
-        anchor={moreEl}
-        at={menuAt ?? undefined}
-        onclose={() => (menuOpen = false)}
-        items={[
-          { label: 'Изменить', onselect: onedit },
-          { label: 'Дублировать', onselect: onduplicate },
-          { label: 'Удалить', onselect: ondelete, danger: true },
-        ]}
-      />
-    {/if}
-  </span>
+  {#if menuOpen}
+    <Menu
+      anchor={mainEl}
+      at={menuAt ?? undefined}
+      onclose={() => (menuOpen = false)}
+      items={[
+        { label: 'Изменить', onselect: onedit },
+        { label: 'Дублировать', onselect: onduplicate },
+        { label: 'Удалить', onselect: ondelete, danger: true },
+      ]}
+    />
+  {/if}
 </div>
 
 <style>
@@ -99,11 +84,9 @@
   }
   .tile {
     height: 64px;
-    padding-right: 12px;
   }
   .row {
     height: 44px;
-    padding-right: 8px;
     border-radius: 0;
     border-width: 0 0 1px;
     background: transparent;
@@ -115,7 +98,7 @@
     gap: 12px;
     min-width: 0;
     height: 100%;
-    padding: 0 0 0 14px;
+    padding: 0 12px 0 14px;
     border: 0;
     border-radius: inherit;
     background: transparent;
@@ -124,8 +107,7 @@
     text-align: left;
     cursor: default;
   }
-  .main:focus-visible,
-  .act:focus-visible {
+  .main:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: -2px;
   }
@@ -191,42 +173,8 @@
     color: var(--muted);
     font-size: 12px;
   }
-  .actions {
-    position: relative;
-    display: flex;
-    gap: 2px;
-    opacity: 0;
-    transition: opacity 80ms;
-  }
-  .host:hover .actions,
-  .host:focus-within .actions,
-  .host.menu-open .actions {
-    opacity: 1;
-  }
-  .act {
-    display: grid;
-    place-items: center;
-    width: 30px;
-    height: 30px;
-    border: 0;
-    border-radius: var(--radius-control);
-    background: transparent;
-    color: var(--muted);
-    cursor: default;
-    transition: background-color 80ms;
-  }
-  .act.connect {
-    background: #2e333b;
-    color: var(--text);
-  }
-  .act:hover {
-    background: #333a44;
-    color: var(--text);
-  }
   @media (prefers-reduced-motion: reduce) {
-    .host,
-    .actions,
-    .act {
+    .host {
       transition: none;
     }
   }

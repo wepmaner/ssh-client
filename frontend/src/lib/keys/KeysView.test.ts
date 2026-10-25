@@ -11,8 +11,8 @@ const api = vi.hoisted(() => ({
   VaultState: vi.fn(),
 }))
 vi.mock('../api', async () => {
-  const models = await import('../../../wailsjs/go/models')
-  return { ...api, errorText: String, model: models.model }
+  const model = await import('../../../bindings/sshclient/internal/model/models')
+  return { ...api, errorText: String, model }
 })
 
 import { keys } from '../stores.svelte'

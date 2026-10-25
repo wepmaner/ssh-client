@@ -7,7 +7,6 @@ tasks:
   build:
     summary: Builds the application for Windows
     deps:
-      - task: common:go:mod:tidy
       - task: common:build:frontend
         vars:
           BUILD_FLAGS:

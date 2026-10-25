@@ -21,9 +21,9 @@ describe('EventsOn', () => {
 
   it('keeps object payloads as they are', () => {
     const cb = vi.fn()
-    const off = EventsOn('menu:action', cb)
-    emit('menu:action', { menu: 'host', action: 'edit', id: 'h1' })
-    expect(cb).toHaveBeenCalledWith({ menu: 'host', action: 'edit', id: 'h1' })
+    const off = EventsOn('fwd:state:1', cb)
+    emit('fwd:state:1', { status: 'running', error: '', conns: 1, retryable: true })
+    expect(cb).toHaveBeenCalledWith({ status: 'running', error: '', conns: 1, retryable: true })
     off()
   })
 })

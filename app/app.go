@@ -29,7 +29,7 @@ type App struct {
 	store    *store.Store
 	vaultErr error
 
-	emit emitter // term:*, fwd:*, menu:* events; Wails in ServiceStartup, a recorder in tests
+	emit emitter // term:*, fwd:* events; Wails in ServiceStartup, a recorder in tests
 
 	sessMu   sync.Mutex
 	sessions map[string]*session
@@ -107,7 +107,6 @@ func (a *App) ServiceStartup(_ context.Context, _ application.ServiceOptions) er
 	a.wapp = application.Get()
 	a.emit = wailsEmitter{a.wapp.Event}
 	a.initVault()
-	a.registerContextMenus()
 
 	ws, ok := a.startupWindowState()
 	a.mainWin = a.wapp.Window.NewWithOptions(mainWindowOptions(a.window, ws, ok))
