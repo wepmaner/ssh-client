@@ -758,6 +758,22 @@ git commit -m "feat: forwards API, autostart and Forwards screen"
 - [ ] **Step 2: Реализация и проверка** — `go test ./... -count=1`, `golangci-lint run ./...`, `npm test`, `svelte-check`, `wails build`; живая проверка контроллером: первое подключение показывает окно, «Доверять и подключиться» пишет known_hosts, повторное подключение окна не показывает, «Отмена» даёт карточку с текстом отмены.
 - [ ] **Step 3: Commit** — `feat: in-app trust dialog for unknown host keys`.
 
+### Task 13c: Парольная фраза проброса живёт в памяти, пока проброс запущен
+
+Решение владельца продукта (2026-10-25): при обрывах и переподключениях проброс не спрашивает фразу ключа повторно, потому что уже знает её. Фраза хранится только в памяти процесса, никогда не пишется на диск, стирается при остановке проброса, при его удалении и при выходе из приложения. Утечка и расшифровка файла хранилища не раскрывает фразу. Выполняется после Task 13b.
+
+**Files:**
+- Modify: `app/forwards.go` (у `fwdRun` поле `secret []byte` под мьютексом; `dial` сначала пробует `keys.Signer(k, secret)`; при `ErrWrongPassphrase` или пустом secret спрашивает через Prompter и после успешного рукопожатия сохраняет ответ; `stop()` и удаление делают `clear(secret)`), `internal/sshclient/client.go` (у `Dial` появляется необязательный `Passphrase []byte` в `Target` или вариант `DialWithPassphrase`: первая попытка без вопроса, при неудаче обычный цикл до трёх вопросов; успешно принятая фраза возвращается вызывающему через callback `OnPassphrase(func([]byte))`, копия которой и хранится у проброса), `app/forwards_test.go`, `internal/sshclient/client_test.go`.
+- Не меняется: терминальные сессии спрашивают фразу при каждом подключении, как раньше (у них нет автоматических переподключений); хранилище и `model.Key` не трогаются.
+
+**Interfaces:**
+- `sshclient.Target.Passphrase []byte` (необязательно; используется только первой попыткой и зачищается `Dial` после использования), `sshclient.Target.OnPassphrase func(p []byte)` (вызывается один раз с принятой сервером фразой; получатель обязан скопировать и сам зачистить).
+- `fwdRun.secret`: копия принятой фразы; перед каждым реконнектом передаётся в `Target.Passphrase`; `clear` + `nil` в `stop()`, `removeForward`, `stopAllForwards` (выход из приложения) и при смене ключа хоста (`ForwardSave` с другим HostID → рестарт стирает).
+- Пароль сервера (keyboard-interactive/password) тем же способом не кэшируется: решение касается только фразы ключа.
+
+- [ ] **Step 1: Тесты** — `TestDialUsesGivenPassphraseWithoutPrompt`, `TestDialFallsBackToPromptOnWrongCachedPassphrase`, `TestForwardReconnectDoesNotReaskPassphrase` (sshtest: ключ с фразой, `DropConnections`, после реконнекта в `fwd:data` нет второго вопроса, статус снова `running`), `TestForwardStopClearsPassphrase` (после Stop буфер обнулён, новый Start спрашивает снова), `TestForwardSecretNeverInStore` (JSON хранилища не содержит фразу).
+- [ ] **Step 2: Реализация, `go test ./... -count=1`, `golangci-lint run ./...`, commit `feat(forwards): keep the key passphrase in memory while a forward runs`.**
+
 ## Этап G. Настройки, импорт, сборка
 
 ### Task 14: Настройки и импорт хостов
