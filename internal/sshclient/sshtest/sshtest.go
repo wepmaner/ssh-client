@@ -27,10 +27,12 @@ type Opts struct {
 	OnWindowChange func(cols, rows uint32)              // вызывается на window-change
 }
 
-// server — SSH-сервер в процессе для тестов клиента.
-type server struct {
-	opts Opts
-	wg   sync.WaitGroup
+// Server — SSH-сервер в процессе для тестов клиента; создаётся StartServer.
+type Server struct {
+	opts    Opts
+	addr    string
+	hostKey ssh.PublicKey
+	wg      sync.WaitGroup
 
 	mu     sync.Mutex
 	conns  []net.Conn
@@ -43,11 +45,15 @@ type ChannelHandler func(nc ssh.NewChannel)
 // GlobalRequestHandler отвечает на глобальный запрос соединения conn.
 type GlobalRequestHandler func(conn *ssh.ServerConn, req *ssh.Request)
 
-// Точки расширения: пробросы (direct-tcpip, tcpip-forward и т. п.) регистрируются через
-// RegisterChannelHandler и RegisterGlobalRequestHandler. Неизвестные каналы и запросы отклоняются.
+// Встроены каналы session и direct-tcpip и запросы tcpip-forward / cancel-tcpip-forward (forward.go).
+// Остальное добавляется через RegisterChannelHandler и RegisterGlobalRequestHandler.
+// Неизвестные каналы и запросы отклоняются.
 var (
-	handlersMu            sync.RWMutex
-	channelHandlers       = map[string]func(s *server, nc ssh.NewChannel){"session": (*server).handleSession}
+	handlersMu      sync.RWMutex
+	channelHandlers = map[string]func(s *Server, nc ssh.NewChannel){
+		"session":      (*Server).handleSession,
+		"direct-tcpip": (*Server).handleDirectTCPIP,
+	}
 	globalRequestHandlers = map[string]GlobalRequestHandler{}
 )
 
@@ -56,7 +62,7 @@ var (
 func RegisterChannelHandler(name string, h ChannelHandler) {
 	handlersMu.Lock()
 	defer handlersMu.Unlock()
-	channelHandlers[name] = func(_ *server, nc ssh.NewChannel) { h(nc) }
+	channelHandlers[name] = func(_ *Server, nc ssh.NewChannel) { h(nc) }
 }
 
 // RegisterGlobalRequestHandler добавляет обработчик глобальных запросов типа name.
@@ -66,7 +72,7 @@ func RegisterGlobalRequestHandler(name string, h GlobalRequestHandler) {
 	globalRequestHandlers[name] = h
 }
 
-func channelHandler(name string) (func(s *server, nc ssh.NewChannel), bool) {
+func channelHandler(name string) (func(s *Server, nc ssh.NewChannel), bool) {
 	handlersMu.RLock()
 	defer handlersMu.RUnlock()
 	h, ok := channelHandlers[name]
@@ -83,6 +89,14 @@ func globalRequestHandler(name string) (GlobalRequestHandler, bool) {
 // Start запускает сервер на 127.0.0.1:0 и останавливает его в t.Cleanup.
 func Start(t testing.TB, opts Opts) (addr string, hostKey ssh.PublicKey) {
 	t.Helper()
+	s := StartServer(t, opts)
+	return s.Addr(), s.HostKey()
+}
+
+// StartServer запускает сервер на 127.0.0.1:0, останавливает его в t.Cleanup и возвращает
+// управляющий объект (адрес, ключ сервера, обрыв соединений).
+func StartServer(t testing.TB, opts Opts) *Server {
+	t.Helper()
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +106,7 @@ func Start(t testing.TB, opts Opts) (addr string, hostKey ssh.PublicKey) {
 		t.Fatal(err)
 	}
 
-	s := &server{opts: opts}
+	s := &Server{opts: opts, hostKey: signer.PublicKey()}
 	cfg := &ssh.ServerConfig{
 		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			if opts.AcceptKey != nil && bytes.Equal(key.Marshal(), opts.AcceptKey.Marshal()) {
@@ -128,6 +142,7 @@ func Start(t testing.TB, opts Opts) (addr string, hostKey ssh.PublicKey) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.addr = ln.Addr().String()
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -158,11 +173,29 @@ func Start(t testing.TB, opts Opts) (addr string, hostKey ssh.PublicKey) {
 		s.mu.Unlock()
 		s.wg.Wait()
 	})
-	return ln.Addr().String(), signer.PublicKey()
+	return s
+}
+
+// Addr — адрес сервера host:port.
+func (s *Server) Addr() string { return s.addr }
+
+// HostKey — публичный ключ сервера.
+func (s *Server) HostKey() ssh.PublicKey { return s.hostKey }
+
+// DropConnections рвёт все живые клиентские соединения, как при обрыве сети.
+// Сервер продолжает принимать новые подключения.
+func (s *Server) DropConnections() {
+	s.mu.Lock()
+	conns := s.conns
+	s.conns = nil
+	s.mu.Unlock()
+	for _, c := range conns {
+		ignoreErr(c.Close())
+	}
 }
 
 // track запоминает соединение для закрытия в Cleanup; false — сервер уже остановлен.
-func (s *server) track(c net.Conn) bool {
+func (s *Server) track(c net.Conn) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -172,17 +205,22 @@ func (s *server) track(c net.Conn) bool {
 	return true
 }
 
-func (s *server) serveConn(c net.Conn, cfg *ssh.ServerConfig) {
+func (s *Server) serveConn(c net.Conn, cfg *ssh.ServerConfig) {
 	conn, chans, reqs, err := ssh.NewServerConn(c, cfg)
 	if err != nil {
 		ignoreErr(c.Close())
 		return
 	}
+	fw := &remoteForwards{s: s, conn: conn, lns: map[string]net.Listener{}}
+	defer fw.closeAll()
 	defer func() { ignoreErr(conn.Close()) }()
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 		for req := range reqs {
+			if fw.handle(req) {
+				continue
+			}
 			if h, ok := globalRequestHandler(req.Type); ok {
 				h(conn, req)
 				continue
@@ -207,7 +245,7 @@ func (s *server) serveConn(c net.Conn, cfg *ssh.ServerConfig) {
 }
 
 // handleSession — канал session с эхо-shell.
-func (s *server) handleSession(nc ssh.NewChannel) {
+func (s *Server) handleSession(nc ssh.NewChannel) {
 	ch, reqs, err := nc.Accept()
 	if err != nil {
 		return
