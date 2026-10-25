@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { ForwardDelete, errorText, type app } from '../api'
-  import { onMenuAction } from '../menus'
   import { toast } from '../stores.svelte'
   import Button from '../ui/Button.svelte'
   import Dialog from '../ui/Dialog.svelte'
@@ -30,18 +29,6 @@
 
   // Host names and states may have changed while another screen was in front.
   onMount(() => void refreshForwards().catch(() => {}))
-
-  // Native context menu of the cards (app/menus.go).
-  onMount(() => {
-    const forward = (run: (f: app.ForwardDTO) => void) => (id: string) => {
-      const f = forwards.list.find((x) => x.id === id)
-      if (f) run(f)
-    }
-    return onMenuAction('forward', {
-      edit: forward((f) => (dialog = { open: true, forward: f })),
-      delete: forward((f) => (confirm = f)),
-    })
-  })
 
   async function remove() {
     const f = confirm

@@ -15,6 +15,7 @@
   let { host, layout, onconnect, onedit, onduplicate, ondelete }: Props = $props()
 
   let menuOpen = $state(false)
+  let menuAt = $state<{ x: number; y: number } | null>(null)
   let moreEl: HTMLButtonElement | undefined = $state()
   const mono = $derived(monogram(host))
 </script>
@@ -23,8 +24,11 @@
   class="host {layout}"
   class:menu-open={menuOpen}
   role="listitem"
-  style:--custom-contextmenu="host"
-  style:--custom-contextmenu-data={host.id}
+  oncontextmenu={(e) => {
+    e.preventDefault()
+    menuAt = { x: e.clientX, y: e.clientY }
+    menuOpen = true
+  }}
 >
   <button type="button" class="main" onclick={onconnect}>
     <span class="mono" style:background={mono.color} aria-hidden="true" data-testid="monogram">{mono.text}</span>
@@ -52,7 +56,10 @@
       aria-haspopup="menu"
       aria-expanded={menuOpen}
       bind:this={moreEl}
-      onclick={() => (menuOpen = !menuOpen)}
+      onclick={() => {
+        menuAt = null
+        menuOpen = !menuOpen
+      }}
     >
       <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
         <circle cx="3.5" cy="8" r="1.4" /><circle cx="8" cy="8" r="1.4" /><circle cx="12.5" cy="8" r="1.4" />
@@ -61,6 +68,7 @@
     {#if menuOpen}
       <Menu
         anchor={moreEl}
+        at={menuAt ?? undefined}
         onclose={() => (menuOpen = false)}
         items={[
           { label: 'Изменить', onselect: onedit },

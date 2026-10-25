@@ -12,11 +12,10 @@ const api = vi.hoisted(() => ({
   ForwardDelete: vi.fn(),
   ForwardWrite: vi.fn(),
   EventsOn: vi.fn(),
-  ClipboardGetText: vi.fn(),
 }))
 vi.mock('../api', async () => {
-  const model = await import('../../../bindings/sshclient/internal/model/models')
-  return { ...api, errorText: String, model }
+  const models = await import('../../../wailsjs/go/models')
+  return { ...api, errorText: String, model: models.model }
 })
 const written = vi.hoisted(() => [] as string[])
 vi.mock('@xterm/xterm', () => ({
@@ -121,40 +120,6 @@ describe('ForwardsView', () => {
     expect(written.join('')).toBe('Password: ')
     handlers.get('fwd:state:f2')?.({ status: 'running', error: '', conns: 0, retryable: true })
     await vi.waitFor(() => expect(within(card('SOCKS')).queryByTestId('mini-terminal')).toBeNull())
-  })
-
-  it('right-click in the mini-terminal pastes and does not reach the card menu', async () => {
-    api.ClipboardGetText.mockResolvedValue('')
-    render(ForwardsView)
-    handlers.get('fwd:state:f2')?.({ status: 'starting', error: '', conns: 0, retryable: true })
-    handlers.get('fwd:data:f2')?.(btoa('Password: '))
-    const mini = await vi.waitFor(() => within(card('SOCKS')).getByTestId('mini-terminal'))
-    const reached = vi.fn()
-    window.addEventListener('contextmenu', reached)
-    try {
-      await fireEvent.contextMenu(mini)
-    } finally {
-      window.removeEventListener('contextmenu', reached)
-    }
-    expect(reached).not.toHaveBeenCalled()
-    expect(api.ClipboardGetText).toHaveBeenCalled()
-  })
-
-  it('cards open the native forward menu; its items edit and delete', async () => {
-    render(ForwardsView)
-    const pg = card('Postgres')
-    expect(pg.style.getPropertyValue('--custom-contextmenu')).toBe('forward')
-    expect(pg.style.getPropertyValue('--custom-contextmenu-data')).toBe('f1')
-    handlers.get('menu:action')?.({ menu: 'forward', action: 'edit', id: 'f2' })
-    await vi.waitFor(() => expect(screen.getByRole('dialog', { name: 'Изменить проброс' })).toBeTruthy())
-    expect((screen.getByLabelText('Слушать') as HTMLInputElement).value).toBe('127.0.0.1:1080')
-    await fireEvent.click(screen.getByRole('button', { name: 'Отмена' }))
-    await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    handlers.get('menu:action')?.({ menu: 'forward', action: 'delete', id: 'f1' })
-    const dialog = await vi.waitFor(() => screen.getByRole('dialog'))
-    expect(api.ForwardDelete).not.toHaveBeenCalled()
-    await fireEvent.click(within(dialog).getByRole('button', { name: 'Удалить' }))
-    await vi.waitFor(() => expect(api.ForwardDelete).toHaveBeenCalledWith('f1'))
   })
 
   it('deletes through the menu after confirmation', async () => {

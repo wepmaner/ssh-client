@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte'
+  import { untrack } from 'svelte'
   import { GroupDelete, GroupRename, GroupSave, HostDelete, errorText, type app } from '../api'
-  import { onMenuAction } from '../menus'
   import { closeSession, openSession, sessions } from '../sessions.svelte'
   import { groups, hosts, refreshHosts, refreshKeys, toast, ui } from '../stores.svelte'
   import Button from '../ui/Button.svelte'
@@ -113,31 +112,6 @@
       },
     }
   }
-
-  // Native context menus of host and group tiles (app/menus.go).
-  onMount(() => {
-    const host = (run: (h: app.HostDTO) => void) => (id: string) => {
-      const h = hosts.find((x) => x.id === id)
-      if (h) run(h)
-    }
-    const group = (run: (g: app.GroupDTO) => void) => (id: string) => {
-      const g = groups.find((x) => x.id === id)
-      if (g) run(g)
-    }
-    const offHost = onMenuAction('host', {
-      edit: host(openDialog),
-      duplicate: host(duplicate),
-      delete: host(askDeleteHost),
-    })
-    const offGroup = onMenuAction('group', {
-      rename: group((g) => (groupEdit = { id: g.id, name: g.name, error: '' })),
-      delete: group(askDeleteGroup),
-    })
-    return () => {
-      offHost()
-      offGroup()
-    }
-  })
 
   async function runConfirm() {
     const c = confirm
