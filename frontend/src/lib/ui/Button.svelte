@@ -22,7 +22,7 @@
     transition: background-color 80ms;
   }
   .btn:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--focus);
     outline-offset: 1px;
   }
   .btn:disabled {

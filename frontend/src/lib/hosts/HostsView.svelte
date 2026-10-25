@@ -353,7 +353,7 @@
     color: var(--text);
   }
   .layout button:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--focus);
     outline-offset: 1px;
   }
   section {
@@ -413,7 +413,7 @@
     color: var(--text);
   }
   .add:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--focus);
     outline-offset: -2px;
   }
   .group-add {

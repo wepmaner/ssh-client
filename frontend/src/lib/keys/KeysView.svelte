@@ -264,7 +264,7 @@
     box-shadow: inset 2px 0 0 var(--accent);
   }
   .row:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--focus);
     outline-offset: -2px;
   }
   .type {

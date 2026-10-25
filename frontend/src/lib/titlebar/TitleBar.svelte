@@ -79,7 +79,7 @@
         <path d="M0 5.5h10" />
       </svg>
     </button>
-    <button type="button" class="btn" aria-label="Развернуть" onclick={WindowToggleMaximise} ondblclick={stop}>
+    <button type="button" class="btn max" aria-label="Развернуть" onclick={WindowToggleMaximise} ondblclick={stop}>
       <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true">
         <rect x="0.5" y="0.5" width="9" height="9" />
       </svg>
@@ -286,12 +286,19 @@
     background: var(--border);
   }
 
+  /* Windows hit-tests this rectangle as the maximise button (HTMAXBUTTON) and shows the
+     Snap layouts on hover; Wails forwards the click back here (WebView2CompositionHosting
+     and NonClientRegionSupport in main.go). */
+  .max {
+    --wails-non-client-region: maximize;
+  }
+
   .close:hover {
     background: var(--danger);
   }
 
   button:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--focus);
     outline-offset: -2px;
   }
 </style>

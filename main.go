@@ -20,21 +20,7 @@ var assets embed.FS
 var version = "dev"
 
 func main() {
-	a := app.New(application.WebviewWindowOptions{
-		Name:             "main",
-		Title:            "sshclient",
-		Width:            1280,
-		Height:           800,
-		MinWidth:         900,
-		MinHeight:        600,
-		Frameless:        true,
-		BackgroundColour: application.NewRGB(0x1a, 0x1d, 0x22),
-		URL:              "/",
-		Windows: application.WindowsWindow{
-			Theme:                             application.Dark,
-			DisableFramelessWindowDecorations: false,
-		},
-	}, version)
+	a := app.New(mainWindow(), version)
 
 	wapp := application.New(application.Options{
 		Name:     "sshclient",
@@ -51,6 +37,31 @@ func main() {
 	})
 	if err := wapp.Run(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// mainWindow is the frameless main window. The title bar is drawn by the frontend;
+// the decorations (shadow, rounded corners, Alt+Space system menu) stay with Windows.
+// Composition hosting with non-client regions lets the frontend mark its maximise
+// button (--wails-non-client-region: maximize in TitleBar.svelte): Windows then
+// hit-tests it as HTMAXBUTTON and shows the Snap layouts on hover.
+func mainWindow() application.WebviewWindowOptions {
+	return application.WebviewWindowOptions{
+		Name:             "main",
+		Title:            "sshclient",
+		Width:            1280,
+		Height:           800,
+		MinWidth:         900,
+		MinHeight:        600,
+		Frameless:        true,
+		BackgroundColour: application.NewRGB(0x1a, 0x1d, 0x22),
+		URL:              "/",
+		Windows: application.WindowsWindow{
+			Theme:                             application.Dark,
+			DisableFramelessWindowDecorations: false,
+			NonClientRegionSupport:            true,
+			WebView2CompositionHosting:        true,
+		},
 	}
 }
 
