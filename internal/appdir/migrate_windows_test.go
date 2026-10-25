@@ -45,11 +45,18 @@ func TestMigrateCopiesWhenRenameFails(t *testing.T) {
 	if read(t, filepath.Join(oldDir, "vault.json")) != "vault" {
 		t.Fatal("the old folder must stay intact")
 	}
-	if !strings.Contains(read(t, filepath.Join(oldDir, appdir.MarkerFile)), newDir) {
+	marker := read(t, filepath.Join(oldDir, appdir.MarkerFile))
+	if !strings.Contains(marker, newDir) {
 		t.Fatal("no marker pointing at the new folder")
 	}
-	if exists(newDir + ".migrating") {
-		t.Fatal("the staging folder is left behind")
+	if !strings.Contains(marker, "не переносятся") {
+		t.Fatal("the marker does not warn about an older build still writing")
+	}
+	if !strings.Contains(read(t, filepath.Join(newDir, appdir.LogFile)), "not carried over") {
+		t.Fatal("the log does not warn about an older build still writing")
+	}
+	if left := staging(t, newDir); len(left) > 0 {
+		t.Fatalf("staging folders left behind: %v", left)
 	}
 	if d := dir(t); d != newDir {
 		t.Fatalf("Dir %s, want %s", d, newDir)
@@ -70,6 +77,48 @@ func TestMigrateSkipsLockedWebViewCache(t *testing.T) {
 	if read(t, filepath.Join(newDir, "vault.json")) != "vault" {
 		t.Fatal("vault not copied")
 	}
+	if exists(filepath.Join(newDir, "WebView2", "EBWebView", "lockfile")) {
+		t.Fatal("the locked cache file was copied")
+	}
+	if !strings.Contains(read(t, filepath.Join(newDir, appdir.LogFile)), "1 locked WebView2 cache files skipped") {
+		t.Fatal("the skip is not counted in the log")
+	}
+}
+
+func TestMigrateLeavesOtherStagingFolders(t *testing.T) {
+	oldDir, newDir := roots(t)
+	write(t, filepath.Join(oldDir, "vault.json"), "vault")
+	openShared(t, filepath.Join(oldDir, "vault.json"), windows.FILE_SHARE_READ)
+	others := []string{newDir + ".migrating", newDir + ".migrating-1-123"}
+	for _, o := range others {
+		write(t, filepath.Join(o, "vault.json"), "other start")
+	}
+
+	res, err := appdir.Migrate()
+	if err != nil || res != appdir.Copied {
+		t.Fatalf("got %v, %v", res, err)
+	}
+	if read(t, filepath.Join(newDir, "vault.json")) != "vault" {
+		t.Fatal("vault not copied")
+	}
+	for _, o := range others {
+		if read(t, filepath.Join(o, "vault.json")) != "other start" {
+			t.Fatalf("%s touched", o)
+		}
+	}
+	if left := staging(t, newDir); len(left) != len(others)-1 {
+		t.Fatalf("staging folders: %v", left) // only the pre-made .migrating-1-123 matches the pattern
+	}
+}
+
+// staging lists the per-process staging folders beside newDir.
+func staging(t *testing.T, newDir string) []string {
+	t.Helper()
+	m, err := filepath.Glob(newDir + ".migrating-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
 }
 
 func TestMigrateFailureKeepsUsingTheOldFolder(t *testing.T) {
@@ -81,7 +130,7 @@ func TestMigrateFailureKeepsUsingTheOldFolder(t *testing.T) {
 	if err == nil || res != appdir.Failed {
 		t.Fatalf("got %v, %v", res, err)
 	}
-	if exists(newDir) || exists(newDir+".migrating") {
+	if exists(newDir) || len(staging(t, newDir)) > 0 {
 		t.Fatal("a failed copy must leave no new folder behind")
 	}
 	if exists(filepath.Join(oldDir, appdir.MarkerFile)) {

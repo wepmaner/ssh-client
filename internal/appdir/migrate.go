@@ -79,38 +79,100 @@ func Migrate() (Result, error) {
 	return res, err
 }
 
+// Two first starts at once (a double click, autostart) must not both move the folder: the
+// one that creates the lock file moves it, the other waits and then finds nothing to move.
+var (
+	lockWait  = 30 * time.Second // how long a second start waits for the first one
+	lockStale = 10 * time.Minute // a lock this old was left by a crashed start
+)
+
 func migrate(from, to string) (Result, error) {
 	if strings.EqualFold(filepath.Clean(from), filepath.Clean(to)) {
 		return NothingToMove, nil
 	}
-	old, err := os.ReadDir(from)
-	if errors.Is(err, fs.ErrNotExist) {
+	if pending, err := hasData(from); err != nil {
+		return failed(from, err)
+	} else if !pending {
 		return NothingToMove, nil
 	}
-	if err != nil {
-		return failed(from, fmt.Errorf("read %s: %w", from, err))
+	if err := os.MkdirAll(filepath.Dir(to), 0o700); err != nil {
+		return failed(from, err)
 	}
-	marked := false
+	unlock, err := lock(to + ".migrate.lock")
+	if err != nil {
+		return failed(from, err)
+	}
+	defer unlock()
+	// The other start may have finished while this one waited.
+	if pending, err := hasData(from); err != nil {
+		return failed(from, err)
+	} else if !pending {
+		return NothingToMove, nil
+	}
+	return move(from, to)
+}
+
+// hasData reports whether the old folder still holds data to move. A marker means an earlier
+// start copied it: the old folder is stale then, whatever the new folder holds now.
+func hasData(from string) (bool, error) {
+	old, err := os.ReadDir(from)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", from, err)
+	}
 	data := 0
 	for _, e := range old {
 		switch e.Name() {
 		case MarkerFile:
-			marked = true
+			return false, nil
 		case LogFile:
 		default:
 			data++
 		}
 	}
-	if data == 0 {
-		return NothingToMove, nil
-	}
+	return data > 0, nil
+}
 
+// lock creates path exclusively, waiting up to lockWait for another start to drop it.
+func lock(path string) (unlock func(), err error) {
+	deadline := time.Now().Add(lockWait)
+	for {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // G304: fixed name beside the data folder
+		if err == nil {
+			_, werr := fmt.Fprintf(f, "%d\r\n", os.Getpid())
+			if err := errors.Join(werr, f.Close()); err != nil {
+				log.Printf("appdir: write %s: %v", path, err)
+			}
+			return func() {
+				if err := os.Remove(path); err != nil {
+					log.Printf("appdir: remove %s: %v", path, err)
+				}
+			}, nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return nil, fmt.Errorf("lock %s: %w", path, err)
+		}
+		if st, serr := os.Stat(path); serr == nil && time.Since(st.ModTime()) > lockStale {
+			log.Printf("appdir: removing a stale %s", path)
+			if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return nil, fmt.Errorf("remove stale %s: %w", path, err)
+			}
+			continue
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("another start is moving the data folder (%s)", path)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// move runs under the lock: the old folder has data and no marker.
+func move(from, to string) (Result, error) {
 	cur, err := os.ReadDir(to)
 	switch {
 	case err == nil && len(cur) > 0:
-		if marked {
-			return NothingToMove, nil // copied on an earlier start
-		}
 		note(to, fmt.Sprintf("both %s and %s hold data: the old folder is left as it is", from, to), true)
 		return NewHasData, nil
 	case err == nil:
@@ -121,9 +183,6 @@ func migrate(from, to string) (Result, error) {
 	case !errors.Is(err, fs.ErrNotExist):
 		return failed(from, fmt.Errorf("read %s: %w", to, err))
 	}
-	if err := os.MkdirAll(filepath.Dir(to), 0o700); err != nil {
-		return failed(from, err)
-	}
 
 	renameErr := os.Rename(from, to)
 	if renameErr == nil {
@@ -132,9 +191,10 @@ func migrate(from, to string) (Result, error) {
 	}
 
 	// A file held open (a running older copy, a scanner) blocks the rename: copy instead.
-	staging := to + ".migrating"
-	if err := os.RemoveAll(staging); err != nil {
-		return failed(from, fmt.Errorf("rename: %v; clear %s: %w", renameErr, staging, err))
+	// The staging folder is new and this process's own; leftovers of other starts stay put.
+	staging, err := os.MkdirTemp(filepath.Dir(to), fmt.Sprintf("%s.migrating-%d-", filepath.Base(to), os.Getpid()))
+	if err != nil {
+		return failed(from, fmt.Errorf("rename: %v; staging folder: %w", renameErr, err))
 	}
 	skipped, err := copyTree(from, staging)
 	if err != nil {
@@ -145,7 +205,9 @@ func migrate(from, to string) (Result, error) {
 		discard(staging)
 		return failed(from, fmt.Errorf("rename: %v; place copy: %w", renameErr, err))
 	}
-	marker := fmt.Sprintf("Данные sshclient перенесены в %s (%s).\r\nЭта папка больше не используется, её можно удалить.\r\n",
+	marker := fmt.Sprintf("Данные sshclient перенесены в %s (%s).\r\n"+
+		"Эта папка больше не используется, её можно удалить.\r\n"+
+		"Если старая версия программы ещё запущена, она продолжает писать сюда; эти изменения в новую папку не переносятся.\r\n",
 		to, time.Now().Format(time.RFC3339))
 	if err := os.WriteFile(filepath.Join(from, MarkerFile), []byte(marker), 0o600); err != nil {
 		log.Printf("appdir: write %s: %v", MarkerFile, err)
@@ -154,6 +216,7 @@ func migrate(from, to string) (Result, error) {
 	if skipped > 0 {
 		msg += fmt.Sprintf("; %d locked WebView2 cache files skipped", skipped)
 	}
+	msg += "; an older build still running keeps writing to the old folder, and those changes are not carried over"
 	note(to, msg, false)
 	return Copied, nil
 }

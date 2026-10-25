@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"sshclient/internal/appdir"
 )
@@ -163,4 +164,56 @@ func dir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return d
+}
+
+func TestMigrateMarkerMeansDone(t *testing.T) {
+	oldDir, newDir := roots(t)
+	write(t, filepath.Join(oldDir, "vault.json"), "stale")
+	write(t, filepath.Join(oldDir, appdir.MarkerFile), newDir)
+	// The new folder is gone (deleted by hand): the stale copy is still not brought back.
+	if res, err := appdir.Migrate(); err != nil || res != appdir.NothingToMove {
+		t.Fatalf("got %v, %v", res, err)
+	}
+	if exists(filepath.Join(newDir, "vault.json")) {
+		t.Fatal("stale data copied back")
+	}
+}
+
+func TestMigrateWaitsForAnotherStart(t *testing.T) {
+	oldDir, newDir := roots(t)
+	write(t, filepath.Join(oldDir, "vault.json"), "vault")
+	lockFile := newDir + ".migrate.lock"
+	write(t, lockFile, "1")
+	appdir.SetLockWait(t, 200*time.Millisecond)
+
+	res, err := appdir.Migrate()
+	if err == nil || res != appdir.Failed || !strings.Contains(err.Error(), "another start") {
+		t.Fatalf("got %v, %v", res, err)
+	}
+	if exists(newDir) || !exists(filepath.Join(oldDir, "vault.json")) {
+		t.Fatal("moved while another start held the lock")
+	}
+	if !exists(lockFile) {
+		t.Fatal("removed a lock it did not take")
+	}
+	if d := dir(t); d != oldDir {
+		t.Fatalf("Dir %s, want the old folder %s", d, oldDir)
+	}
+}
+
+func TestMigrateTakesOverAStaleLock(t *testing.T) {
+	oldDir, newDir := roots(t)
+	write(t, filepath.Join(oldDir, "vault.json"), "vault")
+	lockFile := newDir + ".migrate.lock"
+	write(t, lockFile, "1")
+	hourAgo := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(lockFile, hourAgo, hourAgo); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := appdir.Migrate(); err != nil || res != appdir.Moved {
+		t.Fatalf("got %v, %v", res, err)
+	}
+	if exists(lockFile) {
+		t.Fatal("lock left behind")
+	}
 }
