@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Рабочий настольный SSH-клиент для Windows 11: хосты и группы, ключи (создание, импорт OpenSSH/PEM/PPK, экспорт), терминал с вкладками, пробросы L/R/D, зашифрованное хранилище с опциональным паролем, установщик.
+**Goal:** Рабочий настольный SSH-клиент для Windows 11: хосты и группы, ключи (создание, импорт OpenSSH/PEM/PPK, экспорт), терминал с вкладками, пробросы L/R/D, зашифрованное хранилище с опциональным паролем, выпуск через лаунчер Stash (портативная папка, без установщика).
 
 **Architecture:** Go-ядро (`internal/*`) без зависимости от UI: хранилище-конверт с AES-GCM и DPAPI/Argon2id, пакет ключей, SSH-клиент с PTY-сессиями и менеджер пробросов. Тонкий слой биндингов Wails (`app/*`) публикует методы во фронтенд и шлёт события. Фронтенд Svelte 5 + TypeScript повторяет макеты 1:1, терминал на xterm.js, все запросы паролей и подтверждения отпечатков идут текстом через поток терминала, а не отдельными диалогами.
 
@@ -764,11 +764,14 @@ git add -A
 git commit -m "feat: settings screen, idle lock, ssh_config and PuTTY import"
 ```
 
-### Task 15: Полировка нативности и установщик
+### Task 15: Полировка нативности и выпуск через Stash
+
+Программа распространяется через лаунчер Stash: он ставит её как папку файлов в `%LOCALAPPDATA%\Stash\apps\<id>\` без установщика и прав администратора, сверяет файлы пакета с эталоном и обновляет по тегам GitHub-релизов. Поэтому установщика NSIS нет, а программа портативна: рядом с exe ничего не пишет, все данные держит в `%APPDATA%\sshclient\`.
 
 **Files:**
-- Modify: `main.go`, `frontend/src/styles/tokens.css`, `frontend/src/lib/ui/Dialog.svelte`, `build/windows/*`
-- Create: `build/windows/icon.ico` (плейсхолдер), `.github/workflows/build.yml`
+- Modify: `main.go` (переменная версии, `WebviewUserDataPath`), `internal/appdir/appdir.go` и тест, `app/settings_api.go` (отдать версию), `frontend/src/lib/settings/*` (показ версии), `frontend/src/styles/tokens.css`, `frontend/src/lib/ui/Dialog.svelte`, `wails.json` (`info.productVersion` не трогать: версию задаёт CI)
+- Create: `stash.json`, `assets/icon.png` (256×256, PNG ≤ 512 КБ, допустимо плейсхолдер в стиле палитры), `.github/workflows/release.yml`, `.github/workflows/stash-ping.yml`
+- Delete: `build/darwin/*` (под Windows не нужно)
 
 - [ ] **Step 1: Движение и фокус**
 
@@ -782,21 +785,69 @@ git commit -m "feat: settings screen, idle lock, ssh_config and PuTTY import"
 
 В `tokens.css` интерфейс `'Segoe UI Variable Text', 'Segoe UI', system-ui`; терминал по `Settings.TerminalFont` с откатом `Consolas`. Google Fonts не загружаются (приложение офлайн).
 
-- [ ] **Step 4: Сборка и установщик**
+- [ ] **Step 4: Портативность под Stash**
 
-Run: `wails build -nsis -clean`
-Expected: `build/bin/sshclient-amd64-installer.exe`; установка на чистую Windows 11 ВМ; первый запуск без сплэша быстрее 1 с до первого кадра; размер установщика меньше 20 МБ; диспетчер задач показывает один процесс приложения плюс процессы WebView2.
+- `internal/appdir.Dir()` возвращает `%APPDATA%\sshclient` (`os.UserConfigDir()`), а не `%LOCALAPPDATA%`; ошибка, если `APPDATA` пуст. Тесты appdir и те тесты `app`, что подменяют `LOCALAPPDATA`, переводятся на `APPDATA`. Миграция: если `%LOCALAPPDATA%\sshclient\vault.json` существует, а в новой папке ничего нет, при первом старте перенести содержимое старой папки в новую (`os.Rename`, при ошибке копирование) и записать в журнал; тест с двумя временными папками.
+- `main.go`: `Windows.WebviewUserDataPath = filepath.Join(appdir.Dir(), "WebView2")`, чтобы кэш WebView2 не создавал `%APPDATA%\sshclient.exe`.
+- `main.go`: `var version = "dev"`; CI заполняет через `-ldflags "-X main.version=X.Y.Z"`. `App.Version()` отдаёт её, экран Настроек показывает «Версия X.Y.Z» внизу.
+- Проверить, что ни один код не пишет файлы рядом с exe и не читает пути от текущей папки (`grep -rn "os.Getwd\|\"./" --include=*.go`); известный `known_hosts` и геометрия окна уже в папке данных.
+- Публичный репозиторий: в коде, тестах, документах и `go.mod` нет локальных путей, адресов серверов и ключей, кроме фикстур `internal/keys/testdata` (происхождение описано в `testdata/README.md`). Проверка: `git grep -n -i -E "c:\\users|/c/users|@proton|BEGIN .*PRIVATE" -- . ':!internal/keys/testdata'` даёт пусто.
 
-- [ ] **Step 5: CI**
+- [ ] **Step 5: `stash.json` и иконка**
 
-`build.yml`: `windows-latest`, `go test ./... -race`, `golangci-lint run`, `npm test` в `frontend`, `wails build -nsis`, артефакт установщика.
+```jsonc
+{
+  "id": "ssh-client",
+  "name": "SSH-клиент",
+  "description": "Лёгкий SSH-клиент для Windows 11: хосты, ключи, терминал с вкладками, пробросы портов.",
+  "icon": "terminal",
+  "image": "assets/icon.png",
+  "hue": 215,
+  "kind": "exe",
+  "entry": "sshclient.exe",
+  "data": ["${APPDATA}\sshclient"],
+  "requirements": [
+    { "label": "Windows 10 2004+ (WebView2 Runtime)", "check": { "type": "os", "min": "10.0.19041" } }
+  ],
+  "minStash": "0.1.9"
+}
+```
 
-- [ ] **Step 6: Commit и тег**
+`id` не меняется никогда. Имя папки данных `sshclient` совпадает с именем exe (Stash сравнивает без регистра и дефисов), иначе `data` не пройдёт `stash-pack`. `preserve` не нужен: рядом с exe файлов нет.
+
+- [ ] **Step 6: Workflow релиза**
+
+`.github/workflows/release.yml`, триггер `push: tags: ['v*']`, `permissions: contents: write`, раннер `windows-latest` (нативная сборка Wails, `-race` требует cgo, на раннере есть gcc):
+
+1. `actions/checkout@v5` с `fetch-depth: 0`; `actions/setup-go@v6` (`go-version-file: go.mod`); `actions/setup-node@v4` (Node 22, `cache: npm`, `cache-dependency-path: frontend/package-lock.json`).
+2. Проверки: `go vet ./...`, `go test ./... -race -count=1`, `golangci-lint run ./...` (через `golangci/golangci-lint-action@v7`), `npm ci && npm test && npx svelte-check` в `frontend`.
+3. Сборка: `go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0`; `VERSION="${GITHUB_REF_NAME#v}"`; `wails build -clean -trimpath -ldflags "-X main.version=${VERSION}"`; `mkdir dist && cp build/bin/sshclient.exe dist/`.
+4. Пакет: `go run github.com/wepmaner/stash-pack/cmd/stash-pack@v0.1.5 -dir dist -manifest stash.json -version "${GITHUB_REF_NAME}" -out stash-out`.
+5. «Что нового»: текст аннотированного тега (строки `- …` — пункты, `Раздел:` — заголовок; `#` в теге не работает), иначе заголовки коммитов с прошлого тега; `[ -s notes.md ] || echo "- Без описания" > notes.md`. Шаг пишется в bash (`shell: bash`).
+6. Релиз: `gh release create "${GITHUB_REF_NAME}" stash-out/* dist/sshclient.exe --notes-file notes.md` (без `--generate-notes`).
+7. `continue-on-error: true`: `curl -fsS -X POST -H "Authorization: Bearer ${STASH_CI_TOKEN}" "https://stash.stash-worker.workers.dev/v1/admin/refresh?app=ssh-client"` с секретом `secrets.STASH_CI_TOKEN`. В первом релизе шаг падает: токена ещё нет.
+
+`.github/workflows/stash-ping.yml`: `workflow_dispatch`, один шаг с тем же `curl`, печатает ответ и падает с `::error::`, если код не 200.
+
+Проверка перед коммитом: `act` не нужен; достаточно `wails build -clean -trimpath -ldflags "-X main.version=0.0.0-local"` локально и `go run github.com/wepmaner/stash-pack/cmd/stash-pack@v0.1.5 -dir dist -manifest stash.json -version v0.0.0 -out stash-out` (оба каталога в `.gitignore`). Ожидается `stash-out/{stash.json,files.json,package.zip,icon.png}`.
+
+- [ ] **Step 7: Первый выпуск (делает владелец, не субагент)**
+
+```bash
+git remote add origin git@github.com:wepmaner/ssh-client.git   # публичный репозиторий
+git push -u origin v1
+git tag -a v0.1.0 -m "Первая версия:
+- Хосты и группы, ключи OpenSSH/PEM/PPK, терминал с вкладками, пробросы"
+git push --tags
+```
+
+Затем Stash → Админка → Приложения → «Добавить приложение» → `wepmaner/ssh-client` → «Записать в GitHub через gh» → включить. Проверка: `https://stash.stash-worker.workers.dev/v1/versions/ssh-client` показывает `0.1.0`.
+
+- [ ] **Step 8: Commit**
 
 ```bash
 git add -A
-git commit -m "chore: native polish, NSIS installer and CI"
-git tag v0.1.0
+git commit -m "chore: native polish, Stash manifest and release workflow"
 ```
 
 ---

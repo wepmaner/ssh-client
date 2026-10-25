@@ -7,3 +7,7 @@ frontend/dist/*
 node_modules/
 !build/appicon.png
 frontend/package.json.md5
+dist/
+stash-out/
+notes.md
+*.exe
