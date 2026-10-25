@@ -160,30 +160,28 @@ func newSessionsApp(t *testing.T, opts sshtest.Opts, withKey bool) sessionsApp {
 	ev := newFakeEmitter()
 	a.emit = ev
 
-	// Every host has a key (a host without one is refused before dialling); without withKey
-	// the server rejects it and authentication goes on with the password prompts.
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	block, err := ssh.MarshalPrivateKey(priv, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	name := "rejected"
+	// Without withKey the host has no key: only the password and keyboard-interactive prompts.
+	var keyID string
 	if withKey {
+		pub, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		block, err := ssh.MarshalPrivateKey(priv, "")
+		if err != nil {
+			t.Fatal(err)
+		}
 		sshPub, err := ssh.NewPublicKey(pub)
 		if err != nil {
 			t.Fatal(err)
 		}
 		opts.AcceptKey = sshPub
-		name = "work"
+		k, err := a.store.SaveKey(model.Key{Name: "work", Type: "ed25519", Private: pem.EncodeToMemory(block), Format: "openssh"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		keyID = k.ID
 	}
-	k, err := a.store.SaveKey(model.Key{Name: name, Type: "ed25519", Private: pem.EncodeToMemory(block), Format: "openssh"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	keyID := k.ID
 
 	srv := sshtest.StartServer(t, opts)
 	addr, hostKey := srv.Addr(), srv.HostKey()
@@ -465,25 +463,21 @@ func TestOutStreamUnderCapKeepsEverything(t *testing.T) {
 	}
 }
 
-// An imported host has no key yet: opening it, or dialling a forward through it, says so.
-func TestHostWithoutKeyRefusesToConnect(t *testing.T) {
-	s := newForwardsApp(t, sshtest.Opts{}, true)
-	h := s.store.Hosts()[0]
-	h.KeyID = ""
-	if _, err := s.store.SaveHost(h); err != nil {
-		t.Fatal(err)
-	}
+// A host without a key (an imported one, or «Без ключа» in the dialog) offers no key: the
+// server asks for the password in the console and the login works.
+func TestHostWithoutKeyLogsInWithPassword(t *testing.T) {
+	s := newSessionsApp(t, sshtest.Opts{Password: "s3cret"}, false)
 	if l := s.HostsList(); len(l) != 1 || l[0].KeyID != "" || l[0].KeyName != "" {
 		t.Fatalf("list %+v", l)
 	}
-	if _, err := s.SessionOpen(s.hostID, 80, 24); err == nil || err.Error() != "У хоста не выбран ключ" {
-		t.Fatalf("open: %v", err)
+	if _, tgt, err := s.hostTarget(s.hostID); err != nil || tgt.Key != nil {
+		t.Fatalf("target key %+v, %v", tgt.Key, err)
 	}
-	f := s.saveL(t, freePort(t), echoServer(t), false)
-	if err := s.ForwardStart(f.ID); err != nil {
-		t.Fatal(err)
+	id := s.open(t)
+	s.ev.waitData(t, id, "Пароль alice@")
+	if strings.Contains(s.ev.data(t, id), "Парольная фраза") {
+		t.Fatal("a keyless host asked for a key passphrase")
 	}
-	if st := s.ev.waitFwdState(t, f.ID, "error", 0, 5*time.Second); st.Error != "У хоста не выбран ключ" {
-		t.Fatalf("forward %+v", st)
-	}
+	s.write(t, id, "s3cret\r")
+	s.ev.waitState(t, id, "connected", 5*time.Second)
 }

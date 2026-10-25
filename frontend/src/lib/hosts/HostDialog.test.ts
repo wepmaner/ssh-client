@@ -123,11 +123,28 @@ describe('HostDialog', () => {
     expect(screen.getByRole('button', { name: 'Выбрать файл…' })).toBeTruthy()
   })
 
-  it('asks for a key when editing an imported host without one', () => {
+  it('keeps an imported host without a key and saves it keyless', async () => {
     setup({ ...saved, key_id: '', group_id: '', group_name: '', key_name: '', os: '', connected: false })
     const select = screen.getByLabelText('Ключ') as HTMLSelectElement
     expect(select.value).toBe('')
-    expect(select.selectedOptions[0].textContent).toBe('Выберите ключ')
+    expect(select.selectedOptions[0].textContent).toBe('Без ключа — сервер спросит пароль')
+    await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
+    await vi.waitFor(() => expect(api.HostSave).toHaveBeenCalledWith(expect.objectContaining({ id: 'h1', key_id: '' })))
+  })
+
+  it('a duplicate of a keyless host stays keyless', () => {
+    setup({ ...saved, id: '', key_id: '', group_id: '', group_name: '', key_name: '', os: '', connected: false })
+    expect((screen.getByLabelText('Ключ') as HTMLSelectElement).value).toBe('')
+  })
+
+  it('a new host can be saved without a key', async () => {
+    setup()
+    const select = screen.getByLabelText('Ключ') as HTMLSelectElement
+    expect(select.value).toBe('k1')
+    await fireEvent.change(select, { target: { value: '' } })
+    await fill('Адрес', 'srv.example.test')
+    await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
+    await vi.waitFor(() => expect(api.HostSave).toHaveBeenCalledWith(expect.objectContaining({ key_id: '' })))
   })
 
   it('edits an existing host with its values', async () => {

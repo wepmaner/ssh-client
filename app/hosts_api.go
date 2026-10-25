@@ -109,7 +109,7 @@ func (a *App) hostDTO(id string) (HostDTO, error) {
 
 // normalizeHost trims the connection fields and checks them: port 0 means 22, an empty name
 // means the address. The first problem is returned as a field error. Imports use it without
-// the key check of validateHost.
+// the store checks of validateHost.
 func normalizeHost(in HostDTO) (model.Host, error) {
 	h := model.Host{
 		ID: in.ID, Name: strings.TrimSpace(in.Name), Address: strings.TrimSpace(in.Address), Port: in.Port,
@@ -141,10 +141,8 @@ func (a *App) validateHost(in HostDTO) (model.Host, error) {
 	if err != nil {
 		return h, err
 	}
-	if h.KeyID == "" {
-		return h, fieldError("key", "Выберите или импортируйте ключ")
-	}
-	if _, err := a.findKey(h.KeyID); err != nil {
+	// The key is optional: without one the server asks for the password in the console.
+	if _, err := a.findKey(h.KeyID); h.KeyID != "" && err != nil {
 		return h, fieldError("key", errKeyNotFound.Error())
 	}
 	if h.GroupID != "" && !slices.ContainsFunc(a.store.Groups(), func(g model.Group) bool { return g.ID == h.GroupID }) {

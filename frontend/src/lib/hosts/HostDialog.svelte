@@ -37,12 +37,13 @@
       user: h?.user ?? '',
       name: h?.name ?? '',
       group_id: h?.group_id ?? '',
-      // An imported host has no key yet: the dialog asks for one instead of picking the first.
-      key_id: h?.id ? h.key_id : h?.key_id || (keys[0]?.id ?? ''),
+      // A new host starts with the first key; an existing host or a copy keeps its own, which may be
+      // none: then the server asks for the password in the console.
+      key_id: h ? h.key_id : (keys[0]?.id ?? ''),
       os: h?.os ?? '',
     }
     newGroup = ''
-    keyMode = keys.length > 0 ? 'store' : 'import'
+    keyMode = keys.length > 0 || (h && !h.key_id) ? 'store' : 'import'
     errors = {}
     general = ''
     busy = false
@@ -260,20 +261,19 @@
         </div>
         {#if keyMode === 'store'}
           <div class="key-store">
-            {#if keys.length > 0}
-              <select
-                class="select key-select"
-                aria-label="Ключ"
-                bind:value={form.key_id}
-                aria-describedby={errors.key ? 'host-key-error' : undefined}
-                onchange={() => clearError('key')}
-              >
-                {#if !form.key_id}<option value="" disabled>Выберите ключ</option>{/if}
-                {#each keys as k (k.id)}
-                  <option value={k.id}>{k.name} · {typeLabel(k.type)}{k.encrypted ? ' · с фразой' : ''}</option>
-                {/each}
-              </select>
-            {:else}
+            <select
+              class="select key-select"
+              aria-label="Ключ"
+              bind:value={form.key_id}
+              aria-describedby={errors.key ? 'host-key-error' : undefined}
+              onchange={() => clearError('key')}
+            >
+              <option value="">Без ключа — сервер спросит пароль</option>
+              {#each keys as k (k.id)}
+                <option value={k.id}>{k.name} · {typeLabel(k.type)}{k.encrypted ? ' · с фразой' : ''}</option>
+              {/each}
+            </select>
+            {#if keys.length === 0}
               <span class="hint">В хранилище нет ключей: импортируйте ключ или создайте его в разделе «Ключи»</span>
             {/if}
             <button type="button" class="link" onclick={allKeys}>Все ключи</button>

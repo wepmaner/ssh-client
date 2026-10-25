@@ -37,9 +37,6 @@ func TestHostSaveValidation(t *testing.T) {
 		t.Fatalf("port message: %v", err)
 	}
 	bad = ok
-	bad.KeyID = ""
-	_, err = a.HostSave(bad)
-	wantField(t, err, "key")
 	bad.KeyID = "missing"
 	_, err = a.HostSave(bad)
 	wantField(t, err, "key")
@@ -82,6 +79,14 @@ func TestHostSaveValidation(t *testing.T) {
 	}
 	if list := a.HostsList(); len(list) != 1 || list[0].ID != h.ID || upd.Name != "prod" || list[0].OS != "ubuntu" {
 		t.Fatalf("update: %+v", list)
+	}
+
+	// The key is optional: without one the server asks for the password in the console.
+	keyless := ok
+	keyless.KeyID = ""
+	keyless.Address = "nokey.example.test"
+	if h, err := a.HostSave(keyless); err != nil || h.KeyID != "" || h.KeyName != "" {
+		t.Fatalf("keyless host %+v, %v", h, err)
 	}
 }
 
