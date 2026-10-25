@@ -94,6 +94,10 @@
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
     color: var(--muted);
   }
+  /* The field inside has no border of its own: the panel shows its focus, as the hosts search does. */
+  .search:has(input:focus) {
+    border-color: var(--accent);
+  }
   input {
     width: 200px;
     height: 24px;

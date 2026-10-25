@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import dialog from '../lib/ui/Dialog.svelte?raw'
+import input from '../lib/ui/Input.svelte?raw'
 import titlebar from '../lib/titlebar/TitleBar.svelte?raw'
 // Not empty only because vite.config.ts lets Vitest process this CSS file.
 import tokens from './tokens.css?raw'
@@ -12,18 +13,63 @@ const components = import.meta.glob('../lib/**/*.svelte', { query: '?raw', impor
   string
 >
 
-// Locked by another review while Task 15 ran; its link outline moves to var(--focus) in a follow-up.
-const pendingFocus = new Set(['../lib/hosts/HostDialog.svelte'])
-
 function block(css: string, selector: RegExp): string {
   const m = new RegExp(selector.source + String.raw`\s*\{([^}]*)\}`).exec(css)
   return m?.[1] ?? ''
 }
 
+/** The innermost rules of a component's <style>: selector and body, comments dropped. */
+function rules(src: string): { selector: string; body: string }[] {
+  const style = /<style[^>]*>([\s\S]*?)<\/style>/.exec(src)?.[1] ?? ''
+  const css = style.replace(/\/\*[\s\S]*?\*\//g, '')
+  return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selector: m[1].trim(), body: m[2] }))
+}
+
+const field = /(^|[\s,>+~(])(input|select|textarea)\b|\.(input|select)\b/
+const menuFile = '../lib/ui/Menu.svelte'
+
 describe('native motion and focus', () => {
   it('has the focus ring colour and a global keyboard focus ring', () => {
     expect(tokens).toMatch(/--focus:\s*#5b9cf8/i)
     expect(block(tokens, /(?:^|\n):focus-visible/)).toMatch(/outline:\s*2px solid var\(--focus\)/)
+  })
+
+  // Ruling 2026-10-25: fields show focus with the accent border, menu items with the highlight,
+  // every other control with the 2px var(--focus) ring.
+  it('draws every focus outline in the focus colour', () => {
+    for (const [file, src] of Object.entries(components)) {
+      for (const m of src.matchAll(/outline:\s*2px solid ([^;]+);/g)) expect(`${file}: ${m[1]}`).toBe(`${file}: var(--focus)`)
+    }
+  })
+
+  it('removes the ring only from fields, which show focus with the accent border, and from menu items', () => {
+    for (const [file, src] of Object.entries(components)) {
+      const list = rules(src)
+      const removed = list.filter((r) => /outline:\s*(none|0)\b/.test(r.body))
+      for (const r of removed) {
+        if (file === menuFile) {
+          expect(r.selector, file).toMatch(/button:focus-visible/)
+          expect(r.body, file).toMatch(/background:/)
+          continue
+        }
+        expect(r.selector, `${file}: ${r.selector}`).toMatch(field)
+      }
+      if (removed.length > 0 && file !== menuFile) {
+        const border = list.some((r) => /:focus|:focus-within/.test(r.selector) && /border(-\w+)?-color:\s*var\(--accent\)/.test(r.body))
+        expect(border, `${file} has no accent border on focus`).toBe(true)
+      }
+    }
+    expect(block(input, /\.input:focus/)).toMatch(/border-color:\s*var\(--accent\)/)
+  })
+
+  it('keeps the standard ring on every other focus-visible rule', () => {
+    for (const [file, src] of Object.entries(components)) {
+      if (file === menuFile) continue
+      for (const r of rules(src).filter((r) => r.selector.includes(':focus-visible'))) {
+        const outline = /outline:\s*([^;]+);/.exec(r.body)?.[1]
+        if (outline !== undefined) expect(`${file}: ${outline}`).toBe(`${file}: 2px solid var(--focus)`)
+      }
+    }
   })
 
   it('turns off transitions and animations when the system asks for reduced motion', () => {
@@ -46,22 +92,18 @@ describe('native motion and focus', () => {
   })
 
   it('marks the maximise button as a non-client region for the Snap layouts', () => {
-    expect(titlebar).toMatch(/class="btn max" aria-label="Развернуть"/)
+    const button = [...titlebar.matchAll(/<button\b[^>]*>/g)].map((m) => m[0]).find((b) => b.includes('aria-label="Развернуть"'))
+    expect(button).toBeDefined()
+    const classes = /\bclass="([^"]*)"/.exec(button!)?.[1].split(/\s+/) ?? []
+    expect(classes).toContain('max')
     expect(block(titlebar, /\.max/)).toMatch(/--wails-non-client-region:\s*maximize/)
   })
 
   it('uses 80 ms hover transitions only', () => {
     for (const [file, src] of Object.entries(components)) {
-      for (const m of src.matchAll(/transition:([^;]*);/g)) {
-        for (const d of m[1].matchAll(/(\d+)m?s\b/g)) expect(`${file}: ${d[0]}`).toBe(`${file}: 80ms`)
+      for (const m of src.matchAll(/transition(?:-duration)?:([^;]*);/g)) {
+        for (const d of m[1].matchAll(/\b(\d*\.?\d+)(ms|s)\b/g)) expect(`${file}: ${d[0]}`).toBe(`${file}: 80ms`)
       }
-    }
-  })
-
-  it('draws every focus outline in the focus colour', () => {
-    for (const [file, src] of Object.entries(components)) {
-      if (pendingFocus.has(file)) continue
-      expect(src, file).not.toMatch(/outline:\s*2px solid var\(--accent\)/)
     }
   })
 })
