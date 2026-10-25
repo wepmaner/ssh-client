@@ -1,13 +1,25 @@
 package app
 
 import (
+	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
 	"io"
+	"io/fs"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/ssh"
+
+	"sshclient/internal/appdir"
+	"sshclient/internal/model"
 	"sshclient/internal/sshclient/sshtest"
 )
 
@@ -463,5 +475,253 @@ func TestHostDeleteStopsForwards(t *testing.T) {
 	}
 	if len(s.store.Forwards()) != 0 {
 		t.Fatal("forwards of the deleted host still stored")
+	}
+}
+
+// fwdPassphrase is the test phrase of the encrypted forward key; distinctive enough to grep for.
+const fwdPassphrase = "fwd-phrase-7Qx9" //nolint:gosec // G101: test-only passphrase of a key generated in the test
+
+// newEncryptedForwardsApp is newForwardsApp whose host uses an Ed25519 key encrypted with fwdPassphrase.
+func newEncryptedForwardsApp(t *testing.T) sessionsApp {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte(fwdPassphrase))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sshPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newForwardsApp(t, sshtest.Opts{AcceptKey: sshPub}, false)
+	k, err := s.store.SaveKey(model.Key{Name: "work", Type: "ed25519", Private: pem.EncodeToMemory(block),
+		Format: "openssh", Encrypted: true, Fingerprint: ssh.FingerprintSHA256(sshPub)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := s.store.Hosts()[0]
+	h.KeyID = k.ID
+	if _, err := s.store.SaveHost(h); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+const passphrasePrompt = "Парольная фраза ключа work: " //nolint:gosec // G101: prompt text, not a credential
+
+// waitPassphrasePrompts waits until the forward's mini-terminal shows the n-th passphrase question.
+func (s sessionsApp) waitPassphrasePrompts(t *testing.T, id string, n int) {
+	t.Helper()
+	s.ev.waitFor(t, 5*time.Second, "passphrase prompt", func([]fakeEvent) bool {
+		return strings.Count(s.ev.fwdData(t, id), passphrasePrompt) >= n
+	})
+}
+
+func (s sessionsApp) answer(t *testing.T, id, text string) {
+	t.Helper()
+	if err := s.ForwardWrite(id, base64.StdEncoding.EncodeToString([]byte(text+"\r"))); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// startWithPassphrase starts f, answers the passphrase question and waits for running.
+func (s sessionsApp) startWithPassphrase(t *testing.T, f ForwardDTO) {
+	t.Helper()
+	n := len(s.ev.fwdStates(f.ID))
+	asked := strings.Count(s.ev.fwdData(t, f.ID), passphrasePrompt)
+	if err := s.ForwardStart(f.ID); err != nil {
+		t.Fatal(err)
+	}
+	s.waitPassphrasePrompts(t, f.ID, asked+1)
+	s.answer(t, f.ID, fwdPassphrase)
+	s.ev.waitFwdState(t, f.ID, "running", n, 5*time.Second)
+}
+
+// secretForTest is the run's remembered passphrase buffer itself (not a copy).
+func (r *fwdRun) secretForTest() []byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.secret
+}
+
+func zeroBytes(b []byte) bool {
+	for _, c := range b {
+		if c != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// runSecret returns the current run's secret and checks it holds the phrase.
+func (s sessionsApp) runSecret(t *testing.T, id string) (*fwdRun, []byte) {
+	t.Helper()
+	run := s.currentRun(id)
+	if run == nil {
+		t.Fatal("forward has no run")
+	}
+	sec := run.secretForTest()
+	if string(sec) != fwdPassphrase {
+		t.Fatalf("remembered passphrase %q", sec)
+	}
+	return run, sec
+}
+
+func checkForgotten(t *testing.T, run *fwdRun, buf []byte) {
+	t.Helper()
+	if run.secretForTest() != nil || !zeroBytes(buf) {
+		t.Fatalf("passphrase kept: run %q, buffer %q", run.secretForTest(), buf)
+	}
+}
+
+func TestForwardReconnectDoesNotReaskPassphrase(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	listen := freePort(t)
+	f := s.saveL(t, listen, echoServer(t), false)
+	s.startWithPassphrase(t, f)
+	roundTrip(t, listen)
+
+	n := len(s.ev.fwdStates(f.ID))
+	s.srv.DropConnections()
+	s.ev.waitFwdState(t, f.ID, "starting", n, 5*time.Second)
+	s.ev.waitFwdState(t, f.ID, "running", n+1, 10*time.Second)
+	roundTrip(t, listen)
+	out := s.ev.fwdData(t, f.ID)
+	if c := strings.Count(out, passphrasePrompt); c != 1 {
+		t.Fatalf("passphrase asked %d times: %q", c, out)
+	}
+	if strings.Contains(out, fwdPassphrase) {
+		t.Fatal("passphrase echoed")
+	}
+}
+
+func TestForwardStopClearsPassphrase(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	f := s.saveL(t, freePort(t), echoServer(t), false)
+	s.startWithPassphrase(t, f)
+	run, buf := s.runSecret(t, f.ID)
+	if err := s.ForwardStop(f.ID); err != nil {
+		t.Fatal(err)
+	}
+	checkForgotten(t, run, buf)
+
+	// A new start asks again.
+	s.startWithPassphrase(t, f)
+	if c := strings.Count(s.ev.fwdData(t, f.ID), passphrasePrompt); c != 2 {
+		t.Fatalf("passphrase asked %d times", c)
+	}
+
+	// Delete and app exit forget it too.
+	run, buf = s.runSecret(t, f.ID)
+	if err := s.ForwardDelete(f.ID); err != nil {
+		t.Fatal(err)
+	}
+	checkForgotten(t, run, buf)
+
+	g := s.saveL(t, freePort(t), echoServer(t), false)
+	s.startWithPassphrase(t, g)
+	run, buf = s.runSecret(t, g.ID)
+	s.stopAllForwards()
+	checkForgotten(t, run, buf)
+}
+
+func TestForwardHostChangeClearsPassphrase(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	f := s.saveL(t, freePort(t), echoServer(t), false)
+	s.startWithPassphrase(t, f)
+	run, buf := s.runSecret(t, f.ID)
+
+	other := s.store.Hosts()[0]
+	other.ID = ""
+	other.Name = "srv2"
+	h2, err := s.store.SaveHost(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.HostID = h2.ID
+	if _, err := s.ForwardSave(f); err != nil {
+		t.Fatal(err)
+	}
+	checkForgotten(t, run, buf)
+	s.waitPassphrasePrompts(t, f.ID, 2)
+}
+
+func TestForwardErrorClearsPassphrase(t *testing.T) {
+	// The reconnect meets an unknown server key and the user refuses: the run ends in error and
+	// stays listed until Start or Stop, but the passphrase is forgotten at once.
+	s := newEncryptedForwardsApp(t)
+	f := s.saveL(t, freePort(t), echoServer(t), false)
+	s.startWithPassphrase(t, f)
+	run, buf := s.runSecret(t, f.ID)
+
+	untrust(t)
+	n := len(s.ev.fwdStates(f.ID))
+	s.srv.DropConnections()
+	q := s.ev.waitTrustAsk(t, 1)
+	if err := s.TrustAnswer(q.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	s.ev.waitFwdState(t, f.ID, "error", n, 5*time.Second)
+	s.ev.waitFor(t, 2*time.Second, "passphrase forgotten", func([]fakeEvent) bool {
+		return run.secretForTest() == nil
+	})
+	checkForgotten(t, run, buf)
+}
+
+func TestForwardSecretNeverInStore(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	listen := freePort(t)
+	f := s.saveL(t, listen, echoServer(t), false)
+	s.startWithPassphrase(t, f)
+	n := len(s.ev.fwdStates(f.ID))
+	s.srv.DropConnections()
+	s.ev.waitFwdState(t, f.ID, "running", n+1, 10*time.Second)
+	// Any store write after the phrase is known goes through the same encoder.
+	g := f
+	g.Name = "renamed"
+	if _, err := s.ForwardSave(g); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := json.Marshal(s.vault.Data())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte(fwdPassphrase)) {
+		t.Fatal("passphrase in the vault data")
+	}
+	dir, err := appdir.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		raw, err := os.ReadFile(path) //nolint:gosec // G304: path is under the test's temp app dir
+		if err != nil {
+			return err
+		}
+		if bytes.Contains(raw, []byte(fwdPassphrase)) {
+			t.Errorf("passphrase in %s", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range s.ev.snapshot() {
+		if b, err := json.Marshal(e.payload); err != nil || bytes.Contains(b, []byte(fwdPassphrase)) {
+			t.Fatalf("passphrase in event %s (%v)", e.name, err)
+		}
+	}
+	if strings.Contains(s.ev.fwdData(t, f.ID), fwdPassphrase) {
+		t.Fatal("passphrase in the mini-terminal output")
+	}
+	if b, err := json.Marshal(s.ForwardsList()); err != nil || bytes.Contains(b, []byte(fwdPassphrase)) {
+		t.Fatalf("passphrase in ForwardsList (%v)", err)
 	}
 }

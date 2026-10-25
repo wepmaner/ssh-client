@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync"
@@ -48,10 +49,49 @@ type fwdRun struct {
 
 	stopOnce       sync.Once
 	hostKeyChanged atomic.Bool
+
+	// The key passphrase the server accepted in this run, so reconnects do not ask again. It
+	// lives in memory only (never in the store, a DTO, an event or a log) and dies with the run:
+	// stop (Stop, Delete, app exit, a restart by ForwardSave) and a final error clear it.
+	mu          sync.Mutex
+	secret      []byte
+	secretKeyID string // the key the secret opens
+	forgotten   bool   // the run has ended: a late OnPassphrase is not kept
 }
 
-// stop cancels a pending prompt and the dial, stops the runner (the port is free afterwards)
-// and waits for the run's goroutines. Safe to call more than once and concurrently.
+// secretFor returns a copy of the remembered passphrase of key keyID, nil if there is none.
+// The caller owns the copy (sshclient.Dial clears it).
+func (r *fwdRun) secretFor(keyID string) []byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.secret == nil || r.secretKeyID != keyID {
+		return nil
+	}
+	return bytes.Clone(r.secret)
+}
+
+// rememberSecret keeps a copy of p, the passphrase of key keyID the server just accepted.
+func (r *fwdRun) rememberSecret(keyID string, p []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.forgotten {
+		return
+	}
+	clear(r.secret)
+	r.secret, r.secretKeyID = bytes.Clone(p), keyID
+}
+
+// forgetSecret wipes the remembered passphrase for good.
+func (r *fwdRun) forgetSecret() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	clear(r.secret)
+	r.secret, r.secretKeyID, r.forgotten = nil, "", true
+}
+
+// stop cancels a pending prompt and the dial, stops the runner (the port is free afterwards),
+// waits for the run's goroutines and wipes the remembered passphrase. Safe to call more than
+// once and concurrently.
 func (r *fwdRun) stop() {
 	r.stopOnce.Do(func() {
 		r.in.Close()
@@ -59,6 +99,7 @@ func (r *fwdRun) stop() {
 		r.runner.Stop()
 	})
 	<-r.done
+	r.forgetSecret()
 }
 
 func (r *fwdRun) state() ForwardStateDTO { return r.dto(r.runner.State()) }
@@ -118,6 +159,9 @@ func (a *App) startForward(f model.Forward) {
 	go func() {
 		defer wg.Done()
 		for st := range run.runner.Events() {
+			if st.Status == sshclient.ForwardError {
+				run.forgetSecret() // error is final for a run: no more dials will need it
+			}
 			e.out.Event(e.stateEvent(), run.dto(st), false)
 		}
 	}()
@@ -231,6 +275,11 @@ func (a *App) forwardDial(id, hostID string, out *outStream, run *fwdRun) func(c
 			return nil, err
 		}
 		t.Trust = a.trustAsker(trustOwner{forwardID: id}, t.User, out)
+		if t.Key != nil {
+			keyID := t.Key.ID
+			t.Passphrase = run.secretFor(keyID) // Dial clears this copy
+			t.OnPassphrase = func(p []byte) { run.rememberSecret(keyID, p) }
+		}
 		client, err := sshclient.Dial(ctx, t, sshclient.NewPrompter(out, run.in), kh)
 		run.hostKeyChanged.Store(errors.Is(err, sshclient.ErrHostKeyChanged))
 		if err != nil {

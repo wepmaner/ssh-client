@@ -771,8 +771,8 @@ git commit -m "feat: forwards API, autostart and Forwards screen"
 - `fwdRun.secret`: копия принятой фразы; перед каждым реконнектом передаётся в `Target.Passphrase`; `clear` + `nil` в `stop()`, `removeForward`, `stopAllForwards` (выход из приложения) и при смене ключа хоста (`ForwardSave` с другим HostID → рестарт стирает).
 - Пароль сервера (keyboard-interactive/password) тем же способом не кэшируется: решение касается только фразы ключа.
 
-- [ ] **Step 1: Тесты** — `TestDialUsesGivenPassphraseWithoutPrompt`, `TestDialFallsBackToPromptOnWrongCachedPassphrase`, `TestForwardReconnectDoesNotReaskPassphrase` (sshtest: ключ с фразой, `DropConnections`, после реконнекта в `fwd:data` нет второго вопроса, статус снова `running`), `TestForwardStopClearsPassphrase` (после Stop буфер обнулён, новый Start спрашивает снова), `TestForwardSecretNeverInStore` (JSON хранилища не содержит фразу).
-- [ ] **Step 2: Реализация, `go test ./... -count=1`, `golangci-lint run ./...`, commit `feat(forwards): keep the key passphrase in memory while a forward runs`.**
+- [x] **Step 1: Тесты** — `TestDialUsesGivenPassphraseWithoutPrompt`, `TestDialFallsBackToPromptOnWrongCachedPassphrase`, `TestForwardReconnectDoesNotReaskPassphrase` (sshtest: ключ с фразой, `DropConnections`, после реконнекта в `fwd:data` нет второго вопроса, статус снова `running`), `TestForwardStopClearsPassphrase` (после Stop буфер обнулён, новый Start спрашивает снова), `TestForwardSecretNeverInStore` (JSON хранилища не содержит фразу).
+- [x] **Step 2: Реализация, `go test ./... -count=1`, `golangci-lint run ./...`, commit `feat(forwards): keep the key passphrase in memory while a forward runs`.**
 
 ## Этап G. Настройки, импорт, сборка
 
