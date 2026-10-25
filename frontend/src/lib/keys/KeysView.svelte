@@ -24,7 +24,7 @@
   /** A native menu item acts on its key: select it, then ask the detail pane once it shows that key. */
   async function onKey(id: string, run: (d: ReturnType<typeof KeyDetail>) => void) {
     if (!keys.some((k) => k.id === id)) return
-    query = ''
+    if (!filtered.some((k) => k.id === id)) query = ''
     selectedId = id
     await tick()
     if (detail) run(detail)
