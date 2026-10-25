@@ -21,6 +21,8 @@
 
   /** Right-click opens the menu at the cursor; Shift+F10 or the menu key, at the tile. */
   function oncontextmenu(e: MouseEvent) {
+    // A right-click inside the open menu must not reopen it at a new point.
+    if ((e.target as HTMLElement).closest('[role="menu"]')) return
     e.preventDefault()
     // A keyboard-generated contextmenu has no pointer position.
     menuAt = e.clientX === 0 && e.clientY === 0 ? null : { x: e.clientX, y: e.clientY }
