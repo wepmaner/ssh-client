@@ -700,7 +700,7 @@ git commit -m "feat(ssh): local, remote and dynamic forwards with reconnect"
   - `ForwardSave(f ForwardDTO) (ForwardDTO, error)` — валидация адресов `host:port`; имя по умолчанию `<Kind> <Listen> → <Target>` (для `D` `SOCKS5 <Listen>`).
   - `ForwardDelete(id) error` (останавливает), `ForwardStart(id) error`, `ForwardStop(id) error`.
   - События `forward:state:<id>` с `ForwardState`.
-  - В `Startup` после открытия хранилища запускаются все `AutoStart` пробросы; пробросы с паролем хранилища стартуют после разблокировки. Пробросы используют собственный `ssh.Client` на хост, независимый от терминалов; запрос доверия отпечатку для проброса без открытого терминала выводится в «мини-терминал» внутри карточки проброса (тот же `Prompter`, вывод в маленький xterm 6 строк).
+  - В `Startup` после открытия хранилища запускаются все `AutoStart` пробросы; пробросы с паролем хранилища стартуют после разблокировки. Пробросы используют собственный `ssh.Client` на хост, независимый от терминалов; запрос доверия отпечатку идёт через окно доверия (Task 13b); пароль и фразу ключа для проброса без открытого терминала спрашивает «мини-терминал» внутри карточки проброса (тот же `Prompter`, вывод в маленький xterm 6 строк).
 - Фронтенд по артборду Forwards: карточки, диалог создания (тип сегментом L/R/D, хост, слушать, назначение, автозапуск), счётчик пробросов текущего хоста в заголовке терминала и в строке состояния.
 
 - [ ] **Step 1: Реализовать API и автозапуск**
@@ -720,6 +720,23 @@ git commit -m "feat: forwards API, autostart and Forwards screen"
 ```
 
 ---
+
+### Task 13b: Окно доверия неизвестному серверу
+
+Решение владельца продукта (2026-10-25): консольный вопрос «Доверять и запомнить?» сбивает с толку. Для неизвестного ключа сервера показывается собственное окно в стиле остальных диалогов (как «Security Alert» в PuTTY); пароль и парольная фраза по-прежнему спрашиваются в консоли. Изменившийся ключ сервера по-прежнему всегда отклоняется карточкой ошибки. Выполняется после Task 13, до Task 14: пробросы используют тот же механизм доверия.
+
+**Files:**
+- Modify: `internal/sshclient/knownhosts.go` (`KnownHosts` получает интерфейс `TrustAsker` вместо прямого `Prompter.Confirm`), `knownhosts_test.go`, `app/sessions.go`, `app/events.go`, `app/forwards_api.go` (пробросы), `frontend/src/lib/terminal/TerminalView.svelte`, `frontend/src/lib/forwards/*` (мини-терминал больше не нужен для доверия)
+- Create: `app/trust_api.go`, `app/trust_api_test.go`, `frontend/src/lib/ui/TrustDialog.svelte`, `TrustDialog.test.ts`
+
+**Interfaces:**
+- `sshclient.TrustAsker` — `AskTrust(ctx, q TrustQuestion) (bool, error)`; `TrustQuestion{Host string; Port int; KeyType string; FingerprintSHA256 string; FingerprintMD5 string}`. `Prompter` реализует его для тестов и как запасной путь; в приложении его реализует `app`.
+- `app`: событие `trust:ask` с `{ID, SessionID, ForwardID, Host, Port, KeyType, Fingerprint}`; метод `TrustAnswer(id string, trust bool) error`. Один открытый вопрос на сессию/проброс; отмена сессии (закрытие вкладки, Stop проброса) снимает вопрос. Пока вопрос открыт, таймаут рукопожатия приостановлен (как у консольных вопросов). В терминал при этом печатается строка «Сервер <host> неизвестен, отпечаток <fp>» для истории, без ожидания ввода.
+- `TrustDialog.svelte`: заголовок «Неизвестный сервер», строка `user@host:port`, тип ключа и отпечаток SHA256 моноширинным с кнопкой «Скопировать», пояснение в одну строку («Клиент видит этот сервер впервые. Если отпечаток совпадает с тем, что дал администратор, подключение безопасно.»), кнопки «Доверять и подключиться» (основная, в фокусе) и «Отмена»; Esc = отмена. Отмена завершает подключение сообщением «Подключение отменено: сервер не подтверждён» без записи в known_hosts.
+
+- [ ] **Step 1: Тесты** — `TestKnownHostsAsksTrustAsker` (вопрос содержит host, port, тип и SHA256; `true` записывает, `false` возвращает `ErrHostNotTrusted` и не пишет); `TestTrustAnswerUnknownID`; `TestTrustCancelledWithSession` (закрытие сессии снимает вопрос, Dial завершается); `TrustDialog.test.ts` (поля, копирование отпечатка, Esc → отмена, фокус на основной кнопке).
+- [ ] **Step 2: Реализация и проверка** — `go test ./... -count=1`, `golangci-lint run ./...`, `npm test`, `svelte-check`, `wails build`; живая проверка контроллером: первое подключение показывает окно, «Доверять и подключиться» пишет known_hosts, повторное подключение окна не показывает, «Отмена» даёт карточку с текстом отмены.
+- [ ] **Step 3: Commit** — `feat: in-app trust dialog for unknown host keys`.
 
 ## Этап G. Настройки, импорт, сборка
 
