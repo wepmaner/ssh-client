@@ -163,9 +163,9 @@ func (a *App) ForwardSave(in ForwardDTO) (ForwardDTO, error) {
 		return ForwardDTO{}, err
 	}
 	if existed && endpointChanged(old, saved) {
-		active := a.forwardState(saved.ID)
+		active := a.forwardActive(saved.ID)
 		a.stopForward(saved.ID)
-		if s := active.Status; s == "starting" || s == "running" {
+		if active {
 			a.startForward(saved)
 		}
 	}
@@ -237,12 +237,7 @@ func (a *App) ForwardWrite(id, dataB64 string) error {
 	if err != nil {
 		return errBadInput
 	}
-	a.fwdMu.Lock()
-	var run *fwdRun
-	if e, ok := a.fwds[id]; ok {
-		run = e.run
-	}
-	a.fwdMu.Unlock()
+	run := a.currentRun(id)
 	if run != nil {
 		run.in.Write(b)
 	}

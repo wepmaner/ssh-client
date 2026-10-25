@@ -61,15 +61,16 @@ func (r *fwdRun) stop() {
 	<-r.done
 }
 
-func (r *fwdRun) state() ForwardStateDTO {
-	st := r.runner.State()
+func (r *fwdRun) state() ForwardStateDTO { return r.dto(r.runner.State()) }
+
+func (r *fwdRun) dto(st sshclient.ForwardState) ForwardStateDTO {
 	return ForwardStateDTO{Status: st.Status, Error: st.Error, Conns: st.Conns, Retryable: !r.hostKeyChanged.Load()}
 }
 
-// active reports a run that is connecting or forwarding; error and stopped runs are not.
+// active reports a run that is about to start, connecting or forwarding. A run in e.run is only
+// stopped before its Start (stopped runs leave e.run), so only a failed Start makes it inactive.
 func (r *fwdRun) active() bool {
-	s := r.runner.State().Status
-	return s == sshclient.ForwardStarting || s == sshclient.ForwardRunning
+	return r.runner.State().Status != sshclient.ForwardError
 }
 
 func (e *fwdEntry) stateEvent() string { return "fwd:state:" + e.id }
@@ -116,8 +117,8 @@ func (a *App) startForward(f model.Forward) {
 	}()
 	go func() {
 		defer wg.Done()
-		for range run.runner.Events() {
-			e.out.Event(e.stateEvent(), run.state(), false)
+		for st := range run.runner.Events() {
+			e.out.Event(e.stateEvent(), run.dto(st), false)
 		}
 	}()
 	go func() {
@@ -171,16 +172,27 @@ func (a *App) stopAllForwards() {
 
 // forwardState is the current state of a forward for ForwardsList.
 func (a *App) forwardState(id string) ForwardStateDTO {
-	a.fwdMu.Lock()
-	var run *fwdRun
-	if e, ok := a.fwds[id]; ok {
-		run = e.run
-	}
-	a.fwdMu.Unlock()
+	run := a.currentRun(id)
 	if run == nil {
 		return ForwardStateDTO{Status: sshclient.ForwardStopped, Retryable: true}
 	}
 	return run.state()
+}
+
+// currentRun returns the forward's run, nil while it is stopped.
+func (a *App) currentRun(id string) *fwdRun {
+	a.fwdMu.Lock()
+	defer a.fwdMu.Unlock()
+	if e, ok := a.fwds[id]; ok {
+		return e.run
+	}
+	return nil
+}
+
+// forwardActive reports a forward that is starting, connecting or running.
+func (a *App) forwardActive(id string) bool {
+	run := a.currentRun(id)
+	return run != nil && run.active()
 }
 
 // autostartForwards starts every AutoStart forward that is not running yet.
