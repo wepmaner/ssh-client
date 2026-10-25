@@ -64,7 +64,7 @@ func TestKeyLifecycle(t *testing.T) {
 		t.Fatalf("renamed to %q", got)
 	}
 
-	if _, err := a.store.SaveHost(model.Host{Name: "srv", Address: "h", Port: 22, User: "u", KeyID: k.ID}); err != nil {
+	if _, err := a.storeRef().SaveHost(model.Host{Name: "srv", Address: "h", Port: 22, User: "u", KeyID: k.ID}); err != nil {
 		t.Fatal(err)
 	}
 	if got := a.KeysList()[0].HostIDs; len(got) != 1 {
@@ -73,8 +73,8 @@ func TestKeyLifecycle(t *testing.T) {
 	if err := a.KeyDelete(k.ID); err == nil || err.Error() != "Ключ используется хостами: srv" {
 		t.Fatalf("delete in use: %v", err)
 	}
-	hosts := a.store.Hosts()
-	if err := a.store.DeleteHost(hosts[0].ID); err != nil {
+	hosts := a.storeRef().Hosts()
+	if err := a.storeRef().DeleteHost(hosts[0].ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.KeyDelete(k.ID); err != nil {
@@ -189,7 +189,7 @@ func TestKeyGenerateWithPassphrase(t *testing.T) {
 	if _, err := ssh.ParseRawPrivateKeyWithPassphrase(k.Private, []byte("phrase-123")); err != nil {
 		t.Fatalf("stored key does not open with its passphrase: %v", err)
 	}
-	blob, err := json.Marshal(a.store.Keys())
+	blob, err := json.Marshal(a.storeRef().Keys())
 	if err != nil {
 		t.Fatal(err)
 	}

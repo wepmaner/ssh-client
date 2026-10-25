@@ -77,7 +77,7 @@ type KeyDTO struct {
 
 func (a *App) keyDTO(k model.Key) KeyDTO {
 	ids := []string{}
-	for _, h := range a.store.HostsUsingKey(k.ID) {
+	for _, h := range a.storeRef().HostsUsingKey(k.ID) {
 		ids = append(ids, h.ID)
 	}
 	return KeyDTO{
@@ -93,14 +93,14 @@ func (a *App) KeysList() []KeyDTO {
 	if !a.storeUnlocked() {
 		return out
 	}
-	for _, k := range a.store.Keys() {
+	for _, k := range a.storeRef().Keys() {
 		out = append(out, a.keyDTO(k))
 	}
 	return out
 }
 
 func (a *App) findKey(id string) (model.Key, error) {
-	for _, k := range a.store.Keys() {
+	for _, k := range a.storeRef().Keys() {
 		if k.ID == id {
 			return k, nil
 		}
@@ -114,7 +114,7 @@ func (a *App) checkName(name, exceptID string) (string, error) {
 	if name == "" {
 		return "", errKeyNameEmpty
 	}
-	for _, k := range a.store.Keys() {
+	for _, k := range a.storeRef().Keys() {
 		if k.ID != exceptID && strings.EqualFold(k.Name, name) {
 			return "", errKeyNameTaken
 		}
@@ -128,7 +128,7 @@ func (a *App) saveKey(k model.Key, name string) (KeyDTO, error) {
 		return KeyDTO{}, err
 	}
 	k.Name = name
-	saved, err := a.store.SaveKey(k)
+	saved, err := a.storeRef().SaveKey(k)
 	if err != nil {
 		return KeyDTO{}, err
 	}
@@ -288,7 +288,7 @@ func (a *App) KeyRename(id, name string) error {
 	if k.Name, err = a.checkName(name, id); err != nil {
 		return err
 	}
-	_, err = a.store.SaveKey(k)
+	_, err = a.storeRef().SaveKey(k)
 	return err
 }
 
@@ -297,8 +297,8 @@ func (a *App) KeyDelete(id string) error {
 	if !a.storeUnlocked() {
 		return errVaultLocked
 	}
-	used := a.store.HostsUsingKey(id)
-	err := a.store.DeleteKey(id)
+	used := a.storeRef().HostsUsingKey(id)
+	err := a.storeRef().DeleteKey(id)
 	if errors.Is(err, store.ErrKeyInUse) {
 		names := make([]string, 0, len(used))
 		for _, h := range used {

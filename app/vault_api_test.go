@@ -1,12 +1,10 @@
 package app
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
 	"sshclient/internal/sshclient/sshtest"
-	"sshclient/internal/store"
 )
 
 func TestVaultPasswordLifecycle(t *testing.T) {
@@ -39,7 +37,7 @@ func TestVaultPasswordLifecycle(t *testing.T) {
 	if err := b.VaultUnlock("correct horse"); err != nil {
 		t.Fatal(err)
 	}
-	if b.store == nil || b.VaultState().Locked {
+	if b.storeRef() == nil || b.VaultState().Locked {
 		t.Fatal("not unlocked")
 	}
 	if err := b.SaveSettings(b.GetSettings()); err != nil {
@@ -49,7 +47,7 @@ func TestVaultPasswordLifecycle(t *testing.T) {
 	if err := b.VaultRemovePassword("wrong"); err == nil || err.Error() != "Неверный пароль" {
 		t.Fatalf("remove with wrong password: %v", err)
 	}
-	if !b.vault.HasPassword() {
+	if !b.vaultRef().HasPassword() {
 		t.Fatal("password removed despite wrong input")
 	}
 	if err := b.VaultRemovePassword("correct horse"); err != nil {
@@ -61,7 +59,7 @@ func TestVaultPasswordLifecycle(t *testing.T) {
 }
 
 func TestVaultStateCorrupt(t *testing.T) {
-	a := &App{vaultErr: fmt.Errorf("open: %w", store.ErrCorrupt)}
+	a := corruptApp()
 	st := a.VaultState()
 	if !st.Corrupt || st.Error == "" {
 		t.Fatalf("state: %+v", st)
@@ -102,7 +100,7 @@ func TestVaultLockIdle(t *testing.T) {
 	if st := s.VaultState(); !st.Locked || !st.HasPassword {
 		t.Fatalf("state %+v", st)
 	}
-	if len(s.KeysList()) != 0 || len(s.HostsList()) != 0 || len(s.ForwardsList()) != 0 || s.store.Keys() != nil {
+	if len(s.KeysList()) != 0 || len(s.HostsList()) != 0 || len(s.ForwardsList()) != 0 || s.storeRef().Keys() != nil {
 		t.Fatal("locked vault still serves data")
 	}
 	if _, err := s.SessionOpen(s.hostID, 80, 24); err == nil || err.Error() != "Хранилище заблокировано" {

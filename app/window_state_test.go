@@ -119,7 +119,7 @@ func TestSaveWindowGeometryLockedGoesToFile(t *testing.T) {
 func TestSaveWindowGeometryUnlockedGoesToVault(t *testing.T) {
 	a := newKeysApp(t)
 	a.saveWindowGeometry(&fakeWindow{x: 7, y: 8, w: 1001, h: 701})
-	if got := a.store.Settings().Window; got != (model.WindowState{X: 7, Y: 8, W: 1001, H: 701}) {
+	if got := a.storeRef().Settings().Window; got != (model.WindowState{X: 7, Y: 8, W: 1001, H: 701}) {
 		t.Fatalf("vault got %+v", got)
 	}
 	if _, ok := loadWindowState(); ok {

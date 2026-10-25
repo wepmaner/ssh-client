@@ -245,7 +245,7 @@ func (a *App) autostartForwards() {
 	if !a.storeUnlocked() {
 		return
 	}
-	for _, f := range a.store.Forwards() {
+	for _, f := range a.storeRef().Forwards() {
 		if f.AutoStart {
 			a.startForward(f)
 		}

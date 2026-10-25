@@ -52,7 +52,7 @@ func (a *App) SessionOpen(hostID string, cols, rows int) (string, error) {
 
 // hostTarget looks up a saved host and its key and returns where to dial.
 func (a *App) hostTarget(hostID string) (model.Host, sshclient.Target, error) {
-	all := a.store.Hosts()
+	all := a.storeRef().Hosts()
 	i := slices.IndexFunc(all, func(h model.Host) bool { return h.ID == hostID })
 	if i < 0 {
 		return model.Host{}, sshclient.Target{}, errHostNotFound

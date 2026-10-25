@@ -46,7 +46,7 @@ func (a *App) forwardDTO(f model.Forward, hostNames map[string]string) ForwardDT
 
 func (a *App) hostNames() map[string]string {
 	out := map[string]string{}
-	for _, h := range a.store.Hosts() {
+	for _, h := range a.storeRef().Hosts() {
 		out[h.ID] = h.Name
 	}
 	return out
@@ -59,7 +59,7 @@ func (a *App) ForwardsList() []ForwardDTO {
 		return out
 	}
 	names := a.hostNames()
-	for _, f := range a.store.Forwards() {
+	for _, f := range a.storeRef().Forwards() {
 		out = append(out, a.forwardDTO(f, names))
 	}
 	slices.SortStableFunc(out, byName(func(f ForwardDTO) string { return f.Name }))
@@ -67,7 +67,7 @@ func (a *App) ForwardsList() []ForwardDTO {
 }
 
 func (a *App) findForward(id string) (model.Forward, error) {
-	all := a.store.Forwards()
+	all := a.storeRef().Forwards()
 	i := slices.IndexFunc(all, func(f model.Forward) bool { return f.ID == id })
 	if i < 0 {
 		return model.Forward{}, errForwardNotFound
@@ -111,7 +111,7 @@ func (a *App) validateForward(in ForwardDTO) (model.Forward, error) {
 	if f.Kind != "L" && f.Kind != "R" && f.Kind != "D" {
 		return f, fieldError("kind", "Выберите тип проброса")
 	}
-	if f.HostID == "" || !slices.ContainsFunc(a.store.Hosts(), func(h model.Host) bool { return h.ID == f.HostID }) {
+	if f.HostID == "" || !slices.ContainsFunc(a.storeRef().Hosts(), func(h model.Host) bool { return h.ID == f.HostID }) {
 		return f, fieldError("host", "Выберите хост")
 	}
 	var err error
@@ -159,7 +159,7 @@ func (a *App) ForwardSave(in ForwardDTO) (ForwardDTO, error) {
 		old, err = a.findForward(f.ID)
 		existed = err == nil
 	}
-	saved, err := a.store.SaveForward(f)
+	saved, err := a.storeRef().SaveForward(f)
 	if err != nil {
 		return ForwardDTO{}, err
 	}
@@ -181,7 +181,7 @@ func (a *App) ForwardDelete(id string) error {
 	if _, err := a.findForward(id); err != nil {
 		return err
 	}
-	if err := a.store.DeleteForward(id); err != nil {
+	if err := a.storeRef().DeleteForward(id); err != nil {
 		return err
 	}
 	a.removeForward(id)
@@ -248,12 +248,12 @@ func (a *App) ForwardWrite(id, dataB64 string) error {
 // deleteForwardsOfHost stops and removes the forwards of a deleted host.
 func (a *App) deleteForwardsOfHost(hostID string) error {
 	var errs []error
-	for _, f := range a.store.Forwards() {
+	for _, f := range a.storeRef().Forwards() {
 		if f.HostID != hostID {
 			continue
 		}
 		a.stopForward(f.ID)
-		if err := a.store.DeleteForward(f.ID); err != nil {
+		if err := a.storeRef().DeleteForward(f.ID); err != nil {
 			errs = append(errs, err)
 			continue
 		}

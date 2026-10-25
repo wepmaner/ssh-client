@@ -176,7 +176,7 @@ func newSessionsApp(t *testing.T, opts sshtest.Opts, withKey bool) sessionsApp {
 			t.Fatal(err)
 		}
 		opts.AcceptKey = sshPub
-		k, err := a.store.SaveKey(model.Key{Name: "work", Type: "ed25519", Private: pem.EncodeToMemory(block), Format: "openssh"})
+		k, err := a.storeRef().SaveKey(model.Key{Name: "work", Type: "ed25519", Private: pem.EncodeToMemory(block), Format: "openssh"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -201,7 +201,7 @@ func newSessionsApp(t *testing.T, opts sshtest.Opts, withKey bool) sessionsApp {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := a.store.SaveHost(model.Host{Name: "srv", Address: host, Port: n, User: "alice", KeyID: keyID})
+	h, err := a.storeRef().SaveHost(model.Host{Name: "srv", Address: host, Port: n, User: "alice", KeyID: keyID})
 	if err != nil {
 		t.Fatal(err)
 	}

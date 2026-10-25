@@ -85,7 +85,7 @@ func hostIdentity(h model.Host) string {
 func (a *App) importHosts(in []model.Host, warns []string) (ImportResult, error) {
 	res := ImportResult{Warnings: append([]string{}, warns...)}
 	known := map[string]bool{}
-	for _, h := range a.store.Hosts() {
+	for _, h := range a.storeRef().Hosts() {
 		known[hostIdentity(h)] = true
 	}
 	var add []model.Host
@@ -110,7 +110,7 @@ func (a *App) importHosts(in []model.Host, warns []string) (ImportResult, error)
 		add = append(add, h)
 	}
 	if len(add) > 0 {
-		if _, err := a.store.AddHosts(add); errors.Is(err, store.ErrLocked) {
+		if _, err := a.storeRef().AddHosts(add); errors.Is(err, store.ErrLocked) {
 			return ImportResult{}, errVaultLocked // the idle lock came during the import
 		} else if err != nil {
 			return ImportResult{}, err

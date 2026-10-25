@@ -79,15 +79,15 @@ func (a *App) HostsList() []HostDTO {
 		return out
 	}
 	keyNames := map[string]string{}
-	for _, k := range a.store.Keys() {
+	for _, k := range a.storeRef().Keys() {
 		keyNames[k.ID] = k.Name
 	}
 	groupNames := map[string]string{}
-	for _, g := range a.store.Groups() {
+	for _, g := range a.storeRef().Groups() {
 		groupNames[g.ID] = g.Name
 	}
 	connected := a.connectedHosts()
-	for _, h := range a.store.Hosts() {
+	for _, h := range a.storeRef().Hosts() {
 		out = append(out, HostDTO{
 			ID: h.ID, Name: h.Name, Address: h.Address, Port: h.Port, User: h.User,
 			GroupID: h.GroupID, GroupName: groupNames[h.GroupID], KeyID: h.KeyID, KeyName: keyNames[h.KeyID],
@@ -145,10 +145,10 @@ func (a *App) validateHost(in HostDTO) (model.Host, error) {
 	if _, err := a.findKey(h.KeyID); h.KeyID != "" && err != nil {
 		return h, fieldError("key", errKeyNotFound.Error())
 	}
-	if h.GroupID != "" && !slices.ContainsFunc(a.store.Groups(), func(g model.Group) bool { return g.ID == h.GroupID }) {
+	if h.GroupID != "" && !slices.ContainsFunc(a.storeRef().Groups(), func(g model.Group) bool { return g.ID == h.GroupID }) {
 		return h, errGroupNotFound
 	}
-	if h.ID != "" && !slices.ContainsFunc(a.store.Hosts(), func(x model.Host) bool { return x.ID == h.ID }) {
+	if h.ID != "" && !slices.ContainsFunc(a.storeRef().Hosts(), func(x model.Host) bool { return x.ID == h.ID }) {
 		return h, errHostNotFound
 	}
 	return h, nil
@@ -164,7 +164,7 @@ func (a *App) HostSave(in HostDTO) (HostDTO, error) {
 	if err != nil {
 		return HostDTO{}, err
 	}
-	saved, err := a.store.SaveHost(h)
+	saved, err := a.storeRef().SaveHost(h)
 	if err != nil {
 		return HostDTO{}, err
 	}
@@ -177,7 +177,7 @@ func (a *App) HostDelete(id string) error {
 	if !a.storeUnlocked() {
 		return errVaultLocked
 	}
-	if err := a.store.DeleteHost(id); err != nil {
+	if err := a.storeRef().DeleteHost(id); err != nil {
 		return err
 	}
 	a.closeSessionsOfHost(id)
@@ -191,7 +191,7 @@ func (a *App) GroupsList() []GroupDTO {
 		return out
 	}
 	hosts := a.HostsList()
-	for _, g := range a.store.Groups() {
+	for _, g := range a.storeRef().Groups() {
 		d := GroupDTO{ID: g.ID, Name: g.Name}
 		for _, h := range hosts {
 			if h.GroupID == g.ID {
@@ -213,7 +213,7 @@ func (a *App) checkGroupName(name, exceptID string) (string, error) {
 	if name == "" {
 		return "", fieldError("name", "Укажите название группы")
 	}
-	for _, g := range a.store.Groups() {
+	for _, g := range a.storeRef().Groups() {
 		if g.ID != exceptID && strings.EqualFold(g.Name, name) {
 			return "", fieldError("name", "Группа с таким названием уже есть")
 		}
@@ -230,7 +230,7 @@ func (a *App) GroupSave(name string) (GroupDTO, error) {
 	if err != nil {
 		return GroupDTO{}, err
 	}
-	g, err := a.store.SaveGroup(model.Group{Name: name})
+	g, err := a.storeRef().SaveGroup(model.Group{Name: name})
 	if err != nil {
 		return GroupDTO{}, err
 	}
@@ -242,14 +242,14 @@ func (a *App) GroupRename(id, name string) error {
 	if !a.storeUnlocked() {
 		return errVaultLocked
 	}
-	if !slices.ContainsFunc(a.store.Groups(), func(g model.Group) bool { return g.ID == id }) {
+	if !slices.ContainsFunc(a.storeRef().Groups(), func(g model.Group) bool { return g.ID == id }) {
 		return errGroupNotFound
 	}
 	name, err := a.checkGroupName(name, id)
 	if err != nil {
 		return err
 	}
-	_, err = a.store.SaveGroup(model.Group{ID: id, Name: name})
+	_, err = a.storeRef().SaveGroup(model.Group{ID: id, Name: name})
 	return err
 }
 
@@ -258,5 +258,5 @@ func (a *App) GroupDelete(id string) error {
 	if !a.storeUnlocked() {
 		return errVaultLocked
 	}
-	return a.store.DeleteGroup(id)
+	return a.storeRef().DeleteGroup(id)
 }

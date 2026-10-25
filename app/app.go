@@ -27,9 +27,10 @@ type App struct {
 	wapp    *application.App                 // nil before ServiceStartup and in tests
 	mainWin *application.WebviewWindow
 
-	vault    *store.Vault
-	store    *store.Store
-	vaultErr error
+	// refs holds the vault, its store and the open error as one value: VaultResetCorrupt and
+	// VaultUnlock replace it while other bound calls read it. refsMu serialises the writers.
+	refs   atomic.Pointer[vaultRefs]
+	refsMu sync.Mutex
 
 	emit emitter // term:*, fwd:* events; Wails in ServiceStartup, a recorder in tests
 
@@ -61,10 +62,38 @@ func New(window application.WebviewWindowOptions, version string) *App {
 
 const vaultFile = "vault.json"
 
+// vaultRefs is one generation of the vault: either an open vault with its store, or the error
+// it failed to open with. It is never changed after it is published.
+type vaultRefs struct {
+	vault *store.Vault
+	store *store.Store
+	err   error
+}
+
+// current returns the published vault generation; the zero value before openVault.
+func (a *App) current() vaultRefs {
+	if r := a.refs.Load(); r != nil {
+		return *r
+	}
+	return vaultRefs{}
+}
+
+// vaultRef and storeRef return the vault and the store of the current generation; nil when
+// the vault did not open. A caller that needs both reads current once.
+func (a *App) vaultRef() *store.Vault { return a.current().vault }
+func (a *App) storeRef() *store.Store { return a.current().store }
+
+// setVault publishes a new generation.
+func (a *App) setVault(v *store.Vault, s *store.Store, err error) {
+	a.refs.Store(&vaultRefs{vault: v, store: s, err: err})
+}
+
 // VaultResetCorrupt moves a damaged vault aside as vault.json.corrupt and
 // starts a fresh one. It refuses unless the vault failed to open as corrupt.
 func (a *App) VaultResetCorrupt() error {
-	if !errors.Is(a.vaultErr, store.ErrCorrupt) {
+	a.refsMu.Lock()
+	defer a.refsMu.Unlock()
+	if !errors.Is(a.current().err, store.ErrCorrupt) {
 		return errors.New("vault is not corrupt")
 	}
 	dir, err := appdir.Dir()
@@ -75,27 +104,29 @@ func (a *App) VaultResetCorrupt() error {
 	if err != nil {
 		return err
 	}
-	a.vault, a.store, a.vaultErr = v, store.NewStore(v), nil
+	a.setVault(v, store.NewStore(v), nil)
 	return nil
 }
 
 // openVault opens the vault file in the app directory. A damaged file is kept
 // untouched and its error is stored for the UI.
 func (a *App) openVault() {
+	a.refsMu.Lock()
+	defer a.refsMu.Unlock()
 	dir, err := appdir.Dir()
 	if err != nil {
-		a.vaultErr = err
+		a.setVault(nil, nil, err)
 		return
 	}
 	v, err := store.OpenVault(filepath.Join(dir, vaultFile))
 	if err != nil {
-		a.vaultErr = err
+		a.setVault(nil, nil, err)
 		if !errors.Is(err, store.ErrCorrupt) {
 			log.Printf("open vault: %v", err)
 		}
 		return
 	}
-	a.vault, a.store = v, store.NewStore(v)
+	a.setVault(v, store.NewStore(v), nil)
 }
 
 // initVault opens the vault and, when it needs no password, starts the autostart forwards.
@@ -117,7 +148,8 @@ func (a *App) autostartOnce() {
 
 // storeUnlocked reports whether window state can live in the vault.
 func (a *App) storeUnlocked() bool {
-	return a.store != nil && !a.vault.Locked()
+	r := a.current()
+	return r.store != nil && !r.vault.Locked()
 }
 
 // ServiceStartup opens the vault, then creates the main window at the saved
@@ -152,7 +184,7 @@ func (a *App) startupWindowState() (model.WindowState, bool) {
 	if !a.storeUnlocked() {
 		return loadWindowState()
 	}
-	ws := a.store.Settings().Window
+	ws := a.storeRef().Settings().Window
 	// The untouched default of a brand-new vault carries no position.
 	// A fresh vault has no geometry yet; use an existing window.json once.
 	if ws == model.DefaultSettings().Window {
@@ -164,7 +196,7 @@ func (a *App) startupWindowState() (model.WindowState, bool) {
 // previousWindowState returns the last stored geometry from the active backend.
 func (a *App) previousWindowState() (model.WindowState, bool) {
 	if a.storeUnlocked() {
-		ws := a.store.Settings().Window
+		ws := a.storeRef().Settings().Window
 		return ws, ws.W > 0
 	}
 	return loadWindowState()
@@ -175,9 +207,9 @@ func (a *App) previousWindowState() (model.WindowState, bool) {
 func (a *App) saveWindowGeometry(w geometryWindow) {
 	ws := captureWindowState(w, a.previousWindowState)
 	if a.storeUnlocked() {
-		set := a.store.Settings()
+		set := a.storeRef().Settings()
 		set.Window = ws
-		if err := a.store.SaveSettings(set); err != nil {
+		if err := a.storeRef().SaveSettings(set); err != nil {
 			log.Printf("save window state: %v", err)
 		}
 		return

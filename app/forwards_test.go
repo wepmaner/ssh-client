@@ -474,7 +474,7 @@ func TestHostDeleteStopsForwards(t *testing.T) {
 	if l := s.ForwardsList(); len(l) != 0 {
 		t.Fatalf("forwards of the deleted host still listed: %+v", l)
 	}
-	if len(s.store.Forwards()) != 0 {
+	if len(s.storeRef().Forwards()) != 0 {
 		t.Fatal("forwards of the deleted host still stored")
 	}
 }
@@ -498,14 +498,14 @@ func newEncryptedForwardsApp(t *testing.T) sessionsApp {
 		t.Fatal(err)
 	}
 	s := newForwardsApp(t, sshtest.Opts{AcceptKey: sshPub}, false)
-	k, err := s.store.SaveKey(model.Key{Name: "work", Type: "ed25519", Private: pem.EncodeToMemory(block),
+	k, err := s.storeRef().SaveKey(model.Key{Name: "work", Type: "ed25519", Private: pem.EncodeToMemory(block),
 		Format: "openssh", Encrypted: true, Fingerprint: ssh.FingerprintSHA256(sshPub)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := s.store.Hosts()[0]
+	h := s.storeRef().Hosts()[0]
 	h.KeyID = k.ID
-	if _, err := s.store.SaveHost(h); err != nil {
+	if _, err := s.storeRef().SaveHost(h); err != nil {
 		t.Fatal(err)
 	}
 	return s
@@ -635,10 +635,10 @@ func TestForwardHostChangeClearsPassphrase(t *testing.T) {
 	s.startWithPassphrase(t, f)
 	run, buf := s.runSecret(t, f.ID)
 
-	other := s.store.Hosts()[0]
+	other := s.storeRef().Hosts()[0]
 	other.ID = ""
 	other.Name = "srv2"
-	h2, err := s.store.SaveHost(other)
+	h2, err := s.storeRef().SaveHost(other)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -687,7 +687,7 @@ func TestForwardSecretNeverInStore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, err := json.Marshal(s.vault.Data())
+	data, err := json.Marshal(s.vaultRef().Data())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -38,33 +38,32 @@ type VaultCountsDTO struct {
 
 // VaultState reports the vault state for the startup screen choice.
 func (a *App) VaultState() VaultStateDTO {
-	if a.vault == nil {
+	r := a.current()
+	if r.vault == nil {
 		st := VaultStateDTO{Locked: true, Error: "Не удалось открыть хранилище"}
-		if errors.Is(a.vaultErr, store.ErrCorrupt) {
+		if errors.Is(r.err, store.ErrCorrupt) {
 			st.Corrupt = true
 			st.Error = "Файл хранилища повреждён или создан другим пользователем Windows"
 		}
 		return st
 	}
-	return VaultStateDTO{Locked: a.vault.Locked(), HasPassword: a.vault.HasPassword()}
+	return VaultStateDTO{Locked: r.vault.Locked(), HasPassword: r.vault.HasPassword()}
 }
 
 // VaultUnlock unlocks a password vault, makes the typed store available and starts the
 // autostart forwards.
 func (a *App) VaultUnlock(password string) error {
-	if a.vault == nil {
+	v := a.vaultRef()
+	if v == nil {
 		return errVaultMissing
 	}
 	pw := []byte(password)
 	defer clear(pw)
-	if err := a.vault.Unlock(pw); err != nil {
+	if err := v.Unlock(pw); err != nil {
 		if errors.Is(err, store.ErrWrongPassword) {
 			return errWrongPassword
 		}
 		return err
-	}
-	if a.store == nil {
-		a.store = store.NewStore(a.vault)
 	}
 	a.autostartOnce()
 	return nil
@@ -74,16 +73,14 @@ func (a *App) VaultUnlock(password string) error {
 // wiped from memory until VaultUnlock. Open sessions and running forwards keep their own clients;
 // a forward that has to redial meanwhile fails that attempt and retries.
 func (a *App) VaultLock() error {
-	if a.vault == nil {
+	r := a.current()
+	if r.vault == nil {
 		return errVaultMissing
 	}
-	if !a.vault.HasPassword() {
+	if !r.vault.HasPassword() {
 		return errNoPassword
 	}
-	if a.store == nil {
-		return a.vault.Lock()
-	}
-	return a.store.Lock()
+	return r.store.Lock() // the store lock keeps reads and saves off the data being wiped
 }
 
 // VaultSetPassword protects the vault with a password.
@@ -96,7 +93,7 @@ func (a *App) VaultSetPassword(password string) error {
 	}
 	pw := []byte(password)
 	defer clear(pw)
-	return a.vault.SetPassword(pw)
+	return a.vaultRef().SetPassword(pw)
 }
 
 // VaultRemovePassword verifies the password against the file and returns the
@@ -108,14 +105,14 @@ func (a *App) VaultRemovePassword(password string) error {
 	if err := a.verifyPassword(password); err != nil {
 		return err
 	}
-	return a.vault.RemovePassword()
+	return a.vaultRef().RemovePassword()
 }
 
 // verifyPassword checks the password against the vault file with a separate
 // probe, so a wrong value never touches the live vault. A vault without a
 // password accepts any input.
 func (a *App) verifyPassword(password string) error {
-	if !a.vault.HasPassword() {
+	if !a.vaultRef().HasPassword() {
 		return nil
 	}
 	dir, err := appdir.Dir()
@@ -142,5 +139,6 @@ func (a *App) VaultCounts() VaultCountsDTO {
 	if !a.storeUnlocked() {
 		return VaultCountsDTO{}
 	}
-	return VaultCountsDTO{Keys: len(a.store.Keys()), Hosts: len(a.store.Hosts())}
+	s := a.storeRef()
+	return VaultCountsDTO{Keys: len(s.Keys()), Hosts: len(s.Hosts())}
 }
