@@ -31,8 +31,9 @@ func main() {
 	a := app.New(mainWindow(), version)
 
 	wapp := application.New(application.Options{
-		Name:     "sshclient",
-		Services: []application.Service{application.NewService(a)},
+		Name:           "sshclient",
+		Services:       []application.Service{application.NewService(a)},
+		SingleInstance: singleInstance(app.SecondLaunchHandler(a)),
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
 		},
@@ -45,6 +46,19 @@ func main() {
 	})
 	if err := wapp.Run(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// singleInstanceID names the per-user Windows mutex of the running copy. It never changes:
+// builds with different IDs would run side by side and save over each other's vault.
+const singleInstanceID = "ssh-client-wepmaner"
+
+// singleInstance keeps one running copy: application.New of a second start notifies the
+// first one (onLaunch raises its window there) and exits with code 0.
+func singleInstance(onLaunch func(application.SecondInstanceData)) *application.SingleInstanceOptions {
+	return &application.SingleInstanceOptions{
+		UniqueID:               singleInstanceID,
+		OnSecondInstanceLaunch: onLaunch,
 	}
 }
 
