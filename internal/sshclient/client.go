@@ -1,12 +1,14 @@
 package sshclient
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +27,15 @@ type Target struct {
 	User    string
 	Key     *model.Key // nil — без ключа, только keyboard-interactive и пароль
 	Trust   TrustAsker // кто подтверждает неизвестный ключ сервера; nil — вопрос в консоли через Prompter
+
+	// Passphrase — уже известная фраза зашифрованного ключа (необязательно). Dial пробует её
+	// первой, без вопроса; неверная или пустая фраза ведёт к обычным вопросам в консоли.
+	// Dial затирает этот буфер перед возвратом при любом исходе.
+	Passphrase []byte
+	// OnPassphrase (необязательно) вызывается не больше одного раза с фразой ключа, если
+	// аутентификация прошла и сервер принял этот ключ. Получатель обязан скопировать фразу:
+	// после вызова Dial затирает свой буфер.
+	OnPassphrase func(p []byte)
 }
 
 const (
@@ -60,8 +71,10 @@ func (e *userError) Unwrap() error { return e.cause }
 // отказ доверять — ErrHostNotTrusted, Ctrl+C на любом вопросе прерывает подключение (ErrCancelled),
 // молчание сервера дольше 10 секунд даёт ErrTimeout.
 func Dial(ctx context.Context, t Target, p *Prompter, kh *KnownHosts) (*ssh.Client, error) {
+	defer clear(t.Passphrase)
 	addr := net.JoinHostPort(t.Address, strconv.Itoa(t.Port))
 	d := &dialState{p: p}
+	defer d.forgetPassphrase()
 	auth, err := d.authMethods(t)
 	if err != nil {
 		return nil, err
@@ -111,6 +124,9 @@ func Dial(ctx context.Context, t Target, p *Prompter, kh *KnownHosts) (*ssh.Clie
 		_ = c.Close() //nolint:gosec // G104: best-effort cleanup after the primary error
 		return nil, fmt.Errorf("подключение к %s: %w", addr, err)
 	}
+	if phrase := d.acceptedPassphrase(); phrase != nil && t.OnPassphrase != nil {
+		t.OnPassphrase(phrase)
+	}
 	return ssh.NewClient(c, chans, reqs), nil
 }
 
@@ -133,6 +149,35 @@ type dialState struct {
 	deadline   time.Time // текущий срок ожидания сервера; ноль — идёт вопрос пользователю
 	cancelled  bool      // пользователь отменил ввод: остальные методы не пробовать
 	hostKeyErr error     // отказ проверки ключа сервера, вернуть как есть
+	phrase     []byte    // фраза, которой открылся ключ; своя копия, затирается в forgetPassphrase
+	keyFailed  bool      // сервер не принял ключ: publickey среди неудачных методов
+}
+
+// acceptedPassphrase возвращает фразу ключа, если ключ открылся ею и сервер его не отверг.
+// Вызывается после успешной аутентификации: тогда ключ принят или дал частичный успех.
+func (d *dialState) acceptedPassphrase() []byte {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.keyFailed {
+		return nil
+	}
+	return d.phrase
+}
+
+// keepPassphrase запоминает фразу, которой открылся ключ; pb переходит во владение d.
+func (d *dialState) keepPassphrase(pb []byte) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	clear(d.phrase)
+	d.phrase = pb
+}
+
+// forgetPassphrase затирает копию фразы ключа.
+func (d *dialState) forgetPassphrase() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	clear(d.phrase)
+	d.phrase = nil
 }
 
 // armDeadline заново отсчитывает handshakeTimeout ожидания сервера.
@@ -171,8 +216,15 @@ func (d *dialState) isCancelled() bool {
 	return d.cancelled
 }
 
-func (d *dialState) abortIfCancelled(*ssh.ClientAuthContext) (ssh.AuthMethod, error) {
-	if d.isCancelled() {
+// abortIfCancelled вызывается перед каждой попыткой после первой: прерывает аутентификацию после
+// отмены и запоминает, что сервер отверг ключ (метод publickey среди неудачных).
+func (d *dialState) abortIfCancelled(ctx *ssh.ClientAuthContext) (ssh.AuthMethod, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if slices.Contains(ctx.TriedMethods, "publickey") {
+		d.keyFailed = true
+	}
+	if d.cancelled {
 		return nil, ErrCancelled
 	}
 	return nil, nil
@@ -226,7 +278,7 @@ func (d *dialState) authMethods(t Target) ([]ssh.AuthMethod, error) {
 		case err == nil:
 			methods = append(methods, ssh.PublicKeys(signer))
 		case errors.Is(err, keys.ErrPassphraseRequired):
-			methods = append(methods, ssh.PublicKeysCallback(d.passphraseSigners(t.Key)))
+			methods = append(methods, ssh.PublicKeysCallback(d.passphraseSigners(t.Key, t.Passphrase)))
 		default:
 			return nil, fmt.Errorf("ключ %s: %w", t.Key.Name, err)
 		}
@@ -237,9 +289,25 @@ func (d *dialState) authMethods(t Target) ([]ssh.AuthMethod, error) {
 	), nil
 }
 
-// passphraseSigners спрашивает парольную фразу ключа до трёх раз; фраза нигде не сохраняется.
-func (d *dialState) passphraseSigners(k *model.Key) func() ([]ssh.Signer, error) {
+// passphraseSigners открывает ключ фразой cached без вопроса, а если она пуста или неверна,
+// спрашивает фразу до трёх раз. cached затирается после первой попытки; фраза, которой ключ
+// открылся, хранится только в d до конца Dial.
+func (d *dialState) passphraseSigners(k *model.Key, cached []byte) func() ([]ssh.Signer, error) {
 	return func() ([]ssh.Signer, error) {
+		if len(cached) > 0 {
+			signer, err := keys.Signer(*k, cached)
+			if err == nil {
+				d.keepPassphrase(bytes.Clone(cached))
+			}
+			clear(cached)
+			if err == nil {
+				return []ssh.Signer{signer}, nil
+			}
+			// Устаревшая фраза стоит одной тихой попытки, дальше обычные вопросы.
+			if !errors.Is(err, keys.ErrWrongPassphrase) {
+				return nil, fmt.Errorf("ключ %s: %w", k.Name, err)
+			}
+		}
 		for range passphraseRetries {
 			var pass string
 			err := d.prompting(func() (err error) {
@@ -252,10 +320,11 @@ func (d *dialState) passphraseSigners(k *model.Key) func() ([]ssh.Signer, error)
 			// Копию фразы затираем сразу; строку pass Go затереть не даёт, её заберёт сборщик мусора.
 			pb := []byte(pass)
 			signer, err := keys.Signer(*k, pb)
-			clear(pb)
 			if err == nil {
+				d.keepPassphrase(pb) // затрёт forgetPassphrase в конце Dial
 				return []ssh.Signer{signer}, nil
 			}
+			clear(pb)
 			// Пустой ответ считается неверной фразой, как и у OpenSSH.
 			if !errors.Is(err, keys.ErrWrongPassphrase) && !errors.Is(err, keys.ErrPassphraseRequired) {
 				return nil, fmt.Errorf("ключ %s: %w", k.Name, err)

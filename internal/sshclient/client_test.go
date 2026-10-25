@@ -408,3 +408,137 @@ func TestDialHostNotTrusted(t *testing.T) {
 		t.Fatalf("known_hosts = %q, %v", data, err)
 	}
 }
+
+// passphraseRecorder собирает копии фраз, переданных в OnPassphrase, и сами буферы Dial,
+// чтобы проверить, что Dial их затёр.
+type passphraseRecorder struct {
+	copies  [][]byte
+	buffers [][]byte
+}
+
+func (r *passphraseRecorder) on(p []byte) {
+	r.copies = append(r.copies, append([]byte(nil), p...))
+	r.buffers = append(r.buffers, p)
+}
+
+func allZero(b []byte) bool {
+	for _, c := range b {
+		if c != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func dialWithPassphrase(t *testing.T, opts sshtest.Opts, key *model.Key, cached []byte, in string) (*bytes.Buffer, *passphraseRecorder, error) {
+	t.Helper()
+	addr, hostKey := sshtest.Start(t, opts)
+	rec := &passphraseRecorder{}
+	tg := targetFor(t, addr, key)
+	tg.Passphrase = cached
+	tg.OnPassphrase = rec.on
+	out := &bytes.Buffer{}
+	c, err := Dial(context.Background(), tg, NewPrompter(out, strings.NewReader(in)), trustedKnownHosts(t, addr, hostKey))
+	if c != nil {
+		ignoreErr(c.Close())
+	}
+	return out, rec, err
+}
+
+func TestDialUsesGivenPassphraseWithoutPrompt(t *testing.T) {
+	key, pub := testClientKey(t, "work", "right")
+	cached := []byte("right")
+	out, rec, err := dialWithPassphrase(t, sshtest.Opts{AcceptKey: pub}, key, cached, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("asked although the passphrase was given: %q", out.String())
+	}
+	if len(rec.copies) != 1 || string(rec.copies[0]) != "right" {
+		t.Fatalf("OnPassphrase got %q", rec.copies)
+	}
+	if !allZero(cached) || !allZero(rec.buffers[0]) {
+		t.Fatalf("buffers not zeroed: cached %q, callback %q", cached, rec.buffers[0])
+	}
+}
+
+func TestDialFallsBackToPromptOnWrongCachedPassphrase(t *testing.T) {
+	key, pub := testClientKey(t, "work", "right")
+	cached := []byte("stale")
+	out, rec, err := dialWithPassphrase(t, sshtest.Opts{AcceptKey: pub}, key, cached, "right\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(out.String(), "Парольная фраза ключа work: "); n != 1 {
+		t.Fatalf("prompt printed %d times: %q", n, out.String())
+	}
+	if len(rec.copies) != 1 || string(rec.copies[0]) != "right" {
+		t.Fatalf("OnPassphrase got %q", rec.copies)
+	}
+	if !allZero(cached) || !allZero(rec.buffers[0]) {
+		t.Fatalf("buffers not zeroed: cached %q, callback %q", cached, rec.buffers[0])
+	}
+}
+
+func TestDialZeroesPassphraseBuffers(t *testing.T) {
+	t.Run("failed dial", func(t *testing.T) {
+		key, pub := testClientKey(t, "work", "right")
+		cached := []byte("stale")
+		_, rec, err := dialWithPassphrase(t, sshtest.Opts{AcceptKey: pub}, key, cached, "")
+		if err == nil {
+			t.Fatal("connected without the right passphrase")
+		}
+		if !allZero(cached) {
+			t.Fatalf("cached passphrase not zeroed: %q", cached)
+		}
+		if len(rec.copies) != 0 {
+			t.Fatalf("OnPassphrase called on failure: %q", rec.copies)
+		}
+	})
+	t.Run("unencrypted key", func(t *testing.T) {
+		key, pub := testClientKey(t, "work", "")
+		cached := []byte("unused")
+		_, rec, err := dialWithPassphrase(t, sshtest.Opts{AcceptKey: pub}, key, cached, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !allZero(cached) || len(rec.copies) != 0 {
+			t.Fatalf("cached %q, OnPassphrase %q", cached, rec.copies)
+		}
+	})
+	t.Run("unreachable server", func(t *testing.T) {
+		key, _ := testClientKey(t, "work", "right")
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		addr := ln.Addr().String()
+		ignoreErr(ln.Close())
+		cached := []byte("right")
+		tg := targetFor(t, addr, key)
+		tg.Passphrase = cached
+		if _, err := Dial(context.Background(), tg, NewPrompter(io.Discard, strings.NewReader("")), trustedKnownHosts(t, addr, testKey(t))); err == nil {
+			t.Fatal("dial to a closed port succeeded")
+		}
+		if !allZero(cached) {
+			t.Fatalf("cached passphrase not zeroed: %q", cached)
+		}
+	})
+}
+
+func TestDialOnPassphraseOnlyWhenServerAcceptsKey(t *testing.T) {
+	// Фраза верная, но сервер не принимает этот ключ и пускает по паролю: фраза не возвращается.
+	key, _ := testClientKey(t, "work", "right")
+	cached := []byte("right")
+	_, rec, err := dialWithPassphrase(t, sshtest.Opts{Password: "s3cret"}, key, cached, "s3cret\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.copies) != 0 {
+		t.Fatalf("OnPassphrase called although the server rejected the key: %q", rec.copies)
+	}
+	if !allZero(cached) {
+		t.Fatalf("cached passphrase not zeroed: %q", cached)
+	}
+}
