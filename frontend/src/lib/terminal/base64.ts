@@ -8,9 +8,8 @@ export function decodeBase64(b64: string): Uint8Array {
   return out
 }
 
-/** Encodes terminal input (a JS string from xterm onData) as base64 of its UTF-8 bytes. */
-export function encodeUtf8Base64(text: string): string {
-  const bytes = new TextEncoder().encode(text)
+/** Encodes raw bytes as base64. */
+export function encodeBase64(bytes: Uint8Array): string {
   let bin = ''
   for (let i = 0; i < bytes.length; i += 0x8000) {
     bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))

@@ -10,7 +10,7 @@
   const active = $derived(tabs ? activeSession() : undefined)
 
   function onkeydown(e: KeyboardEvent): void {
-    if (!tabs) return
+    if (!tabs || document.querySelector('[role="dialog"]')) return
     const action = tabAction(e)
     if (!action) return
     e.preventDefault()

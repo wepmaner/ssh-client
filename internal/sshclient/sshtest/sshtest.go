@@ -37,17 +37,48 @@ type server struct {
 	closed bool
 }
 
-// channelHandler обслуживает один входящий канал.
-type channelHandler func(s *server, nc ssh.NewChannel)
+// ChannelHandler обслуживает один входящий канал. Обработчик должен вернуться, когда канал закрыт.
+type ChannelHandler func(nc ssh.NewChannel)
 
-// channelHandlers — точка расширения по типам каналов: пробросы (direct-tcpip и т. п.) добавляются сюда.
-var channelHandlers = map[string]channelHandler{
-	"session": (*server).handleSession,
+// GlobalRequestHandler отвечает на глобальный запрос соединения conn.
+type GlobalRequestHandler func(conn *ssh.ServerConn, req *ssh.Request)
+
+// Точки расширения: пробросы (direct-tcpip, tcpip-forward и т. п.) регистрируются через
+// RegisterChannelHandler и RegisterGlobalRequestHandler. Неизвестные каналы и запросы отклоняются.
+var (
+	handlersMu            sync.RWMutex
+	channelHandlers       = map[string]func(s *server, nc ssh.NewChannel){"session": (*server).handleSession}
+	globalRequestHandlers = map[string]GlobalRequestHandler{}
+)
+
+// RegisterChannelHandler добавляет обработчик каналов типа name для всех тестовых серверов.
+// Обычно вызывается из init тестового пакета.
+func RegisterChannelHandler(name string, h ChannelHandler) {
+	handlersMu.Lock()
+	defer handlersMu.Unlock()
+	channelHandlers[name] = func(_ *server, nc ssh.NewChannel) { h(nc) }
 }
 
-// globalRequestHandlers — точка расширения для глобальных запросов (tcpip-forward и т. п.).
-// Неизвестные запросы отклоняются.
-var globalRequestHandlers = map[string]func(s *server, conn *ssh.ServerConn, req *ssh.Request){}
+// RegisterGlobalRequestHandler добавляет обработчик глобальных запросов типа name.
+func RegisterGlobalRequestHandler(name string, h GlobalRequestHandler) {
+	handlersMu.Lock()
+	defer handlersMu.Unlock()
+	globalRequestHandlers[name] = h
+}
+
+func channelHandler(name string) (func(s *server, nc ssh.NewChannel), bool) {
+	handlersMu.RLock()
+	defer handlersMu.RUnlock()
+	h, ok := channelHandlers[name]
+	return h, ok
+}
+
+func globalRequestHandler(name string) (GlobalRequestHandler, bool) {
+	handlersMu.RLock()
+	defer handlersMu.RUnlock()
+	h, ok := globalRequestHandlers[name]
+	return h, ok
+}
 
 // Start запускает сервер на 127.0.0.1:0 и останавливает его в t.Cleanup.
 func Start(t testing.TB, opts Opts) (addr string, hostKey ssh.PublicKey) {
@@ -152,8 +183,8 @@ func (s *server) serveConn(c net.Conn, cfg *ssh.ServerConfig) {
 	go func() {
 		defer s.wg.Done()
 		for req := range reqs {
-			if h, ok := globalRequestHandlers[req.Type]; ok {
-				h(s, conn, req)
+			if h, ok := globalRequestHandler(req.Type); ok {
+				h(conn, req)
 				continue
 			}
 			if req.WantReply {
@@ -162,7 +193,7 @@ func (s *server) serveConn(c net.Conn, cfg *ssh.ServerConfig) {
 		}
 	}()
 	for nc := range chans {
-		h, ok := channelHandlers[nc.ChannelType()]
+		h, ok := channelHandler(nc.ChannelType())
 		if !ok {
 			ignoreErr(nc.Reject(ssh.UnknownChannelType, "неизвестный тип канала"))
 			continue

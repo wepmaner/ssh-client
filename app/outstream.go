@@ -9,9 +9,17 @@ import (
 // flushInterval is the longest time terminal output waits before it is sent to the frontend.
 const flushInterval = 8 * time.Millisecond
 
+// maxHeldBytes caps the output kept for a view that has not attached yet; the oldest is dropped.
+var maxHeldBytes = 4 << 20
+
+// droppedMarker opens the stream of a view whose oldest held output was dropped.
+const droppedMarker = "[… начало вывода пропущено …]\r\n"
+
+// heldEvent is an event waiting for the view: terminal bytes (data != nil) or a state payload.
 type heldEvent struct {
 	name    string
 	payload any
+	data    []byte
 }
 
 // outStream batches a session's terminal output into term:data events (base64) at most every
@@ -25,12 +33,14 @@ type outStream struct {
 
 	emitMu sync.Mutex // serialises emissions so data and state events keep their order
 
-	mu       sync.Mutex
-	buf      []byte
-	timer    *time.Timer
-	attached bool
-	held     []heldEvent
-	closed   bool
+	mu        sync.Mutex
+	buf       []byte
+	timer     *time.Timer
+	attached  bool
+	held      []heldEvent
+	heldBytes int // terminal bytes in held
+	dropped   bool
+	closed    bool
 }
 
 func newOutStream(e emitter, id string) *outStream {
@@ -45,10 +55,34 @@ func (o *outStream) Write(b []byte) (int, error) {
 		return len(b), nil
 	}
 	o.buf = append(o.buf, b...)
-	if o.attached && o.timer == nil {
-		o.timer = time.AfterFunc(flushInterval, o.flush)
+	if o.attached {
+		if o.timer == nil {
+			o.timer = time.AfterFunc(flushInterval, o.flush)
+		}
+	} else {
+		o.trimLocked()
 	}
 	return len(b), nil
+}
+
+// trimLocked drops the oldest held output beyond maxHeldBytes; the caller holds mu.
+func (o *outStream) trimLocked() {
+	over := o.heldBytes + len(o.buf) - maxHeldBytes
+	for i := 0; over > 0 && i < len(o.held); i++ {
+		d := o.held[i].data
+		if d == nil {
+			continue
+		}
+		n := min(over, len(d))
+		o.held[i].data = d[n:]
+		o.heldBytes -= n
+		over -= n
+		o.dropped = true
+	}
+	if over > 0 {
+		o.buf = o.buf[over:]
+		o.dropped = true
+	}
 }
 
 func (o *outStream) flush() {
@@ -68,12 +102,17 @@ func (o *outStream) flushLocked() {
 	}
 	attached := o.attached
 	if len(b) > 0 && !attached {
-		o.held = append(o.held, heldEvent{o.dataEvent, base64.StdEncoding.EncodeToString(b)})
+		o.held = append(o.held, heldEvent{name: o.dataEvent, data: b})
+		o.heldBytes += len(b)
 	}
 	o.mu.Unlock()
 	if len(b) > 0 && attached {
-		o.emit.Emit(o.dataEvent, base64.StdEncoding.EncodeToString(b))
+		o.emitData(b)
 	}
+}
+
+func (o *outStream) emitData(b []byte) {
+	o.emit.Emit(o.dataEvent, base64.StdEncoding.EncodeToString(b))
 }
 
 // Event flushes pending output, then emits name. last stops the stream after it.
@@ -84,7 +123,7 @@ func (o *outStream) Event(name string, payload any, last bool) {
 	o.mu.Lock()
 	attached := o.attached
 	if !attached {
-		o.held = append(o.held, heldEvent{name, payload})
+		o.held = append(o.held, heldEvent{name: name, payload: payload})
 	}
 	if last {
 		o.closed = true
@@ -105,11 +144,19 @@ func (o *outStream) Attach() {
 		return
 	}
 	o.attached = true
-	held := o.held
-	o.held = nil
+	held, dropped := o.held, o.dropped
+	o.held, o.heldBytes = nil, 0
 	o.mu.Unlock()
+	if dropped {
+		o.emitData([]byte(droppedMarker))
+	}
 	for _, e := range held {
-		o.emit.Emit(e.name, e.payload)
+		switch {
+		case e.data == nil:
+			o.emit.Emit(e.name, e.payload)
+		case len(e.data) > 0:
+			o.emitData(e.data)
+		}
 	}
 	o.flushLocked()
 }

@@ -46,6 +46,8 @@ type session struct {
 	cancel context.CancelFunc
 	done   chan struct{} // closed when run has returned and every goroutine of the session ended
 
+	wmu sync.Mutex // orders writes to the shell; never held together with mu waiting on the network
+
 	mu         sync.Mutex
 	state      string
 	sess       *sshclient.Session
@@ -126,24 +128,29 @@ func (s *session) run(t sshclient.Target, knownHosts func() (*sshclient.KnownHos
 }
 
 // handover switches input from the Prompter to the shell: keystrokes the Prompter buffered past
-// the last answer go first, then those still queued, then live SessionWrite calls.
+// the last answer go first, then those still queued, then live SessionWrite calls. The writes
+// happen outside s.mu, behind wmu, so close() never waits on a stuck server.
 func (s *session) handover(p *sshclient.Prompter, sess *sshclient.Session, cols, rows int) bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closing {
+		s.mu.Unlock()
 		return false
 	}
 	pending := append(p.Pending(), s.in.Close()...)
-	if len(pending) > 0 {
-		if err := sess.Write(pending); err != nil {
-			return false
-		}
-	}
-	if s.cols != cols || s.rows != rows {
-		_ = sess.Resize(s.cols, s.rows) //nolint:gosec // G104: a failed resize only leaves the old size
-	}
+	resize := s.cols != cols || s.rows != rows
+	cols, rows = s.cols, s.rows
 	s.sess = sess
 	s.state = stateConnected
+	s.wmu.Lock() // taken before s.mu is released: later writes queue behind the pending bytes
+	s.mu.Unlock()
+
+	if len(pending) > 0 {
+		_ = sess.Write(pending) //nolint:gosec // G104: a dead channel ends the session through its output
+	}
+	s.wmu.Unlock()
+	if resize {
+		_ = sess.Resize(cols, rows) //nolint:gosec // G104: a failed resize only leaves the old size
+	}
 	s.out.Event(s.stateEvent(), SessionStateDTO{State: stateConnected, Retryable: true}, false)
 	return true
 }
@@ -198,10 +205,12 @@ func (s *session) write(b []byte) error {
 		s.in.Write(b)
 	}
 	s.mu.Unlock()
-	if sess != nil {
-		return sess.Write(b)
+	if sess == nil {
+		return nil
 	}
-	return nil
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	return sess.Write(b)
 }
 
 // resize records the view size and forwards it to the shell. The first call attaches the view.

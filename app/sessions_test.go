@@ -429,3 +429,33 @@ func mustWrite(t *testing.T, o *outStream, text string) {
 		t.Fatal(err)
 	}
 }
+
+func TestOutStreamCapsHeldOutput(t *testing.T) {
+	old := maxHeldBytes
+	maxHeldBytes = 10
+	t.Cleanup(func() { maxHeldBytes = old })
+
+	ev := newFakeEmitter()
+	o := newOutStream(ev, "s")
+	mustWrite(t, o, "0123456789")
+	o.Event("term:state:s", SessionStateDTO{State: "connecting"}, false)
+	mustWrite(t, o, "abcdef")
+	o.Attach()
+	got := ev.snapshot()
+	if len(got) != 4 || got[2].name != "term:state:s" {
+		t.Fatalf("events %s", ev.describe())
+	}
+	if want := droppedMarker + "6789abcdef"; ev.data(t, "s") != want {
+		t.Fatalf("data %q, want %q", ev.data(t, "s"), want)
+	}
+}
+
+func TestOutStreamUnderCapKeepsEverything(t *testing.T) {
+	ev := newFakeEmitter()
+	o := newOutStream(ev, "s")
+	mustWrite(t, o, "abc")
+	o.Attach()
+	if ev.data(t, "s") != "abc" {
+		t.Fatalf("data %q", ev.data(t, "s"))
+	}
+}

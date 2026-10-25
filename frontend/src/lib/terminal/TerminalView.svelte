@@ -8,8 +8,8 @@
   import { EventsOn, SessionResize, SessionWrite } from '../api'
   import { sessions } from '../sessions.svelte'
   import { settings } from '../stores.svelte'
-  import { decodeBase64, encodeUtf8Base64 } from './base64'
-  import { orderedSender } from './input'
+  import { decodeBase64 } from './base64'
+  import { inputBytes, orderedSender } from './input'
   import { copyText, isAppShortcut, readClipboard, terminalAction } from './keys'
   import SearchBar from './SearchBar.svelte'
 
@@ -47,7 +47,10 @@
   let fit: FitAddon | undefined
   const searchOpen = $derived(sessions.searchId === sessionId)
 
-  const send = orderedSender((b64) => SessionWrite(sessionId, b64))
+  const send = orderedSender(
+    (b64) => SessionWrite(sessionId, b64),
+    (e) => console.error('SessionWrite', e),
+  )
 
   function setSize(cols: number, rows: number): void {
     const tab = sessions.list.find((t) => t.id === sessionId)
@@ -61,7 +64,7 @@
   }
 
   async function paste(): Promise<void> {
-    const text = await readClipboard()
+    const text = await readClipboard().catch(() => '')
     if (text) term?.paste(text)
   }
 
@@ -97,19 +100,16 @@
     t.attachCustomKeyEventHandler((e) => {
       if (!isAppShortcut(e)) return true
       const action = terminalAction(e)
-      if (action === 'copy') void copyText(t.getSelection())
+      if (action === 'copy') void copyText(t.getSelection()).catch(() => {})
       if (action === 'paste') void paste()
       if (action === 'search') toggleSearch()
       if (action) e.preventDefault()
       return false // tab shortcuts bubble to the window handler in TitleBar
     })
     const subs = [
-      t.onData((d) => send(encodeUtf8Base64(d))),
-      t.onBinary((d) => send(btoa(d))),
+      t.onData((d) => send(inputBytes(d))),
+      t.onBinary((d) => send(inputBytes(d, true))),
       t.onResize(({ cols, rows }) => setSize(cols, rows)),
-      t.onSelectionChange(() => {
-        if (settings.copy_on_select && t.hasSelection()) void copyText(t.getSelection())
-      }),
     ]
     const offData = EventsOn('term:data:' + sessionId, (b64: string) => t.write(decodeBase64(b64)))
 
@@ -155,13 +155,18 @@
     term?.focus()
   }
 
+  /** Copy-on-select copies once, when the mouse selection ends. */
+  function onmouseup(e: MouseEvent): void {
+    if (e.button === 0 && settings.copy_on_select && term?.hasSelection()) void copyText(term.getSelection()).catch(() => {})
+  }
+
   function oncontextmenu(e: MouseEvent): void {
     e.preventDefault()
     void paste()
   }
 </script>
 
-<div class="terminal" {oncontextmenu} role="presentation">
+<div class="terminal" {oncontextmenu} {onmouseup} role="presentation">
   <div class="xterm-host" bind:this={host}></div>
   {#if searchOpen && search}
     <SearchBar {search} onclose={closeSearch} />

@@ -90,7 +90,7 @@ function forget(id: string): void {
 
 /** Polls SessionList for latency while any session is open. */
 function syncPoll(): void {
-  if (sessions.list.length > 0 && !poll) poll = setInterval(() => void refreshSessions(), latencyPollMs)
+  if (sessions.list.length > 0 && !poll) poll = setInterval(() => void refreshSessions().catch(() => {}), latencyPollMs)
   if (sessions.list.length === 0 && poll) {
     clearInterval(poll)
     poll = undefined

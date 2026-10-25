@@ -39,11 +39,12 @@ func (a *App) SessionOpen(hostID string, cols, rows int) (string, error) {
 	if cols <= 0 || rows <= 0 {
 		return "", errBadSize
 	}
-	i := slices.IndexFunc(a.store.Hosts(), func(h model.Host) bool { return h.ID == hostID })
+	all := a.store.Hosts()
+	i := slices.IndexFunc(all, func(h model.Host) bool { return h.ID == hostID })
 	if i < 0 {
 		return "", errHostNotFound
 	}
-	h := a.store.Hosts()[i]
+	h := all[i]
 	t := sshclient.Target{Address: h.Address, Port: h.Port, User: h.User}
 	if h.KeyID != "" {
 		k, err := a.findKey(h.KeyID)
