@@ -2,7 +2,6 @@ package keys
 
 import (
 	"bytes"
-	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -18,7 +17,8 @@ import (
 	"sshclient/internal/model"
 )
 
-const ppkPassphrase = "testkey"
+// fixturePassphrase opens v3.ppk, v2-ed25519.ppk and legacy_encrypted.pem.
+const fixturePassphrase = "testkey"
 
 func readFixture(t *testing.T, name string) []byte {
 	t.Helper()
@@ -43,16 +43,17 @@ func encryptedOpenSSH(t *testing.T, pw string) []byte {
 	return pem.EncodeToMemory(blk)
 }
 
-// legacyPEM encrypts the RSA PKCS#1 fixture with Proc-Type: 4,ENCRYPTED.
-func legacyPEM(t *testing.T, pw string) []byte {
+// inspectEncrypted inspects an encrypted key; a legacy PEM needs pw for that.
+func inspectEncrypted(t *testing.T, data []byte, pw string) model.Key {
 	t.Helper()
-	blk, _ := pem.Decode(readFixture(t, "rsa_pkcs1.pem"))
-	//nolint:staticcheck // SA1019: legacy PEM encryption is exactly what this fixture needs
-	enc, err := x509.EncryptPEMBlock(rand.Reader, blk.Type, blk.Bytes, []byte(pw), x509.PEMCipherAES256)
+	k, err := InspectWithPassphrase(data, []byte(pw))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return pem.EncodeToMemory(enc)
+	if !k.Encrypted {
+		t.Fatal("fixture is not encrypted")
+	}
+	return k
 }
 
 func mustInspect(t *testing.T, data []byte) model.Key {
@@ -198,14 +199,14 @@ func TestInspectPEMRSA(t *testing.T) {
 
 func TestInspectLegacyPEMNeedsPassphrase(t *testing.T) {
 	plain := mustInspect(t, readFixture(t, "rsa_pkcs1.pem"))
-	enc := legacyPEM(t, "pw")
+	enc := readFixture(t, "legacy_encrypted.pem")
 	if _, err := Inspect(enc); !errors.Is(err, ErrPassphraseRequired) {
 		t.Fatalf("want ErrPassphraseRequired, got %v", err)
 	}
 	if _, err := InspectWithPassphrase(enc, []byte("bad")); !errors.Is(err, ErrWrongPassphrase) {
 		t.Fatalf("want ErrWrongPassphrase, got %v", err)
 	}
-	k, err := InspectWithPassphrase(enc, []byte("pw"))
+	k, err := InspectWithPassphrase(enc, []byte(fixturePassphrase))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +219,7 @@ func TestInspectLegacyPEMNeedsPassphrase(t *testing.T) {
 	if _, err := Signer(k, nil); !errors.Is(err, ErrPassphraseRequired) {
 		t.Fatalf("want ErrPassphraseRequired, got %v", err)
 	}
-	if _, err := Signer(k, []byte("pw")); err != nil {
+	if _, err := Signer(k, []byte(fixturePassphrase)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -289,12 +290,14 @@ func TestSignerCorrectPassphrase(t *testing.T) {
 		data []byte
 		pw   string
 	}{
-		"openssh": {encryptedOpenSSH(t, "pw"), "pw"},
-		"ppk":     {readFixture(t, "v3.ppk"), ppkPassphrase},
+		"openssh":    {encryptedOpenSSH(t, "pw"), "pw"},
+		"ppk v3":     {readFixture(t, "v3.ppk"), fixturePassphrase},
+		"ppk v2":     {readFixture(t, "v2-ed25519.ppk"), fixturePassphrase},
+		"legacy pem": {readFixture(t, "legacy_encrypted.pem"), fixturePassphrase},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			k := mustInspect(t, c.data)
+			k := inspectEncrypted(t, c.data, c.pw)
 			s, err := Signer(k, []byte(c.pw))
 			if err != nil {
 				t.Fatal(err)
@@ -311,11 +314,13 @@ func TestSignerCorrectPassphrase(t *testing.T) {
 
 func TestSignerWrongPassphrase(t *testing.T) {
 	for name, data := range map[string][]byte{
-		"openssh": encryptedOpenSSH(t, "pw"),
-		"ppk":     readFixture(t, "v3.ppk"),
+		"openssh":    encryptedOpenSSH(t, "pw"),
+		"ppk v3":     readFixture(t, "v3.ppk"),
+		"ppk v2":     readFixture(t, "v2-ed25519.ppk"),
+		"legacy pem": readFixture(t, "legacy_encrypted.pem"),
 	} {
 		t.Run(name, func(t *testing.T) {
-			k := mustInspect(t, data)
+			k := inspectEncrypted(t, data, fixturePassphrase)
 			if _, err := Signer(k, nil); !errors.Is(err, ErrPassphraseRequired) {
 				t.Fatalf("no passphrase: want ErrPassphraseRequired, got %v", err)
 			}
@@ -349,7 +354,7 @@ func TestExportEncryptedKeepsOriginalBytes(t *testing.T) {
 			}
 		})
 	}
-	k, err := InspectWithPassphrase(legacyPEM(t, "pw"), []byte("pw"))
+	k, err := InspectWithPassphrase(readFixture(t, "legacy_encrypted.pem"), []byte(fixturePassphrase))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -432,7 +437,7 @@ func TestInspectCRLFInput(t *testing.T) {
 		}
 		var pw []byte
 		if k.Encrypted {
-			pw = []byte(ppkPassphrase)
+			pw = []byte(fixturePassphrase)
 		}
 		if _, err := Signer(k, pw); err != nil {
 			t.Errorf("%s with CRLF signer: %v", name, err)

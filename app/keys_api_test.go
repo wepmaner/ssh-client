@@ -1,10 +1,7 @@
 package app
 
 import (
-	"crypto/rand"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,28 +120,16 @@ func TestKeyImportText(t *testing.T) {
 	}
 }
 
-// legacyPEM returns the RSA fixture encrypted with Proc-Type: 4,ENCRYPTED.
-func legacyPEM(t *testing.T, pw string) string {
-	t.Helper()
-	blk, _ := pem.Decode([]byte(fixture(t, "rsa_pkcs1.pem")))
-	//nolint:staticcheck // SA1019: legacy PEM encryption is exactly what this fixture needs
-	enc, err := x509.EncryptPEMBlock(rand.Reader, blk.Type, blk.Bytes, []byte(pw), x509.PEMCipherAES256)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(pem.EncodeToMemory(enc))
-}
-
 func TestKeyImportLegacyPEMAsksPassphrase(t *testing.T) {
 	a := newKeysApp(t)
-	enc := legacyPEM(t, "pw")
+	enc := fixture(t, "legacy_encrypted.pem") // passphrase testkey
 	if _, err := a.KeyImportText(enc, "old"); err == nil || err.Error() != "passphrase_required:text" {
 		t.Fatalf("no passphrase: %v", err)
 	}
 	if _, err := a.KeyImportTextWithPassphrase(enc, "old", "nope"); err == nil || err.Error() != "Неверная парольная фраза" {
 		t.Fatalf("wrong passphrase: %v", err)
 	}
-	k, err := a.KeyImportTextWithPassphrase(enc, "old", "pw")
+	k, err := a.KeyImportTextWithPassphrase(enc, "old", "testkey")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +151,7 @@ func TestKeyImportLegacyPEMAsksPassphrase(t *testing.T) {
 	if _, err := a.KeyImportFileWithPassphrase(path, ""); err == nil || err.Error() != "passphrase_required:"+path {
 		t.Fatalf("file without passphrase: %v", err)
 	}
-	if _, err := a.KeyImportFileWithPassphrase(path, "pw"); err != nil {
+	if _, err := a.KeyImportFileWithPassphrase(path, "testkey"); err != nil {
 		t.Fatal(err)
 	}
 }
