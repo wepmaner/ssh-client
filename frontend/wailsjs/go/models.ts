@@ -1,12 +1,35 @@
 export namespace app {
 	
+	export class GroupDTO {
+	    id: string;
+	    name: string;
+	    host_count: number;
+	    connected_count: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new GroupDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.host_count = source["host_count"];
+	        this.connected_count = source["connected_count"];
+	    }
+	}
 	export class HostDTO {
 	    id: string;
 	    name: string;
 	    address: string;
 	    port: number;
 	    user: string;
+	    group_id: string;
+	    group_name: string;
+	    key_id: string;
 	    key_name: string;
+	    os: string;
+	    connected: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new HostDTO(source);
@@ -19,7 +42,12 @@ export namespace app {
 	        this.address = source["address"];
 	        this.port = source["port"];
 	        this.user = source["user"];
+	        this.group_id = source["group_id"];
+	        this.group_name = source["group_name"];
+	        this.key_id = source["key_id"];
 	        this.key_name = source["key_name"];
+	        this.os = source["os"];
+	        this.connected = source["connected"];
 	    }
 	}
 	export class KeyDTO {

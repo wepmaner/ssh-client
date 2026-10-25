@@ -5,7 +5,19 @@ import {app} from '../models';
 
 export function GetSettings():Promise<model.Settings>;
 
-export function HostsListTemp():Promise<Array<app.HostDTO>>;
+export function GroupDelete(arg1:string):Promise<void>;
+
+export function GroupRename(arg1:string,arg2:string):Promise<void>;
+
+export function GroupSave(arg1:string):Promise<app.GroupDTO>;
+
+export function GroupsList():Promise<Array<app.GroupDTO>>;
+
+export function HostDelete(arg1:string):Promise<void>;
+
+export function HostSave(arg1:app.HostDTO):Promise<app.HostDTO>;
+
+export function HostsList():Promise<Array<app.HostDTO>>;
 
 export function KeyCopyPublic(arg1:string):Promise<void>;
 

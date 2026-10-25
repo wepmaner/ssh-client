@@ -6,8 +6,32 @@ export function GetSettings() {
   return window['go']['app']['App']['GetSettings']();
 }
 
-export function HostsListTemp() {
-  return window['go']['app']['App']['HostsListTemp']();
+export function GroupDelete(arg1) {
+  return window['go']['app']['App']['GroupDelete'](arg1);
+}
+
+export function GroupRename(arg1, arg2) {
+  return window['go']['app']['App']['GroupRename'](arg1, arg2);
+}
+
+export function GroupSave(arg1) {
+  return window['go']['app']['App']['GroupSave'](arg1);
+}
+
+export function GroupsList() {
+  return window['go']['app']['App']['GroupsList']();
+}
+
+export function HostDelete(arg1) {
+  return window['go']['app']['App']['HostDelete'](arg1);
+}
+
+export function HostSave(arg1) {
+  return window['go']['app']['App']['HostSave'](arg1);
+}
+
+export function HostsList() {
+  return window['go']['app']['App']['HostsList']();
 }
 
 export function KeyCopyPublic(arg1) {

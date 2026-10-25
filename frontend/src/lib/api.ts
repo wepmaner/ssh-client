@@ -1,7 +1,13 @@
 // Thin typed layer over the generated Wails bindings.
 export {
   GetSettings,
-  HostsListTemp,
+  GroupDelete,
+  GroupRename,
+  GroupSave,
+  GroupsList,
+  HostDelete,
+  HostSave,
+  HostsList,
   KeyCopyPublic,
   KeyDelete,
   KeyExport,

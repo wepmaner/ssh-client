@@ -371,3 +371,22 @@ func (a *App) closeAllSessions() {
 		<-s.done
 	}
 }
+
+// closeSessionsOfHost closes the sessions of one host and waits until their goroutines have ended.
+func (a *App) closeSessionsOfHost(hostID string) {
+	a.sessMu.Lock()
+	var all []*session
+	for id, s := range a.sessions {
+		if s.hostID == hostID {
+			all = append(all, s)
+			delete(a.sessions, id)
+		}
+	}
+	a.sessMu.Unlock()
+	for _, s := range all {
+		s.close()
+	}
+	for _, s := range all {
+		<-s.done
+	}
+}

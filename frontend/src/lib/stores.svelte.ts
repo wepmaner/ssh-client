@@ -1,4 +1,4 @@
-import { GetSettings, HostsListTemp, KeysList, VaultState, app, errorText, model } from './api'
+import { GetSettings, GroupsList, HostsList, KeysList, VaultState, app, errorText, model } from './api'
 
 export const vault = $state({
   ready: false,
@@ -17,22 +17,25 @@ export type View = 'hosts' | 'keys' | 'forwards' | 'settings'
 
 /**
  * view is the section of the home tab; activeTab says whether the home tab or the selected
- * session tab is in front. editHostId asks the hosts screen (Task 11) to open that host.
+ * session tab is in front. editHostId asks the hosts screen to open that host in its dialog.
  */
-// TODO(Task 11): default view returns to 'hosts' once the hosts screen exists.
 export const ui = $state<{ view: View; activeTab: 'home' | 'session'; editHostId: string }>({
-  view: 'keys',
+  view: 'hosts',
   activeTab: 'home',
   editHostId: '',
 })
 
 export const keys = $state<app.KeyDTO[]>([])
 
-/** Saved hosts. TEMP(Task 11): filled from HostsListTemp until the hosts API lands. */
+/** Saved hosts and their groups, sorted by name in Go. */
 export const hosts = $state<app.HostDTO[]>([])
+export const groups = $state<app.GroupDTO[]>([])
 
+/** Reloads hosts and groups together: group counts depend on the hosts. */
 export async function refreshHosts(): Promise<void> {
-  hosts.splice(0, hosts.length, ...plain(await HostsListTemp()))
+  const [h, g] = await Promise.all([HostsList(), GroupsList()])
+  hosts.splice(0, hosts.length, ...plain(h))
+  groups.splice(0, groups.length, ...plain(g))
 }
 
 export const toastState = $state({ message: '' })

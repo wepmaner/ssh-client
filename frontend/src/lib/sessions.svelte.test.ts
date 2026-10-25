@@ -16,7 +16,8 @@ vi.mock('./api', async () => {
     SessionClose: sessionClose,
     SessionList: () => Promise.resolve([]),
     GetSettings: vi.fn(),
-    HostsListTemp: vi.fn(),
+    HostsList: vi.fn(),
+    GroupsList: vi.fn(),
     KeysList: vi.fn(),
     VaultState: vi.fn(),
     errorText: String,
@@ -30,7 +31,7 @@ import { hosts, toastState, ui } from './stores.svelte'
 beforeEach(() => {
   for (const t of [...sessions.list]) closeSession(t.id)
   handlers.clear()
-  hosts.splice(0, hosts.length, { id: 'h1', name: 'prod', address: 'p', port: 22, user: 'u', key_name: '' })
+  hosts.splice(0, hosts.length, { id: 'h1', name: 'prod', address: 'p', port: 22, user: 'u', group_id: '', group_name: '', key_id: '', key_name: '', os: '', connected: false })
   ui.activeTab = 'home'
   let n = 0
   sessionOpen.mockImplementation(() => Promise.resolve('s' + ++n))
