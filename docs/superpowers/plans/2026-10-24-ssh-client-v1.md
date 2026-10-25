@@ -789,7 +789,7 @@ git commit -m "feat: forwards API, autostart and Forwards screen"
   - `App.ImportSSHConfig() (ImportResult, error)` — `{Added int; Skipped int; Warnings []string}`; файл `%USERPROFILE%\.ssh\config`; дубликаты по `User@Address:Port` пропускаются. `App.ImportPuTTY()` аналогично.
 - `SettingsView.svelte` по артборду Settings без блока TUN и без галочки про отпечаток (изменившийся ключ хоста отклоняется всегда): Терминал (шрифт из фиксированного списка `Cascadia Mono`, `JetBrains Mono`, `Consolas`; размер 10–20), Хранилище и безопасность (карточка состояния + кнопка диалога, блокировка после простоя 0/5/15/30 мин: при включённом пароле показывает `UnlockScreen` после бездействия, «Открыть папку с данными» через `runtime.BrowserOpenURL` на каталог, «Экспорт хостов в файл» в JSON без ключей), Импорт. Изменения применяются сразу, без кнопки «Сохранить».
 
-- [ ] **Step 1: Написать падающие тесты импортёров**
+- [x] **Step 1: Написать падающие тесты импортёров**
 
 ```go
 func TestParseSSHConfigBasic(t *testing.T)       // Host prod / HostName 10.0.4.11 / User deploy / Port 2222 → один Host
@@ -798,19 +798,19 @@ func TestParseSSHConfigWarnsIdentityFile(t *testing.T)
 func TestPuTTYSessionNameDecoded(t *testing.T)   // "my%20server" → "my server" (через интерфейс чтения реестра с фейком)
 ```
 
-- [ ] **Step 2: Запустить, убедиться что падают; реализовать; тесты проходят**
+- [x] **Step 2: Запустить, убедиться что падают; реализовать; тесты проходят**
 
 Run: `go test ./internal/importers/ -v`
 Expected: PASS после реализации
 
-- [ ] **Step 3: Собрать `SettingsView.svelte`, подключить блокировку по простою**
+- [x] **Step 3: Собрать `SettingsView.svelte`, подключить блокировку по простою**
 
 - [ ] **Step 4: Проверить вручную**
 
 Run: `wails dev`
 Expected: смена шрифта и размера мгновенно меняет открытые терминалы; импорт из `~/.ssh/config` добавляет хосты и перечисляет предупреждения; блокировка после 5 минут простоя показывает экран разблокировки.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
