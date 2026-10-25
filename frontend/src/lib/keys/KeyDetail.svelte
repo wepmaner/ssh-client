@@ -116,6 +116,7 @@
       <h1>{key.name}</h1>
     {/if}
     <span class="chip">{typeLabel(key.type)}</span>
+    {#if key.encrypted}<span class="chip">с парольной фразой</span>{/if}
     <span class="spacer"></span>
     <Button variant="ghost" onclick={startRename}>Переименовать</Button>
     <Button variant="ghost" onclick={() => (confirmDelete = true)} style="color:var(--error)">Удалить</Button>
@@ -138,7 +139,10 @@
     <dt>Создан</dt>
     <dd>{formatDate(key.created_at)}</dd>
     <dt>Хранение</dt>
-    <dd>Хранилище приложения, {vault.has_password ? 'пароль' : 'защита Windows'}</dd>
+    <dd>
+      Хранилище приложения, {vault.has_password ? 'пароль' : 'защита Windows'}
+      {#if key.encrypted}<span class="muted caption">Фраза спрашивается при подключении</span>{/if}
+    </dd>
   </dl>
 
   <div class="block">
@@ -152,8 +156,12 @@
     <h2>Экспорт</h2>
     <div class="export">
       <Button variant="outline" onclick={() => startExport('public')}>Публичный ключ в файл</Button>
-      <Button variant="outline" onclick={() => startExport('openssh')}>Приватный ключ · OpenSSH</Button>
-      <Button variant="outline" onclick={() => startExport('ppk')}>Приватный ключ · PuTTY .ppk</Button>
+      {#if key.encrypted}
+        <Button variant="outline" onclick={() => startExport('original')}>Приватный ключ (исходный файл)</Button>
+      {:else}
+        <Button variant="outline" onclick={() => startExport('openssh')}>Приватный ключ · OpenSSH</Button>
+        <Button variant="outline" onclick={() => startExport('ppk')}>Приватный ключ · PuTTY .ppk</Button>
+      {/if}
     </div>
     <p class="muted note">Экспорт приватного ключа спросит пароль хранилища, если шифрование включено</p>
   </div>
@@ -267,6 +275,11 @@
   }
   .muted {
     color: var(--muted);
+  }
+  .caption {
+    display: block;
+    margin-top: 2px;
+    font-size: 12px;
   }
   .note {
     margin: 10px 0 0;

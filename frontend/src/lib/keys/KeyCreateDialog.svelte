@@ -20,6 +20,8 @@
   let name = $state('')
   let kind = $state('ed25519')
   let comment = $state('')
+  let phrase = $state('')
+  let repeat = $state('')
   let error = $state('')
   let busy = $state(false)
 
@@ -28,16 +30,23 @@
     name = ''
     kind = 'ed25519'
     comment = ''
+    phrase = ''
+    repeat = ''
     error = ''
     busy = false
   })
 
+  const mismatch = $derived(repeat !== '' && repeat !== phrase)
+  const canSubmit = $derived(name.trim() !== '' && phrase === repeat && !busy)
+
   async function submit() {
-    if (!name.trim() || busy) return
+    if (!canSubmit) return
     busy = true
     error = ''
     try {
-      const key = await KeyGenerate(name, kind, comment)
+      const key = await KeyGenerate(name, kind, comment, phrase)
+      phrase = ''
+      repeat = ''
       oncreated(key)
       onclose()
     } catch (e) {
@@ -81,6 +90,22 @@
       <Input bind:value={comment} class="mono" placeholder="По умолчанию — пользователь@компьютер" autocomplete="off" />
     </label>
 
+    <div class="pair">
+      <label class="field">
+        <span>Парольная фраза (необязательно)</span>
+        <Input type="password" bind:value={phrase} autocomplete="new-password" />
+      </label>
+      <label class="field">
+        <span>Повторите фразу</span>
+        <Input type="password" bind:value={repeat} autocomplete="new-password" aria-invalid={mismatch} />
+      </label>
+    </div>
+    {#if mismatch}
+      <p class="error" role="alert">Фразы не совпадают</p>
+    {:else}
+      <p class="hint phrase-hint">Без фразы ключ защищён только хранилищем. Фраза не сохраняется: терминал спросит её при каждом подключении, восстановить её нельзя.</p>
+    {/if}
+
     <div class="info" role="note">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <rect x="3.5" y="7" width="9" height="6.5" rx="1" />
@@ -93,7 +118,7 @@
     <span></span>
     <span class="actions">
       <Button variant="ghost" onclick={onclose}>Отмена</Button>
-      <Button variant="primary" type="submit" form="key-create-form" disabled={!name.trim() || busy}>Создать</Button>
+      <Button variant="primary" type="submit" form="key-create-form" disabled={!canSubmit}>Создать</Button>
     </span>
   {/snippet}
 </Dialog>
@@ -117,6 +142,14 @@
     margin: 8px 0 0;
     color: var(--muted);
     font-size: 12px;
+  }
+  .pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .phrase-hint {
+    margin: -8px 0 16px;
   }
   .error {
     margin: -10px 0 16px;

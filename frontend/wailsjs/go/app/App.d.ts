@@ -13,7 +13,7 @@ export function KeyDelete(arg1:string):Promise<void>;
 
 export function KeyExport(arg1:string,arg2:string,arg3:string):Promise<void>;
 
-export function KeyGenerate(arg1:string,arg2:string,arg3:string):Promise<app.KeyDTO>;
+export function KeyGenerate(arg1:string,arg2:string,arg3:string,arg4:string):Promise<app.KeyDTO>;
 
 export function KeyImportFile():Promise<app.KeyDTO>;
 

@@ -22,8 +22,8 @@ export function KeyExport(arg1, arg2, arg3) {
   return window['go']['app']['App']['KeyExport'](arg1, arg2, arg3);
 }
 
-export function KeyGenerate(arg1, arg2, arg3) {
-  return window['go']['app']['App']['KeyGenerate'](arg1, arg2, arg3);
+export function KeyGenerate(arg1, arg2, arg3, arg4) {
+  return window['go']['app']['App']['KeyGenerate'](arg1, arg2, arg3, arg4);
 }
 
 export function KeyImportFile() {

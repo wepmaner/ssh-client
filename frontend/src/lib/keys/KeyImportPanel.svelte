@@ -33,7 +33,7 @@
     error = ''
   }
 
-  /** Runs an import; a missing passphrase switches the panel to the passphrase prompt. */
+  /** Runs an import; only a legacy encrypted PEM switches the panel to the passphrase prompt. */
   async function run(call: () => Promise<app.KeyDTO>, onPassphrase: (ref: string) => Pending) {
     if (busy) return
     busy = true
@@ -80,7 +80,7 @@
         submitPassphrase()
       }}
     >
-      <p class="hint">Ключ защищён парольной фразой. Введите её один раз, в хранилище ключ будет без фразы.</p>
+      <p class="hint">Старый формат PEM прячет публичный ключ под парольной фразой. Введите её один раз, чтобы его прочитать: ключ сохранится вместе со своей фразой, сама фраза не запоминается.</p>
       <label>
         <span>Парольная фраза</span>
         <Input type="password" bind:value={passphrase} autocomplete="off" />

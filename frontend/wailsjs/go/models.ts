@@ -26,6 +26,8 @@ export namespace app {
 	    id: string;
 	    name: string;
 	    type: string;
+	    format: string;
+	    encrypted: boolean;
 	    public_line: string;
 	    comment: string;
 	    fingerprint: string;
@@ -42,6 +44,8 @@ export namespace app {
 	        this.id = source["id"];
 	        this.name = source["name"];
 	        this.type = source["type"];
+	        this.format = source["format"];
+	        this.encrypted = source["encrypted"];
 	        this.public_line = source["public_line"];
 	        this.comment = source["comment"];
 	        this.fingerprint = source["fingerprint"];

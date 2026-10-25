@@ -16,19 +16,29 @@ const key = { id: 'k1', name: 'a' }
 describe('KeyImportPanel', () => {
   beforeEach(() => vi.resetAllMocks())
 
-  it('asks for the passphrase after a file import and retries with it', async () => {
-    api.KeyImportFile.mockRejectedValue('passphrase_required:C:\\k.ppk')
+  it('imports an encrypted key without asking for its passphrase', async () => {
+    api.KeyImportFile.mockResolvedValue(key)
+    const onimported = vi.fn()
+    render(KeyImportPanel, { onimported })
+    await fireEvent.click(screen.getByRole('button', { name: 'Выбрать файл…' }))
+    await vi.waitFor(() => expect(onimported).toHaveBeenCalledWith(key))
+    expect(screen.queryByLabelText('Парольная фраза')).toBeNull()
+    expect(api.KeyImportFileWithPassphrase).not.toHaveBeenCalled()
+  })
+
+  it('asks the passphrase of a legacy PEM once and retries with it', async () => {
+    api.KeyImportFile.mockRejectedValue('passphrase_required:C:\\k.pem')
     api.KeyImportFileWithPassphrase.mockResolvedValue(key)
     const onimported = vi.fn()
     render(KeyImportPanel, { onimported })
 
     await fireEvent.click(screen.getByRole('button', { name: 'Выбрать файл…' }))
-    expect(await screen.findByText(/Ключ защищён парольной фразой/)).toBeTruthy()
+    expect(await screen.findByText(/Старый формат PEM/)).toBeTruthy()
     await fireEvent.input(screen.getByLabelText('Парольная фраза'), { target: { value: 'secret' } })
     await fireEvent.click(screen.getByRole('button', { name: 'Импортировать' }))
 
     await vi.waitFor(() => expect(onimported).toHaveBeenCalledWith(key))
-    expect(api.KeyImportFileWithPassphrase).toHaveBeenCalledWith('C:\\k.ppk', 'secret')
+    expect(api.KeyImportFileWithPassphrase).toHaveBeenCalledWith('C:\\k.pem', 'secret')
   })
 
   it('ignores a cancelled file dialog silently', async () => {
