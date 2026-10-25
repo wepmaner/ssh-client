@@ -93,6 +93,14 @@
       error = errorText(e)
     }
   }
+
+  /** Opened from the context menu of the key list. */
+  export function requestRename() {
+    startRename()
+  }
+  export function requestDelete() {
+    confirmDelete = true
+  }
 </script>
 
 <section class="card">

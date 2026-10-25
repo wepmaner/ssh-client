@@ -10,6 +10,7 @@
   import KeyCreateDialog from './KeyCreateDialog.svelte'
   import KeyDetail from './KeyDetail.svelte'
   import KeyImportPanel from './KeyImportPanel.svelte'
+  import Menu from '../ui/Menu.svelte'
 
   let query = $state('')
   let selectedId = $state('')
@@ -17,6 +18,14 @@
   let importing = $state(false)
   let encrypting = $state(false)
   let decrypting = $state(false)
+  let detail: ReturnType<typeof KeyDetail> | undefined = $state()
+  let menuAt = $state<{ x: number; y: number } | null>(null)
+
+  function openMenu(e: MouseEvent, id: string) {
+    e.preventDefault()
+    selectedId = id
+    menuAt = { x: e.clientX, y: e.clientY }
+  }
 
   const filtered = $derived.by(() => {
     const q = query.trim().toLowerCase()
@@ -95,7 +104,7 @@
       <ul class="list" aria-label="Ключи">
         {#each filtered as k (k.id)}
           <li>
-            <button type="button" class="row" class:sel={k.id === selected?.id} aria-current={k.id === selected?.id} onclick={() => (selectedId = k.id)}>
+            <button type="button" class="row" class:sel={k.id === selected?.id} aria-current={k.id === selected?.id} onclick={() => (selectedId = k.id)} oncontextmenu={(e) => openMenu(e, k.id)}>
               <span class="type">{typeTile(k.type)}</span>
               <span class="info">
                 <span class="name">{k.name}</span>
@@ -108,7 +117,17 @@
         {/each}
       </ul>
       {#if selected}
-        <KeyDetail key={selected} onchanged={refreshKeys} />
+        <KeyDetail bind:this={detail} key={selected} onchanged={refreshKeys} />
+      {/if}
+      {#if menuAt}
+        <Menu
+          at={menuAt}
+          onclose={() => (menuAt = null)}
+          items={[
+            { label: 'Переименовать', onselect: () => detail?.requestRename() },
+            { label: 'Удалить', onselect: () => detail?.requestDelete(), danger: true },
+          ]}
+        />
       {/if}
     </div>
   {/if}
