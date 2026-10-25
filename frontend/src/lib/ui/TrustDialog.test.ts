@@ -14,7 +14,9 @@ vi.mock('../api', async () => {
   return { ...api, errorText: String, model }
 })
 
-import { trust } from '../trust.svelte'
+import { registerTerminalFocus, sessions } from '../sessions.svelte'
+import { toastState, ui } from '../stores.svelte'
+import { hostPort, trust } from '../trust.svelte'
 import TrustDialog from './TrustDialog.svelte'
 
 const fp = 'SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8'
@@ -108,6 +110,72 @@ describe('TrustDialog', () => {
       ['q1', true],
       ['q2', false],
     ])
+  })
+
+  it('ignores a repeated trust:ask with the same id', async () => {
+    await emit('trust:ask', q1)
+    await emit('trust:ask', { ...q1 })
+    expect(trust.queue).toHaveLength(1)
+    await fireEvent.click(primary())
+    expect(dialog()).toBeNull()
+    expect(api.TrustAnswer).toHaveBeenCalledTimes(1)
+  })
+
+  it('brackets an IPv6 host like JoinHostPort', async () => {
+    expect(hostPort('example.test', 22)).toBe('example.test:22')
+    expect(hostPort('2001:db8::1', 2222)).toBe('[2001:db8::1]:2222')
+    await emit('trust:ask', { ...q1, host: '::1' })
+    expect(dialog()!.textContent).toContain('alice@[::1]:22')
+  })
+
+  it('gives focus back to where it was after an answer and after a cancel', async () => {
+    const before = document.createElement('button')
+    document.body.append(before)
+    try {
+      for (const close of [() => fireEvent.click(primary()), () => fireEvent.keyDown(window, { key: 'Escape' })]) {
+        before.focus()
+        await emit('trust:ask', { ...q2, id: 'q' + Math.random() })
+        expect(document.activeElement).toBe(primary())
+        await close()
+        expect(dialog()).toBeNull()
+        await vi.waitFor(() => expect(document.activeElement).toBe(before))
+      }
+    } finally {
+      before.remove()
+    }
+  })
+
+  it('focuses the terminal of the active session it asked for', async () => {
+    const focus = vi.fn()
+    const off = registerTerminalFocus('s1', focus)
+    sessions.activeId = 's1'
+    ui.activeTab = 'session'
+    try {
+      await emit('trust:ask', q1)
+      await fireEvent.click(primary())
+      await vi.waitFor(() => expect(focus).toHaveBeenCalled())
+    } finally {
+      off()
+      ui.activeTab = 'home'
+      sessions.activeId = ''
+    }
+  })
+
+  it('shows no toast when the question was withdrawn while the answer was on its way', async () => {
+    toastState.message = ''
+    let reject!: (e: unknown) => void
+    api.TrustAnswer.mockReturnValue(new Promise((_, rj) => (reject = rj)))
+    await emit('trust:ask', q1)
+    await fireEvent.click(primary())
+    await emit('trust:cancel', { id: 'q1' })
+    reject('Вопрос о доверии серверу уже снят')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(toastState.message).toBe('')
+
+    api.TrustAnswer.mockRejectedValue('сбой')
+    await emit('trust:ask', q2)
+    await fireEvent.click(primary())
+    await vi.waitFor(() => expect(toastState.message).toBe('сбой'))
   })
 
   it('closes on trust:cancel and drops a withdrawn question from the queue', async () => {

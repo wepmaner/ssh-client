@@ -535,3 +535,63 @@ func TestLocalListenerFailureIsSticky(t *testing.T) {
 		t.Fatalf("state after Stop = %+v", st)
 	}
 }
+
+func TestReconnectStopsWhenServerNotTrusted(t *testing.T) {
+	// Пользователь отказался доверять ключу при переподключении: проброс завершается ошибкой
+	// окончательно, без новых попыток и новых вопросов.
+	srv, dial := forwardServer(t)
+	listen := freeAddr(t)
+	var (
+		mu    sync.Mutex
+		calls int
+	)
+	refused := &userError{msg: msgHostNotTrusted, cause: ErrHostNotTrusted}
+	dialer := func(ctx context.Context) (*ssh.Client, error) {
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		if n > 1 {
+			return nil, refused
+		}
+		return dial(ctx)
+	}
+	r := NewForwardRunner(model.Forward{Kind: "L", Listen: listen, Target: echoServer(t)}, dialer)
+	r.backoff = func(int) time.Duration { return 10 * time.Millisecond }
+	t.Cleanup(r.Stop)
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	drainEvents(r)
+
+	srv.DropConnections()
+	timeout := time.After(forwardWait)
+	for done := false; !done; {
+		select {
+		case st := <-r.Events():
+			if st.Status == "error" {
+				if st.Error != msgHostNotTrusted {
+					t.Fatalf("state %+v", st)
+				}
+				done = true
+			}
+		case <-timeout:
+			t.Fatalf("timeout, state %+v", r.State())
+		}
+	}
+	time.Sleep(100 * time.Millisecond) // десять пауз переподключения
+	mu.Lock()
+	n := calls
+	mu.Unlock()
+	if n != 2 {
+		t.Fatalf("dial called %d times, want 2", n)
+	}
+	if st := r.State(); st.Status != "error" {
+		t.Fatalf("state %+v", st)
+	}
+	ln, err := net.Listen("tcp", listen)
+	if err != nil {
+		t.Fatalf("local port still busy: %v", err)
+	}
+	ignoreErr(ln.Close())
+}

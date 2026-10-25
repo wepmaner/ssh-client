@@ -6,7 +6,7 @@
   import '@xterm/xterm/css/xterm.css'
   import { onMount } from 'svelte'
   import { EventsOn, SessionResize, SessionWrite } from '../api'
-  import { sessions } from '../sessions.svelte'
+  import { registerTerminalFocus, sessions } from '../sessions.svelte'
   import { settings } from '../stores.svelte'
   import { decodeBase64 } from './base64'
   import { inputBytes, orderedSender } from './input'
@@ -119,6 +119,8 @@
     // The first resize also tells Go the view listens: held output is released after it.
     setSize(t.cols, t.rows)
     if (visible) t.focus()
+    // The trust dialog hands focus back here, so the prompt after it gets the keystrokes.
+    const offFocus = registerTerminalFocus(sessionId, () => t.focus())
 
     let timer: ReturnType<typeof setTimeout> | undefined
     const ro = new ResizeObserver(() => {
@@ -130,6 +132,7 @@
     return () => {
       clearTimeout(timer)
       ro.disconnect()
+      offFocus()
       offData()
       for (const d of subs) d.dispose()
       t.dispose()

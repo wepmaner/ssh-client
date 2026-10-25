@@ -54,7 +54,8 @@ type ForwardState struct {
 // только после неудачного Start.
 //
 // Обрыв SSH-соединения (client.Wait вернулся) переводит раннер в starting, и dial повторяется
-// через 2, 4, 8 … 60 с до успеха, Stop или отмены ctx. Локальный порт L/D при этом остаётся занят;
+// через 2, 4, 8 … 60 с до успеха, Stop, отмены ctx или отказа доверять ключу сервера
+// (ErrHostNotTrusted: статус error окончательный, порт освобождается). Локальный порт L/D при этом остаётся занят;
 // новые соединения на него во время переподключения сразу закрываются (fail fast), уже открытые
 // соединения рвутся вместе со старым клиентом. Для R после переподключения порт на сервере
 // запрашивается заново.
@@ -335,6 +336,17 @@ func (r *ForwardRunner) reconnect(ctx context.Context) *ssh.Client {
 		if r.closing || r.failed {
 			r.mu.Unlock()
 			closeAll(nil, rln, client)
+			return nil
+		}
+		if errors.Is(err, ErrHostNotTrusted) {
+			// Пользователь отказался доверять ключу сервера: повтор задал бы тот же вопрос снова.
+			// Статус error окончательный, локальный порт освобождается.
+			r.failed = true
+			ln := r.ln
+			r.ln = nil
+			r.setLocked(ForwardState{Status: ForwardError, Error: err.Error(), Conns: r.state.Conns})
+			r.mu.Unlock()
+			closeAll(ln, nil, nil)
 			return nil
 		}
 		if err != nil {

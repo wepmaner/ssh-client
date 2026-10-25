@@ -178,3 +178,21 @@ export function activeSession(): SessionTab | undefined {
   if (ui.activeTab !== 'session') return undefined
   return sessions.list.find((t) => t.id === sessions.activeId)
 }
+
+/** How to focus each mounted terminal, registered by TerminalView. */
+const terminalFocus = new Map<string, () => void>()
+
+/** Registers the focus function of a session's terminal; returns the unregister function. */
+export function registerTerminalFocus(id: string, focus: () => void): () => void {
+  terminalFocus.set(id, focus)
+  return () => {
+    if (terminalFocus.get(id) === focus) terminalFocus.delete(id)
+  }
+}
+
+/** Focuses the terminal of session id if it is mounted; false otherwise. */
+export function focusTerminal(id: string): boolean {
+  const focus = terminalFocus.get(id)
+  focus?.()
+  return focus !== undefined
+}
