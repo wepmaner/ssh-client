@@ -93,14 +93,24 @@ func (a *App) KeysList() []KeyDTO {
 	if !a.storeUnlocked() {
 		return out
 	}
-	for _, k := range a.storeRef().Keys() {
+	for _, k := range a.storeRef().KeyMetas() {
 		out = append(out, a.keyDTO(k))
 	}
 	return out
 }
 
+// findKey returns a key with its own copy of the private bytes; the caller wipes them once
+// they are no longer needed, unless the key goes back into the store.
 func (a *App) findKey(id string) (model.Key, error) {
-	for _, k := range a.storeRef().Keys() {
+	if k, ok := a.storeRef().Key(id); ok {
+		return k, nil
+	}
+	return model.Key{}, errKeyNotFound
+}
+
+// keyMeta returns a key without its private bytes.
+func (a *App) keyMeta(id string) (model.Key, error) {
+	for _, k := range a.storeRef().KeyMetas() {
 		if k.ID == id {
 			return k, nil
 		}
@@ -114,7 +124,7 @@ func (a *App) checkName(name, exceptID string) (string, error) {
 	if name == "" {
 		return "", errKeyNameEmpty
 	}
-	for _, k := range a.storeRef().Keys() {
+	for _, k := range a.storeRef().KeyMetas() {
 		if k.ID != exceptID && strings.EqualFold(k.Name, name) {
 			return "", errKeyNameTaken
 		}
@@ -315,7 +325,7 @@ func (a *App) KeyCopyPublic(id string) error {
 	if !a.storeUnlocked() {
 		return errVaultLocked
 	}
-	k, err := a.findKey(id)
+	k, err := a.keyMeta(id)
 	if err != nil {
 		return err
 	}
@@ -364,11 +374,13 @@ func (a *App) KeyExport(id, format, password string) error {
 	if err != nil {
 		return err
 	}
+	defer clear(k.Private) // our copy; "original" exports these very bytes
 	data, name, err := exportPayload(k, format)
 	if err != nil {
 		return err
 	}
 	if a.wapp == nil {
+		clear(data)
 		return errNoWindow
 	}
 	path, err := dialogPath(a.wapp.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
@@ -377,7 +389,14 @@ func (a *App) KeyExport(id, format, password string) error {
 		Window:   a.mainWin,
 	}).PromptForSingleSelection())
 	if err != nil {
+		clear(data)
 		return err
 	}
+	return writeKeyFile(path, data)
+}
+
+// writeKeyFile writes an exported key and wipes the plaintext buffer afterwards.
+func writeKeyFile(path string, data []byte) error {
+	defer clear(data)
 	return os.WriteFile(path, data, 0o600)
 }

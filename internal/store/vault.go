@@ -87,6 +87,7 @@ func (v *Vault) decrypt(dek []byte) error {
 	if err != nil {
 		return fmt.Errorf("%w: decrypt data: %v", ErrCorrupt, err)
 	}
+	defer clear(plain) // the decoded data holds its own copies of the key bytes
 	d, err := decodeData(plain)
 	if err != nil {
 		return fmt.Errorf("%w: decode data: %v", ErrCorrupt, err)
@@ -172,6 +173,7 @@ func (v *Vault) Save() error {
 		return err
 	}
 	nonce, ct, err := Seal(v.dek, plain)
+	clear(plain) // the plaintext JSON carries the private keys in base64
 	if err != nil {
 		return err
 	}

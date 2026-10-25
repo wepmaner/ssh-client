@@ -79,7 +79,7 @@ func (a *App) HostsList() []HostDTO {
 		return out
 	}
 	keyNames := map[string]string{}
-	for _, k := range a.storeRef().Keys() {
+	for _, k := range a.storeRef().KeyMetas() {
 		keyNames[k.ID] = k.Name
 	}
 	groupNames := map[string]string{}
@@ -142,7 +142,7 @@ func (a *App) validateHost(in HostDTO) (model.Host, error) {
 		return h, err
 	}
 	// The key is optional: without one the server asks for the password in the console.
-	if _, err := a.findKey(h.KeyID); h.KeyID != "" && err != nil {
+	if _, err := a.keyMeta(h.KeyID); h.KeyID != "" && err != nil {
 		return h, fieldError("key", errKeyNotFound.Error())
 	}
 	if h.GroupID != "" && !slices.ContainsFunc(a.storeRef().Groups(), func(g model.Group) bool { return g.ID == h.GroupID }) {

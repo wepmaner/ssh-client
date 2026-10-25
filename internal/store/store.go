@@ -63,7 +63,16 @@ func (s *Store) mutate(f func(d *model.VaultData) error) error {
 		*d = snapshot
 		return err
 	}
+	// The rollback copy is not needed any more: wipe its private keys.
+	clearPrivate(snapshot.Keys)
 	return nil
+}
+
+// clearPrivate zeroes the private key bytes of keys.
+func clearPrivate(keys []model.Key) {
+	for i := range keys {
+		clear(keys[i].Private)
+	}
 }
 
 func cloneKeys(keys []model.Key) []model.Key {
@@ -226,9 +235,38 @@ func (s *Store) DeleteGroup(id string) error {
 	})
 }
 
-// Keys returns a copy of all keys.
+// Keys returns a copy of all keys with their private bytes; the caller wipes them after use.
 func (s *Store) Keys() []model.Key {
 	return read(s, func(d *model.VaultData) []model.Key { return cloneKeys(d.Keys) })
+}
+
+// KeyMetas returns a copy of all keys without the private bytes, for listings and lookups.
+func (s *Store) KeyMetas() []model.Key {
+	return read(s, func(d *model.VaultData) []model.Key {
+		out := slices.Clone(d.Keys)
+		for i := range out {
+			out[i].Private = nil
+		}
+		return out
+	})
+}
+
+// Key returns a copy of one key with its private bytes; the caller wipes them after use.
+func (s *Store) Key(id string) (model.Key, bool) {
+	type found struct {
+		k  model.Key
+		ok bool
+	}
+	r := read(s, func(d *model.VaultData) found {
+		i := slices.IndexFunc(d.Keys, func(k model.Key) bool { return k.ID == id })
+		if id == "" || i < 0 {
+			return found{}
+		}
+		k := d.Keys[i]
+		k.Private = bytes.Clone(k.Private)
+		return found{k, true}
+	})
+	return r.k, r.ok
 }
 
 // SaveKey inserts or updates a key.

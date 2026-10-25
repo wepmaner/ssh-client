@@ -44,6 +44,7 @@ func (q *inputQueue) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 	n := copy(p, q.buf)
+	clear(q.buf[:n]) // typed passwords and passphrases do not linger in the queue
 	q.buf = q.buf[n:]
 	return n, nil
 }

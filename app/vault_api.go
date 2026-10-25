@@ -123,6 +123,8 @@ func (a *App) verifyPassword(password string) error {
 	if err != nil {
 		return err
 	}
+	// The probe's key and decrypted copy of the data are wiped once the check is done.
+	defer func() { _ = probe.Lock() }() //nolint:gosec // G104: a probe that never unlocked has nothing to wipe
 	pw := []byte(password)
 	defer clear(pw)
 	if err := probe.Unlock(pw); err != nil {
@@ -140,5 +142,5 @@ func (a *App) VaultCounts() VaultCountsDTO {
 		return VaultCountsDTO{}
 	}
 	s := a.storeRef()
-	return VaultCountsDTO{Keys: len(s.Keys()), Hosts: len(s.Hosts())}
+	return VaultCountsDTO{Keys: len(s.KeyMetas()), Hosts: len(s.Hosts())}
 }

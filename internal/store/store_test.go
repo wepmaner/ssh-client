@@ -140,6 +140,46 @@ func TestKeysReturnsDeepCopy(t *testing.T) {
 	}
 }
 
+func TestKeyMetasCarryNoPrivateBytes(t *testing.T) {
+	s := newTestStore(t)
+	k, err := s.SaveKey(model.Key{Name: "k", Private: []byte("secret")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metas := s.KeyMetas()
+	if len(metas) != 1 || metas[0].Name != "k" || metas[0].Private != nil {
+		t.Fatalf("metas %+v", metas)
+	}
+	got, ok := s.Key(k.ID)
+	if !ok || string(got.Private) != "secret" {
+		t.Fatalf("key %+v ok=%v", got, ok)
+	}
+	clear(got.Private) // the caller's copy: wiping it leaves the vault intact
+	if again, _ := s.Key(k.ID); string(again.Private) != "secret" {
+		t.Fatal("Key returned the live bytes")
+	}
+	if _, ok := s.Key("missing"); ok {
+		t.Fatal("unknown id found")
+	}
+	if _, ok := s.Key(""); ok {
+		t.Fatal("empty id found")
+	}
+}
+
+func TestMutateWipesOnlyTheRollbackCopy(t *testing.T) {
+	s := newTestStore(t)
+	if _, err := s.SaveKey(model.Key{Name: "k", Private: []byte("secret")}); err != nil {
+		t.Fatal(err)
+	}
+	// A second save wipes the snapshot of the first key; the live bytes must survive it.
+	if _, err := s.SaveHost(model.Host{Address: "h", Port: 22, User: "u"}); err != nil {
+		t.Fatal(err)
+	}
+	if string(s.v.Data().Keys[0].Private) != "secret" {
+		t.Fatalf("live key wiped: %q", s.v.Data().Keys[0].Private)
+	}
+}
+
 func TestDecodeDataMigratesLegacyKeys(t *testing.T) {
 	// Before Task 9b keys were always unencrypted OpenSSH under "private_pem".
 	legacy := `{"keys":[{"id":"k1","name":"old","private_pem":"c2VjcmV0","source":"generated"}]}`

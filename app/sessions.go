@@ -81,7 +81,7 @@ func (s *session) run(t sshclient.Target, knownHosts func() (*sshclient.KnownHos
 		return
 	}
 	p := sshclient.NewPrompter(s.out, s.in)
-	client, err := sshclient.Dial(s.ctx, t, p, kh)
+	client, err := dialTarget(s.ctx, t, p, kh)
 	if err != nil {
 		s.fail(err)
 		return
@@ -258,6 +258,15 @@ func exitCode(err error) *int {
 		return nil
 	}
 	return &code
+}
+
+// dialTarget dials t and then wipes the target's copy of the private key (from hostTarget):
+// authentication is over once Dial returns, and a retry looks the key up again.
+func dialTarget(ctx context.Context, t sshclient.Target, p *sshclient.Prompter, kh *sshclient.KnownHosts) (*ssh.Client, error) {
+	if t.Key != nil {
+		defer clear(t.Key.Private)
+	}
+	return sshclient.Dial(ctx, t, p, kh)
 }
 
 // errorState turns a dial or session error into the error card payload.

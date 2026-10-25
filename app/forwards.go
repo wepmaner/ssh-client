@@ -281,7 +281,7 @@ func (a *App) forwardDial(id, hostID string, out *outStream, run *fwdRun) func(c
 			t.Passphrase = run.secretFor(keyID) // Dial clears this copy
 			t.OnPassphrase = func(p []byte) { run.rememberSecret(keyID, p) }
 		}
-		client, err := sshclient.Dial(ctx, t, sshclient.NewPrompter(out, run.in), kh)
+		client, err := dialTarget(ctx, t, sshclient.NewPrompter(out, run.in), kh)
 		run.hostKeyChanged.Store(errors.Is(err, sshclient.ErrHostKeyChanged))
 		if err != nil {
 			return nil, err
