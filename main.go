@@ -2,42 +2,64 @@ package main
 
 import (
 	"embed"
+	"log"
+	"path/filepath"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"sshclient/app"
+	"sshclient/internal/appdir"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
-func main() {
-	a := app.New()
+// version is set by CI from the release tag through -X main.version=X.Y.Z
+// (build/windows/Taskfile.yml); Settings shows it (Task 15).
+var version = "dev" //nolint:unused // read only after -X links it into Settings
 
-	err := wails.Run(&options.App{
-		Title:     "sshclient",
-		Width:     1280,
-		Height:    800,
-		MinWidth:  900,
-		MinHeight: 600,
-		Frameless: true,
-		AssetServer: &assetserver.Options{
-			Assets: assets,
-		},
-		BackgroundColour: &options.RGBA{R: 0x1a, G: 0x1d, B: 0x22, A: 255},
-		Windows: &windows.Options{
+func main() {
+	a := app.New(application.WebviewWindowOptions{
+		Name:             "main",
+		Title:            "sshclient",
+		Width:            1280,
+		Height:           800,
+		MinWidth:         900,
+		MinHeight:        600,
+		Frameless:        true,
+		BackgroundColour: application.NewRGB(0x1a, 0x1d, 0x22),
+		URL:              "/",
+		Windows: application.WindowsWindow{
+			Theme:                             application.Dark,
 			DisableFramelessWindowDecorations: false,
-			Theme:                             windows.Dark,
 		},
-		OnStartup:     a.Startup,
-		OnBeforeClose: a.BeforeClose,
-		OnShutdown:    a.Shutdown,
-		Bind:          []interface{}{a},
 	})
-	if err != nil {
-		println("Error:", err.Error())
+
+	wapp := application.New(application.Options{
+		Name:     "sshclient",
+		Services: []application.Service{application.NewService(a)},
+		Assets: application.AssetOptions{
+			Handler: application.AssetFileServerFS(assets),
+		},
+		Windows: application.WindowsOptions{
+			// Масштабом WebView2 управляет Wails по DPI окна, иначе на двух мониторах
+			// восстановленное окно подхватывает чужой масштаб (см. app/restorefix_windows.go).
+			UseVisualHosting:    true,
+			WebviewUserDataPath: webviewDataPath(),
+		},
+	})
+	if err := wapp.Run(); err != nil {
+		log.Fatal(err)
 	}
+}
+
+// webviewDataPath keeps the WebView2 cache in the data folder, never next to
+// the exe: Stash restores the package folder to its reference files.
+func webviewDataPath() string {
+	dir, err := appdir.Dir()
+	if err != nil {
+		log.Printf("webview data path: %v", err)
+		return ""
+	}
+	return filepath.Join(dir, "WebView2")
 }

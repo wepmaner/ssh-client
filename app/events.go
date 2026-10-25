@@ -1,22 +1,22 @@
 package app
 
-import (
-	"context"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
-)
-
 // emitter sends events to the frontend. Tests replace the Wails implementation with a recorder.
 type emitter interface {
 	Emit(name string, payload any)
 }
 
-// wailsEmitter emits through the Wails runtime of the running window.
-type wailsEmitter struct{ ctx context.Context }
+// eventSink is the part of the Wails v3 event manager (application.App.Event) the emitter uses.
+type eventSink interface {
+	Emit(name string, data ...any) bool
+}
 
-func (w wailsEmitter) Emit(name string, payload any) { runtime.EventsEmit(w.ctx, name, payload) }
+// wailsEmitter emits through the Wails event manager. The payload goes as the
+// only argument, so the frontend receives it unchanged as WailsEvent.data.
+type wailsEmitter struct{ sink eventSink }
 
-// nopEmitter drops events emitted before Startup.
+func (w wailsEmitter) Emit(name string, payload any) { w.sink.Emit(name, payload) }
+
+// nopEmitter drops events emitted before ServiceStartup.
 type nopEmitter struct{}
 
 func (nopEmitter) Emit(string, any) {}

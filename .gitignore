@@ -11,3 +11,4 @@ dist/
 stash-out/
 notes.md
 *.exe
+*.syso

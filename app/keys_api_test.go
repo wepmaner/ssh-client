@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -262,5 +263,38 @@ func TestVerifyPasswordWithoutVaultPassword(t *testing.T) {
 	}
 	if err := a.verifyPassword("correct horse"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDialogPath(t *testing.T) {
+	if p, err := dialogPath(`C:\k\id_ed25519`, nil); err != nil || p != `C:\k\id_ed25519` {
+		t.Fatalf("chosen: %q %v", p, err)
+	}
+	if _, err := dialogPath("", nil); !errors.Is(err, ErrCancelled) {
+		t.Fatalf("empty path: %v", err)
+	}
+	if _, err := dialogPath("", errors.New(dialogCancelledText)); !errors.Is(err, ErrCancelled) {
+		t.Fatalf("dismissed: %v", err)
+	}
+	boom := errors.New("boom")
+	if _, err := dialogPath("", boom); !errors.Is(err, boom) {
+		t.Fatalf("failure: %v", err)
+	}
+}
+
+func TestWindowlessCallsFailCleanly(t *testing.T) {
+	a := newKeysApp(t)
+	k, err := a.KeyGenerate("k", "ed25519", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.KeyCopyPublic(k.ID); !errors.Is(err, errNoWindow) {
+		t.Fatalf("copy: %v", err)
+	}
+	if _, err := a.KeyImportFile(); !errors.Is(err, errNoWindow) {
+		t.Fatalf("import: %v", err)
+	}
+	if err := a.KeyExport(k.ID, "public", ""); !errors.Is(err, errNoWindow) {
+		t.Fatalf("export: %v", err)
 	}
 }

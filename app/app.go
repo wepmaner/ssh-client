@@ -1,4 +1,4 @@
-// Package app holds the Wails-bound application object.
+// Package app holds the application object, bound to the frontend as the one Wails service.
 package app
 
 import (
@@ -9,7 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"sshclient/internal/appdir"
 	"sshclient/internal/model"
@@ -17,14 +18,18 @@ import (
 	"sshclient/internal/store"
 )
 
-// App is bound to the frontend and receives Wails lifecycle callbacks.
+// App is the Wails service: its public methods are bound to the frontend, and
+// it receives the service lifecycle callbacks.
 type App struct {
-	ctx      context.Context
+	window  application.WebviewWindowOptions // the main window without saved geometry
+	wapp    *application.App                 // nil before ServiceStartup and in tests
+	mainWin *application.WebviewWindow
+
 	vault    *store.Vault
 	store    *store.Store
 	vaultErr error
 
-	emit emitter // term:* events; Wails in Startup, a recorder in tests
+	emit emitter // term:*, fwd:*, menu:* events; Wails in ServiceStartup, a recorder in tests
 
 	sessMu   sync.Mutex
 	sessions map[string]*session
@@ -38,9 +43,10 @@ type App struct {
 	fwdKeepalive time.Duration        // keepalive interval of forward clients; 0 means keepaliveInterval
 }
 
-// New creates an App.
-func New() *App {
-	return &App{}
+// New creates an App. window is the main window, created in ServiceStartup
+// once the saved geometry is known.
+func New(window application.WebviewWindowOptions) *App {
+	return &App{window: window}
 }
 
 const vaultFile = "vault.json"
@@ -94,33 +100,46 @@ func (a *App) storeUnlocked() bool {
 	return a.store != nil && !a.vault.Locked()
 }
 
-// Startup opens the vault and restores the saved window geometry. A locked
-// password vault falls back to the plain window.json geometry.
-func (a *App) Startup(ctx context.Context) {
-	a.ctx = ctx
-	a.emit = wailsEmitter{ctx}
+// ServiceStartup opens the vault, then creates the main window at the saved
+// geometry, so it shows in place without a jump. It runs before Wails starts
+// pending windows.
+func (a *App) ServiceStartup(_ context.Context, _ application.ServiceOptions) error {
+	a.wapp = application.Get()
+	a.emit = wailsEmitter{a.wapp.Event}
 	a.initVault()
-	var ws model.WindowState
-	ok := false
-	if a.storeUnlocked() {
-		ws = a.store.Settings().Window
-		// The untouched default of a brand-new vault carries no position.
-		// A fresh vault has no geometry yet; use an existing window.json once.
-		ok = ws != model.DefaultSettings().Window
-		if !ok {
-			ws, ok = loadWindowState()
-		}
-	} else {
-		ws, ok = loadWindowState()
+	a.registerContextMenus()
+
+	ws, ok := a.startupWindowState()
+	a.mainWin = a.wapp.Window.NewWithOptions(mainWindowOptions(a.window, ws, ok))
+	// The hook runs before the window goes away, while its geometry is readable;
+	// it never cancels the close.
+	a.mainWin.RegisterHook(events.Common.WindowClosing, func(*application.WindowEvent) {
+		a.saveWindowGeometry(a.mainWin)
+	})
+	fixRestoreScale(a.mainWin)
+	return nil
+}
+
+// ServiceShutdown runs after the window has closed; it ends every SSH session and forward.
+func (a *App) ServiceShutdown() error {
+	a.closeAllSessions()
+	a.stopAllForwards()
+	return nil
+}
+
+// startupWindowState returns the geometry to open with. A locked password
+// vault falls back to the plain window.json geometry.
+func (a *App) startupWindowState() (model.WindowState, bool) {
+	if !a.storeUnlocked() {
+		return loadWindowState()
 	}
-	if !ok || ws.W <= 0 {
-		return
+	ws := a.store.Settings().Window
+	// The untouched default of a brand-new vault carries no position.
+	// A fresh vault has no geometry yet; use an existing window.json once.
+	if ws == model.DefaultSettings().Window {
+		return loadWindowState()
 	}
-	runtime.WindowSetPosition(ctx, ws.X, ws.Y)
-	runtime.WindowSetSize(ctx, ws.W, ws.H)
-	if ws.Maximized {
-		runtime.WindowMaximise(ctx)
-	}
+	return ws, true
 }
 
 // previousWindowState returns the last stored geometry from the active backend.
@@ -132,39 +151,19 @@ func (a *App) previousWindowState() (model.WindowState, bool) {
 	return loadWindowState()
 }
 
-// BeforeClose saves the window geometry while the window is still alive,
-// into the vault when unlocked, otherwise into window.json.
-// It never prevents the close.
-func (a *App) BeforeClose(ctx context.Context) bool {
-	var ws model.WindowState
-	if runtime.WindowIsMaximised(ctx) {
-		// Keep the previous un-maximised geometry to restore into.
-		var ok bool
-		if ws, ok = a.previousWindowState(); !ok || ws.W <= 0 {
-			ws = model.DefaultSettings().Window
-		}
-		ws.Maximized = true
-	} else {
-		ws.X, ws.Y = runtime.WindowGetPosition(ctx)
-		ws.W, ws.H = runtime.WindowGetSize(ctx)
-	}
+// saveWindowGeometry stores the window geometry into the vault when unlocked,
+// otherwise into window.json.
+func (a *App) saveWindowGeometry(w geometryWindow) {
+	ws := captureWindowState(w, a.previousWindowState)
 	if a.storeUnlocked() {
 		set := a.store.Settings()
 		set.Window = ws
 		if err := a.store.SaveSettings(set); err != nil {
 			log.Printf("save window state: %v", err)
 		}
-		return false
+		return
 	}
 	if err := saveWindowState(ws); err != nil {
 		log.Printf("save window state: %v", err)
 	}
-	return false
-}
-
-// Shutdown is called after the window has closed; it ends every SSH session and forward.
-func (a *App) Shutdown(ctx context.Context) {
-	_ = ctx
-	a.closeAllSessions()
-	a.stopAllForwards()
 }

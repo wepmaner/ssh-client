@@ -1,0 +1,29 @@
+version: '3'
+
+# Portable Windows build for the Stash launcher: no installer (CLAUDE.md, «Поставка»).
+
+vars:
+  APP_NAME: "sshclient"
+  BIN_DIR: "build/bin"
+  PACKAGE_MANAGER: "npm"
+  VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
+
+includes:
+  common: ./build/Taskfile.yml
+  windows: ./build/windows/Taskfile.yml
+
+tasks:
+  build:
+    summary: Builds build/bin/sshclient.exe (VERSION=X.Y.Z sets main.version)
+    cmds:
+      - task: windows:build
+
+  run:
+    summary: Runs the built application
+    cmds:
+      - task: windows:run
+
+  dev:
+    summary: Runs the application in development mode
+    cmds:
+      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}

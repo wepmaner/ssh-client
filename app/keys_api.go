@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"sshclient/internal/keys"
 	"sshclient/internal/model"
@@ -27,11 +27,31 @@ var (
 	errBadExportKind = errors.New("Неизвестный формат экспорта")
 	errExportLocked  = errors.New("Ключ с парольной фразой экспортируется только исходным файлом")
 	errNoWindow      = errors.New("Окно приложения недоступно")
+	errClipboard     = errors.New("Не удалось скопировать в буфер обмена")
 	errReadFile      = errors.New("Не удалось прочитать файл")
 )
 
 // ErrCancelled is returned when the user dismisses a system file dialog; the UI ignores it.
 var ErrCancelled = errors.New("cancelled")
+
+// dialogCancelledText is the error text of a dismissed file dialog in Wails v3
+// (cfd.ErrorCancelled, an internal package that cannot be imported).
+const dialogCancelledText = "cancelled by user"
+
+// dialogPath maps the result of a Wails file dialog: dismissing it, which v3
+// reports as an error, becomes ErrCancelled like an empty path.
+func dialogPath(path string, err error) (string, error) {
+	if err != nil {
+		if err.Error() == dialogCancelledText {
+			return "", ErrCancelled
+		}
+		return "", err
+	}
+	if path == "" {
+		return "", ErrCancelled
+	}
+	return path, nil
+}
 
 const passphraseRequiredPrefix = "passphrase_required:"
 
@@ -194,21 +214,17 @@ func (a *App) KeyImportFile() (KeyDTO, error) {
 	if !a.storeUnlocked() {
 		return KeyDTO{}, errVaultLocked
 	}
-	if a.ctx == nil {
+	if a.wapp == nil {
 		return KeyDTO{}, errNoWindow
 	}
-	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Импорт приватного ключа",
-		Filters: []runtime.FileFilter{
-			{DisplayName: "Ключи (*.ppk;*.pem;id_*)", Pattern: "*.ppk;*.pem;id_*"},
-			{DisplayName: "Все файлы (*.*)", Pattern: "*.*"},
-		},
-	})
+	path, err := dialogPath(a.wapp.Dialog.OpenFile().
+		AttachToWindow(a.mainWin).
+		SetTitle("Импорт приватного ключа").
+		AddFilter("Ключи (*.ppk;*.pem;id_*)", "*.ppk;*.pem;id_*").
+		AddFilter("Все файлы (*.*)", "*.*").
+		PromptForSingleSelection())
 	if err != nil {
 		return KeyDTO{}, err
-	}
-	if path == "" {
-		return KeyDTO{}, ErrCancelled
 	}
 	return a.KeyImportFileWithPassphrase(path, "")
 }
@@ -300,10 +316,13 @@ func (a *App) KeyCopyPublic(id string) error {
 	if err != nil {
 		return err
 	}
-	if a.ctx == nil {
+	if a.wapp == nil {
 		return errNoWindow
 	}
-	return runtime.ClipboardSetText(a.ctx, keys.PublicLine(k))
+	if !a.wapp.Clipboard.SetText(keys.PublicLine(k)) {
+		return errClipboard
+	}
+	return nil
 }
 
 // exportPayload returns the file content and default file name for a format.
@@ -346,18 +365,16 @@ func (a *App) KeyExport(id, format, password string) error {
 	if err != nil {
 		return err
 	}
-	if a.ctx == nil {
+	if a.wapp == nil {
 		return errNoWindow
 	}
-	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:           "Экспорт ключа",
-		DefaultFilename: name,
-	})
+	path, err := dialogPath(a.wapp.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
+		Title:    "Экспорт ключа",
+		Filename: name,
+		Window:   a.mainWin,
+	}).PromptForSingleSelection())
 	if err != nil {
 		return err
-	}
-	if path == "" {
-		return ErrCancelled
 	}
 	return os.WriteFile(path, data, 0o600)
 }
