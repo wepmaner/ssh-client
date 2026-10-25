@@ -3,6 +3,7 @@ package sshclient
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -539,13 +540,22 @@ func TestLocalListenerFailureIsSticky(t *testing.T) {
 func TestReconnectStopsWhenServerNotTrusted(t *testing.T) {
 	// Пользователь отказался доверять ключу при переподключении: проброс завершается ошибкой
 	// окончательно, без новых попыток и новых вопросов.
+	testReconnectStopsOn(t, &userError{msg: msgHostNotTrusted, cause: ErrHostNotTrusted})
+}
+
+func TestReconnectStopsWhenHostKeyChanged(t *testing.T) {
+	// Изменившийся ключ сервера отклоняется всегда: повторы дали бы тот же отказ.
+	testReconnectStopsOn(t, fmt.Errorf("%w: host example", ErrHostKeyChanged))
+}
+
+func testReconnectStopsOn(t *testing.T, refused error) {
+	t.Helper()
 	srv, dial := forwardServer(t)
 	listen := freeAddr(t)
 	var (
 		mu    sync.Mutex
 		calls int
 	)
-	refused := &userError{msg: msgHostNotTrusted, cause: ErrHostNotTrusted}
 	dialer := func(ctx context.Context) (*ssh.Client, error) {
 		mu.Lock()
 		calls++
@@ -570,7 +580,7 @@ func TestReconnectStopsWhenServerNotTrusted(t *testing.T) {
 		select {
 		case st := <-r.Events():
 			if st.Status == "error" {
-				if st.Error != msgHostNotTrusted {
+				if st.Error != refused.Error() {
 					t.Fatalf("state %+v", st)
 				}
 				done = true

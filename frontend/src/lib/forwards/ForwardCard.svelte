@@ -73,7 +73,13 @@
     {#if active}
       <Button variant="outline" onclick={() => stopForward(forward.id)}>Остановить</Button>
     {:else}
-      <Button variant="primary" onclick={() => startForward(forward.id)}>Запустить</Button>
+      <!-- A changed server key is final: starting again would be refused the same way. -->
+      <Button
+        variant="primary"
+        disabled={!forward.retryable}
+        title={forward.retryable ? undefined : 'Ключ сервера изменился: исправьте known_hosts и перезапустите программу'}
+        onclick={() => forward.retryable && startForward(forward.id)}>Запустить</Button
+      >
     {/if}
     <span class="more">
       <button

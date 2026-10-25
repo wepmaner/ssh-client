@@ -125,6 +125,20 @@ describe('ForwardsView', () => {
     await vi.waitFor(() => expect(within(card('SOCKS')).queryByText(sys)).toBeNull())
   })
 
+  it('a changed server key disables «Запустить» and keeps the error text', async () => {
+    render(ForwardsView)
+    const changed = 'Ключ сервера prod.example.test изменился'
+    handlers.get('fwd:state:f2')?.({ status: 'error', error: changed, detail: '', conns: 0, retryable: false })
+    await vi.waitFor(() => expect(within(card('SOCKS')).getByRole('alert').textContent).toBe(changed))
+    const start = within(card('SOCKS')).getByRole('button', { name: 'Запустить' }) as HTMLButtonElement
+    expect(start.disabled).toBe(true)
+    await fireEvent.click(start)
+    expect(api.ForwardStart).not.toHaveBeenCalled()
+    // An ordinary failure can be started again.
+    handlers.get('fwd:state:f2')?.({ status: 'error', error: 'нет сети', detail: '', conns: 0, retryable: true })
+    await vi.waitFor(() => expect((within(card('SOCKS')).getByRole('button', { name: 'Запустить' }) as HTMLButtonElement).disabled).toBe(false))
+  })
+
   it('shows the mini-terminal while a starting forward has prompt output', async () => {
     render(ForwardsView)
     handlers.get('fwd:state:f2')?.({ status: 'starting', error: '', conns: 0, retryable: true })
