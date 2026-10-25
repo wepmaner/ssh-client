@@ -1,10 +1,16 @@
 package app
 
 import (
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/ssh"
 
 	"sshclient/internal/model"
 )
@@ -32,20 +38,20 @@ func fixture(t *testing.T, name string) string {
 func TestKeyLifecycle(t *testing.T) {
 	a := newKeysApp(t)
 
-	if _, err := a.KeyGenerate("  ", "ed25519", ""); err == nil || err.Error() != "Укажите название ключа" {
+	if _, err := a.KeyGenerate("  ", "ed25519", "", ""); err == nil || err.Error() != "Укажите название ключа" {
 		t.Fatalf("empty name: %v", err)
 	}
-	k, err := a.KeyGenerate("work", "ed25519", "me@box")
+	k, err := a.KeyGenerate("work", "ed25519", "me@box", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if k.Type != "ed25519" || k.Comment != "me@box" || k.ID == "" || !strings.HasPrefix(k.PublicLine, "ssh-ed25519 ") {
 		t.Fatalf("dto: %+v", k)
 	}
-	if _, err := a.KeyGenerate("WORK", "ed25519", ""); err == nil || err.Error() != "Ключ с таким названием уже есть" {
+	if _, err := a.KeyGenerate("WORK", "ed25519", "", ""); err == nil || err.Error() != "Ключ с таким названием уже есть" {
 		t.Fatalf("duplicate: %v", err)
 	}
-	if _, err := a.KeyGenerate("x", "dsa", ""); err == nil {
+	if _, err := a.KeyGenerate("x", "dsa", "", ""); err == nil {
 		t.Fatal("unknown kind accepted")
 	}
 
@@ -101,40 +107,145 @@ func TestKeyImportText(t *testing.T) {
 	}
 
 	enc := fixture(t, "v3.ppk")
-	_, err = a.KeyImportText(enc, "ppk")
-	if err == nil || err.Error() != "passphrase_required:text" {
-		t.Fatalf("no passphrase: %v", err)
+	p, err := a.KeyImportText(enc, "ppk")
+	if err != nil {
+		t.Fatalf("encrypted ppk must import without a passphrase: %v", err)
 	}
-	if _, err := a.KeyImportTextWithPassphrase(enc, "ppk", "nope"); err == nil || err.Error() != "Неверная парольная фраза" {
-		t.Fatalf("wrong passphrase: %v", err)
+	if p.Name != "ppk" || p.Type != "rsa" || !p.Encrypted || p.Format != "ppk" {
+		t.Fatalf("ppk: %+v", p)
 	}
-	p, err := a.KeyImportTextWithPassphrase(enc, "ppk", "testkey")
+	stored, err := a.findKey(p.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Name != "ppk" || p.Type != "rsa" {
-		t.Fatalf("ppk: %+v", p)
+	if string(stored.Private) != strings.TrimSpace(enc) {
+		t.Fatal("encrypted ppk must be stored in its original bytes")
 	}
 }
 
-func TestKeyImportFileWithPassphrase(t *testing.T) {
-	a := newKeysApp(t)
-	path := filepath.Join("..", "internal", "keys", "testdata", "v3.ppk")
-	if _, err := a.KeyImportFileWithPassphrase(path, ""); err == nil || err.Error() != "passphrase_required:"+path {
-		t.Fatalf("no passphrase: %v", err)
-	}
-	k, err := a.KeyImportFileWithPassphrase(path, "testkey")
+// legacyPEM returns the RSA fixture encrypted with Proc-Type: 4,ENCRYPTED.
+func legacyPEM(t *testing.T, pw string) string {
+	t.Helper()
+	blk, _ := pem.Decode([]byte(fixture(t, "rsa_pkcs1.pem")))
+	//nolint:staticcheck // SA1019: legacy PEM encryption is exactly what this fixture needs
+	enc, err := x509.EncryptPEMBlock(rand.Reader, blk.Type, blk.Bytes, []byte(pw), x509.PEMCipherAES256)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if k.Name != "v3" {
-		t.Fatalf("name from file: %q", k.Name)
+	return string(pem.EncodeToMemory(enc))
+}
+
+func TestKeyImportLegacyPEMAsksPassphrase(t *testing.T) {
+	a := newKeysApp(t)
+	enc := legacyPEM(t, "pw")
+	if _, err := a.KeyImportText(enc, "old"); err == nil || err.Error() != "passphrase_required:text" {
+		t.Fatalf("no passphrase: %v", err)
+	}
+	if _, err := a.KeyImportTextWithPassphrase(enc, "old", "nope"); err == nil || err.Error() != "Неверная парольная фраза" {
+		t.Fatalf("wrong passphrase: %v", err)
+	}
+	k, err := a.KeyImportTextWithPassphrase(enc, "old", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !k.Encrypted || k.Format != "pem" {
+		t.Fatalf("dto: %+v", k)
+	}
+	stored, err := a.findKey(k.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stored.Private) != strings.TrimSpace(enc) {
+		t.Fatal("legacy PEM must stay encrypted in its original bytes")
+	}
+
+	path := filepath.Join(t.TempDir(), "legacy.pem")
+	if err := os.WriteFile(path, []byte(enc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.KeyImportFileWithPassphrase(path, ""); err == nil || err.Error() != "passphrase_required:"+path {
+		t.Fatalf("file without passphrase: %v", err)
+	}
+	if _, err := a.KeyImportFileWithPassphrase(path, "pw"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestKeyImportFileEncryptedPPK(t *testing.T) {
+	a := newKeysApp(t)
+	path := filepath.Join("..", "internal", "keys", "testdata", "v3.ppk")
+	k, err := a.KeyImportFileWithPassphrase(path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k.Name != "v3" || !k.Encrypted || k.Format != "ppk" {
+		t.Fatalf("dto: %+v", k)
+	}
+}
+
+func TestKeyGenerateWithPassphrase(t *testing.T) {
+	a := newKeysApp(t)
+	d, err := a.KeyGenerate("locked", "ed25519", "c", "phrase-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !d.Encrypted || d.Format != "openssh" {
+		t.Fatalf("dto: %+v", d)
+	}
+	k, err := a.findKey(d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ssh.ParseRawPrivateKey(k.Private); err == nil {
+		t.Fatal("stored key is not encrypted")
+	}
+	if _, err := ssh.ParseRawPrivateKeyWithPassphrase(k.Private, []byte("phrase-123")); err != nil {
+		t.Fatalf("stored key does not open with its passphrase: %v", err)
+	}
+	blob, err := json.Marshal(a.store.Keys())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(blob), "phrase-123") {
+		t.Fatal("passphrase leaked into the store")
+	}
+
+	plain, err := a.KeyGenerate("open", "ed25519", "c", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Encrypted {
+		t.Fatal("empty passphrase must mean an unencrypted key")
+	}
+}
+
+func TestExportPayloadEncrypted(t *testing.T) {
+	a := newKeysApp(t)
+	d, err := a.KeyImportText(fixture(t, "v3.ppk"), "put")
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, err := a.findKey(d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"openssh", "ppk"} {
+		if _, _, err := exportPayload(k, f); err == nil {
+			t.Fatalf("%s export of an encrypted key accepted", f)
+		}
+	}
+	data, name, err := exportPayload(k, "original")
+	if err != nil || name != "put.ppk" || string(data) != string(k.Private) {
+		t.Fatalf("original: %q %v", name, err)
+	}
+	if _, name, err := exportPayload(k, "public"); err != nil || name != "put.pub" {
+		t.Fatalf("public: %q %v", name, err)
 	}
 }
 
 func TestExportPayload(t *testing.T) {
 	a := newKeysApp(t)
-	d, err := a.KeyGenerate("srv", "ed25519", "c")
+	d, err := a.KeyGenerate("srv", "ed25519", "c", "")
 	if err != nil {
 		t.Fatal(err)
 	}

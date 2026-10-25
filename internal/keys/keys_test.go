@@ -1,6 +1,8 @@
 package keys
 
 import (
+	"bytes"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -27,13 +29,51 @@ func readFixture(t *testing.T, name string) []byte {
 	return data
 }
 
+// encryptedOpenSSH re-encrypts the ed25519 fixture with passphrase pw.
+func encryptedOpenSSH(t *testing.T, pw string) []byte {
+	t.Helper()
+	raw, err := ssh.ParseRawPrivateKey(readFixture(t, "ed25519_openssh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	blk, err := ssh.MarshalPrivateKeyWithPassphrase(raw, "fixture@test", []byte(pw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(blk)
+}
+
+// legacyPEM encrypts the RSA PKCS#1 fixture with Proc-Type: 4,ENCRYPTED.
+func legacyPEM(t *testing.T, pw string) []byte {
+	t.Helper()
+	blk, _ := pem.Decode(readFixture(t, "rsa_pkcs1.pem"))
+	//nolint:staticcheck // SA1019: legacy PEM encryption is exactly what this fixture needs
+	enc, err := x509.EncryptPEMBlock(rand.Reader, blk.Type, blk.Bytes, []byte(pw), x509.PEMCipherAES256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(enc)
+}
+
+func mustInspect(t *testing.T, data []byte) model.Key {
+	t.Helper()
+	k, err := Inspect(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return k
+}
+
 func TestGenerateEd25519(t *testing.T) {
-	k, err := Generate("ed25519", "me@host")
+	k, err := Generate("ed25519", "me@host", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if k.Type != "ed25519" || k.Source != "generated" || k.Comment != "me@host" || k.CreatedAt.IsZero() {
 		t.Fatalf("unexpected metadata: %+v", k)
+	}
+	if k.Format != "openssh" || k.Encrypted {
+		t.Fatalf("format %q encrypted %v", k.Format, k.Encrypted)
 	}
 	if !strings.HasPrefix(k.PublicLine, "ssh-ed25519 ") || !strings.HasSuffix(k.PublicLine, " me@host") {
 		t.Fatalf("bad public line %q", k.PublicLine)
@@ -41,27 +81,21 @@ func TestGenerateEd25519(t *testing.T) {
 	if !strings.HasPrefix(k.Fingerprint, "SHA256:") || strings.Contains(k.Fingerprint, "=") {
 		t.Fatalf("bad fingerprint %q", k.Fingerprint)
 	}
-	got, err := ParsePrivate(k.PrivatePEM, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Fingerprint != k.Fingerprint {
-		t.Fatalf("fingerprint mismatch %q vs %q", got.Fingerprint, k.Fingerprint)
-	}
-	if got.Comment != "me@host" {
-		t.Fatalf("comment lost: %q", got.Comment)
+	got := mustInspect(t, k.Private)
+	if got.Fingerprint != k.Fingerprint || got.Comment != "me@host" {
+		t.Fatalf("round trip: %+v vs %+v", got, k)
 	}
 }
 
 func TestGenerateRSAIs4096(t *testing.T) {
-	k, err := Generate("rsa", "")
+	k, err := Generate("rsa", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if k.Type != "rsa" || !strings.HasPrefix(k.PublicLine, "ssh-rsa ") {
 		t.Fatalf("unexpected key: %+v", k)
 	}
-	raw, err := ssh.ParseRawPrivateKey(k.PrivatePEM)
+	raw, err := ssh.ParseRawPrivateKey(k.Private)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,61 +109,80 @@ func TestGenerateRSAIs4096(t *testing.T) {
 }
 
 func TestGenerateUnknownKind(t *testing.T) {
-	if _, err := Generate("dsa", ""); !errors.Is(err, ErrUnsupportedKeyType) {
+	if _, err := Generate("dsa", "", nil); !errors.Is(err, ErrUnsupportedKeyType) {
 		t.Fatalf("want ErrUnsupportedKeyType, got %v", err)
 	}
 }
 
-func TestParseOpenSSHNoPassphrase(t *testing.T) {
-	k, err := ParsePrivate(readFixture(t, "ed25519_openssh"), nil)
+func TestGenerateWithPassphrase(t *testing.T) {
+	k, err := Generate("ed25519", "c", []byte("pw"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if k.Type != "ed25519" || k.Source != "openssh" || k.Comment != "fixture@test" {
+	if !k.Encrypted || k.Format != "openssh" || !strings.HasSuffix(k.PublicLine, " c") {
+		t.Fatalf("unexpected: %+v", k)
+	}
+	if _, err := ssh.ParseRawPrivateKey(k.Private); err == nil {
+		t.Fatal("stored key is not encrypted")
+	}
+	if _, err := Signer(k, nil); !errors.Is(err, ErrPassphraseRequired) {
+		t.Fatalf("want ErrPassphraseRequired, got %v", err)
+	}
+	s, err := Signer(k, []byte("pw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ssh.FingerprintSHA256(s.PublicKey()) != k.Fingerprint {
+		t.Fatal("signer does not match the stored public key")
+	}
+	again := mustInspect(t, k.Private)
+	if !again.Encrypted || again.Fingerprint != k.Fingerprint {
+		t.Fatalf("inspect of generated encrypted key: %+v", again)
+	}
+}
+
+func TestInspectOpenSSHPlain(t *testing.T) {
+	data := readFixture(t, "ed25519_openssh")
+	k := mustInspect(t, data)
+	if k.Type != "ed25519" || k.Source != "openssh" || k.Comment != "fixture@test" || k.Format != "openssh" || k.Encrypted {
 		t.Fatalf("unexpected: %+v", k)
 	}
 	if !strings.HasPrefix(k.PublicLine, "ssh-ed25519 ") || !strings.HasPrefix(k.Fingerprint, "SHA256:") {
 		t.Fatalf("unexpected: %+v", k)
 	}
-	if !strings.HasPrefix(string(k.PrivatePEM), "-----BEGIN OPENSSH PRIVATE KEY-----") {
-		t.Fatal("not re-encoded as OpenSSH")
+	if !bytes.Equal(k.Private, data) {
+		t.Fatal("private bytes must be the original file")
 	}
 }
 
-func TestParseOpenSSHEncrypted(t *testing.T) {
-	pk, err := ssh.ParseRawPrivateKey(readFixture(t, "ed25519_openssh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	blk, err := ssh.MarshalPrivateKeyWithPassphrase(pk, "c", []byte("pw"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	enc := pem.EncodeToMemory(blk)
-	if _, err := ParsePrivate(enc, nil); !errors.Is(err, ErrPassphraseRequired) {
-		t.Fatalf("want ErrPassphraseRequired, got %v", err)
-	}
-	if _, err := ParsePrivate(enc, []byte("bad")); !errors.Is(err, ErrWrongPassphrase) {
-		t.Fatalf("want ErrWrongPassphrase, got %v", err)
-	}
-	k, err := ParsePrivate(enc, []byte("pw"))
-	if err != nil {
-		t.Fatalf("got %+v, %v", k, err)
-	}
-}
-
-func TestParsePEMRSA(t *testing.T) {
-	k, err := ParsePrivate(readFixture(t, "rsa_pkcs1.pem"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if k.Type != "rsa" || k.Source != "openssh" || !strings.HasPrefix(k.PublicLine, "ssh-rsa ") {
+func TestInspectOpenSSHEncryptedWithoutPassphrase(t *testing.T) {
+	plain := mustInspect(t, readFixture(t, "ed25519_openssh"))
+	enc := encryptedOpenSSH(t, "pw")
+	k := mustInspect(t, enc)
+	if !k.Encrypted || k.Format != "openssh" || k.Type != "ed25519" {
 		t.Fatalf("unexpected: %+v", k)
 	}
-	if !strings.HasPrefix(string(k.PrivatePEM), "-----BEGIN OPENSSH PRIVATE KEY-----") {
-		t.Fatal("not re-encoded as OpenSSH")
+	if k.Fingerprint != plain.Fingerprint {
+		t.Fatalf("fingerprint %q, want %q", k.Fingerprint, plain.Fingerprint)
 	}
-	blk, _ := pem.Decode(readFixture(t, "rsa_pkcs1.pem"))
+	if !strings.HasPrefix(k.PublicLine, "ssh-ed25519 ") {
+		t.Fatalf("public line %q", k.PublicLine)
+	}
+	if !bytes.Equal(k.Private, enc) {
+		t.Fatal("encrypted key must be stored as is")
+	}
+}
+
+func TestInspectPEMRSA(t *testing.T) {
+	data := readFixture(t, "rsa_pkcs1.pem")
+	k := mustInspect(t, data)
+	if k.Type != "rsa" || k.Format != "pem" || k.Encrypted || !strings.HasPrefix(k.PublicLine, "ssh-rsa ") {
+		t.Fatalf("unexpected: %+v", k)
+	}
+	if !bytes.Equal(k.Private, data) {
+		t.Fatal("private bytes must be the original file")
+	}
+	blk, _ := pem.Decode(data)
 	orig, err := x509.ParsePKCS1PrivateKey(blk.Bytes)
 	if err != nil {
 		t.Fatal(err)
@@ -143,64 +196,179 @@ func TestParsePEMRSA(t *testing.T) {
 	}
 }
 
-func TestParsePPKv3NeedsPassphrase(t *testing.T) {
-	data := readFixture(t, "v3.ppk")
-	if _, err := ParsePrivate(data, nil); !errors.Is(err, ErrPassphraseRequired) {
+func TestInspectLegacyPEMNeedsPassphrase(t *testing.T) {
+	plain := mustInspect(t, readFixture(t, "rsa_pkcs1.pem"))
+	enc := legacyPEM(t, "pw")
+	if _, err := Inspect(enc); !errors.Is(err, ErrPassphraseRequired) {
 		t.Fatalf("want ErrPassphraseRequired, got %v", err)
 	}
-	if _, err := ParsePrivate(data, []byte("wrong")); !errors.Is(err, ErrWrongPassphrase) {
+	if _, err := InspectWithPassphrase(enc, []byte("bad")); !errors.Is(err, ErrWrongPassphrase) {
 		t.Fatalf("want ErrWrongPassphrase, got %v", err)
 	}
-	k, err := ParsePrivate(data, []byte(ppkPassphrase))
+	k, err := InspectWithPassphrase(enc, []byte("pw"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if k.Source != "ppk" || k.Type != "rsa" || k.Comment != "a@b" {
+	if !k.Encrypted || k.Format != "pem" || k.Fingerprint != plain.Fingerprint {
 		t.Fatalf("unexpected: %+v", k)
 	}
-	plain, err := ParsePrivate(readFixture(t, "v3-plain.ppk"), nil)
-	if err != nil {
+	if !bytes.Equal(k.Private, enc) {
+		t.Fatal("legacy PEM must stay encrypted in its original bytes")
+	}
+	if _, err := Signer(k, nil); !errors.Is(err, ErrPassphraseRequired) {
+		t.Fatalf("want ErrPassphraseRequired, got %v", err)
+	}
+	if _, err := Signer(k, []byte("pw")); err != nil {
 		t.Fatal(err)
 	}
-	if plain.Fingerprint != k.Fingerprint {
+}
+
+func TestInspectPPKEncrypted(t *testing.T) {
+	data := readFixture(t, "v3.ppk")
+	k := mustInspect(t, data)
+	if !k.Encrypted || k.Format != "ppk" || k.Source != "ppk" || k.Type != "rsa" || k.Comment != "a@b" {
+		t.Fatalf("unexpected: %+v", k)
+	}
+	if !strings.HasSuffix(k.PublicLine, " a@b") {
+		t.Fatalf("public line %q", k.PublicLine)
+	}
+	if !bytes.Equal(k.Private, data) {
+		t.Fatal("encrypted PPK must be stored as is")
+	}
+	plain := mustInspect(t, readFixture(t, "v3-plain.ppk"))
+	if plain.Encrypted || plain.Fingerprint != k.Fingerprint {
 		t.Fatal("encrypted and plain v3 fixtures should hold the same key")
 	}
 }
 
-func TestParsePPKv2(t *testing.T) {
-	k, err := ParsePrivate(readFixture(t, "v2.ppk"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if k.Source != "ppk" || k.Type != "rsa" || k.Comment != "a@b" || !strings.HasPrefix(k.Fingerprint, "SHA256:") {
+func TestInspectPPKv2(t *testing.T) {
+	k := mustInspect(t, readFixture(t, "v2.ppk"))
+	if k.Source != "ppk" || k.Format != "ppk" || k.Encrypted || k.Type != "rsa" || k.Comment != "a@b" || !strings.HasPrefix(k.Fingerprint, "SHA256:") {
 		t.Fatalf("unexpected: %+v", k)
 	}
 }
 
-func TestParseECDSAUnsupported(t *testing.T) {
-	if _, err := ParsePrivate(readFixture(t, "ecdsa_openssh"), nil); !errors.Is(err, ErrUnsupportedKeyType) {
+func TestInspectECDSAUnsupported(t *testing.T) {
+	if _, err := Inspect(readFixture(t, "ecdsa_openssh")); !errors.Is(err, ErrUnsupportedKeyType) {
 		t.Fatalf("want ErrUnsupportedKeyType, got %v", err)
+	}
+	raw, err := ssh.ParseRawPrivateKey(readFixture(t, "ecdsa_openssh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	blk, err := ssh.MarshalPrivateKeyWithPassphrase(raw, "", []byte("pw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Inspect(pem.EncodeToMemory(blk)); !errors.Is(err, ErrUnsupportedKeyType) {
+		t.Fatalf("encrypted ecdsa: want ErrUnsupportedKeyType, got %v", err)
 	}
 }
 
-func TestParseGarbage(t *testing.T) {
-	if _, err := ParsePrivate([]byte("not a key"), nil); err == nil {
+func TestInspectGarbage(t *testing.T) {
+	if _, err := Inspect([]byte("not a key")); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
-func TestExportPPKRoundTrip(t *testing.T) {
-	ed, err := Generate("ed25519", "rt@test")
+func TestSignerPlainAllFormats(t *testing.T) {
+	for _, name := range []string{"ed25519_openssh", "rsa_pkcs1.pem", "v2.ppk", "v3-plain.ppk"} {
+		k := mustInspect(t, readFixture(t, name))
+		s, err := Signer(k, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if ssh.FingerprintSHA256(s.PublicKey()) != k.Fingerprint {
+			t.Fatalf("%s: signer fingerprint differs", name)
+		}
+	}
+}
+
+func TestSignerCorrectPassphrase(t *testing.T) {
+	cases := map[string]struct {
+		data []byte
+		pw   string
+	}{
+		"openssh": {encryptedOpenSSH(t, "pw"), "pw"},
+		"ppk":     {readFixture(t, "v3.ppk"), ppkPassphrase},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			k := mustInspect(t, c.data)
+			s, err := Signer(k, []byte(c.pw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ssh.FingerprintSHA256(s.PublicKey()) != k.Fingerprint {
+				t.Fatal("signer fingerprint differs")
+			}
+			if !bytes.Equal(k.Private, c.data) {
+				t.Fatal("Signer must not modify the stored bytes")
+			}
+		})
+	}
+}
+
+func TestSignerWrongPassphrase(t *testing.T) {
+	for name, data := range map[string][]byte{
+		"openssh": encryptedOpenSSH(t, "pw"),
+		"ppk":     readFixture(t, "v3.ppk"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			k := mustInspect(t, data)
+			if _, err := Signer(k, nil); !errors.Is(err, ErrPassphraseRequired) {
+				t.Fatalf("no passphrase: want ErrPassphraseRequired, got %v", err)
+			}
+			if _, err := Signer(k, []byte("wrong")); !errors.Is(err, ErrWrongPassphrase) {
+				t.Fatalf("want ErrWrongPassphrase, got %v", err)
+			}
+		})
+	}
+}
+
+func TestExportEncryptedKeepsOriginalBytes(t *testing.T) {
+	cases := map[string]struct {
+		data []byte
+		ext  string
+	}{
+		"openssh": {encryptedOpenSSH(t, "pw"), ""},
+		"ppk":     {readFixture(t, "v3.ppk"), ".ppk"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			k := mustInspect(t, c.data)
+			got, ext := PrivateOriginal(k)
+			if !bytes.Equal(got, c.data) || ext != c.ext {
+				t.Fatalf("original export changed bytes or ext %q", ext)
+			}
+			if _, err := PrivateOpenSSH(k); !errors.Is(err, ErrKeyEncrypted) {
+				t.Fatalf("OpenSSH export of encrypted key: %v", err)
+			}
+			if _, err := PrivatePPK(k); !errors.Is(err, ErrKeyEncrypted) {
+				t.Fatalf("PPK export of encrypted key: %v", err)
+			}
+		})
+	}
+	k, err := InspectWithPassphrase(legacyPEM(t, "pw"), []byte("pw"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Reuse a fixture instead of a second slow 4096-bit generation.
-	rsaKey, err := ParsePrivate(readFixture(t, "rsa_pkcs1.pem"), nil)
+	if _, ext := PrivateOriginal(k); ext != ".pem" {
+		t.Fatalf("pem ext %q", ext)
+	}
+}
+
+func TestExportPlainConverts(t *testing.T) {
+	ed, err := Generate("ed25519", "rt@test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Reuse fixtures instead of a second slow 4096-bit generation.
+	rsaKey := mustInspect(t, readFixture(t, "rsa_pkcs1.pem"))
 	rsaKey.Comment = "rt@test"
-	for name, k := range map[string]model.Key{"ed25519": ed, "rsa": rsaKey} {
+	ppkKey := mustInspect(t, readFixture(t, "v3-plain.ppk"))
+	ppkKey.Comment = "rt@test"
+	for name, k := range map[string]model.Key{"ed25519": ed, "pem": rsaKey, "ppk": ppkKey} {
 		t.Run(name, func(t *testing.T) {
 			ppk, err := PrivatePPK(k)
 			if err != nil {
@@ -209,33 +377,43 @@ func TestExportPPKRoundTrip(t *testing.T) {
 			if !strings.HasPrefix(string(ppk), "PuTTY-User-Key-File-3: ") || !strings.Contains(string(ppk), "Encryption: none") {
 				t.Fatalf("not an unencrypted v3 file:\n%s", ppk)
 			}
-			got, err := ParsePrivate(ppk, nil)
+			got := mustInspect(t, ppk)
+			if got.Fingerprint != k.Fingerprint || got.Source != "ppk" || got.Comment != "rt@test" {
+				t.Fatalf("ppk round trip mismatch: %+v vs %+v", got, k)
+			}
+			op, err := PrivateOpenSSH(k)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.Fingerprint != k.Fingerprint || got.Source != "ppk" || got.Comment != "rt@test" {
-				t.Fatalf("round trip mismatch: %+v vs %+v", got, k)
+			if !strings.HasPrefix(string(op), "-----BEGIN OPENSSH PRIVATE KEY-----") {
+				t.Fatalf("not OpenSSH:\n%s", op)
+			}
+			got = mustInspect(t, op)
+			if got.Fingerprint != k.Fingerprint || got.Encrypted || got.Comment != "rt@test" {
+				t.Fatalf("openssh round trip mismatch: %+v vs %+v", got, k)
 			}
 		})
 	}
 }
 
-func TestExportHelpers(t *testing.T) {
-	k, err := Generate("ed25519", "x")
+func TestExportOpenSSHOriginalIsUnchanged(t *testing.T) {
+	data := readFixture(t, "ed25519_openssh")
+	k := mustInspect(t, data)
+	got, err := PrivateOpenSSH(k)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if PublicLine(k) != k.PublicLine || string(PrivateOpenSSH(k)) != string(k.PrivatePEM) {
+	if !bytes.Equal(got, data) || PublicLine(k) != k.PublicLine {
 		t.Fatal("helpers must return stored values")
 	}
 }
 
 func TestGenerateUsesCryptoRand(t *testing.T) {
-	a, err := Generate("ed25519", "")
+	a, err := Generate("ed25519", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := Generate("ed25519", "")
+	b, err := Generate("ed25519", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,17 +422,26 @@ func TestGenerateUsesCryptoRand(t *testing.T) {
 	}
 }
 
-func TestParseCRLFInput(t *testing.T) {
-	for _, name := range []string{"v3-plain.ppk", "ed25519_openssh"} {
+func TestInspectCRLFInput(t *testing.T) {
+	for _, name := range []string{"v3-plain.ppk", "v3.ppk", "ed25519_openssh"} {
 		data := strings.ReplaceAll(string(readFixture(t, name)), "\n", "\r\n")
-		if _, err := ParsePrivate([]byte(data), nil); err != nil {
+		k, err := Inspect([]byte(data))
+		if err != nil {
 			t.Errorf("%s with CRLF: %v", name, err)
+			continue
+		}
+		var pw []byte
+		if k.Encrypted {
+			pw = []byte(ppkPassphrase)
+		}
+		if _, err := Signer(k, pw); err != nil {
+			t.Errorf("%s with CRLF signer: %v", name, err)
 		}
 	}
 }
 
 func TestCommentSanitized(t *testing.T) {
-	k, err := Generate("ed25519", "x\nssh-ed25519 AAAA\t\x7f")
+	k, err := Generate("ed25519", "x\nssh-ed25519 AAAA\t\x7f", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +457,16 @@ func TestParseInvalidRSA(t *testing.T) {
 		t.Fatal(err)
 	}
 	orig.Primes[0].Add(orig.Primes[0], big.NewInt(2)) // break N = p*q
-	if _, err := build(orig, "", "openssh"); !errors.Is(err, ErrInvalidKey) {
+	if _, err := signerFromRaw(orig); !errors.Is(err, ErrInvalidKey) {
+		t.Fatalf("want ErrInvalidKey, got %v", err)
+	}
+}
+
+func TestSignerRejectsMismatchedPublicKey(t *testing.T) {
+	k := mustInspect(t, readFixture(t, "ed25519_openssh"))
+	other := mustInspect(t, readFixture(t, "rsa_pkcs1.pem"))
+	k.Fingerprint = other.Fingerprint
+	if _, err := Signer(k, nil); !errors.Is(err, ErrInvalidKey) {
 		t.Fatalf("want ErrInvalidKey, got %v", err)
 	}
 }

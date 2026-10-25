@@ -25,6 +25,7 @@ var (
 	errBadKey        = errors.New("Не удалось прочитать ключ: неподдерживаемый или повреждённый формат")
 	errBadKeyType    = errors.New("Поддерживаются только ключи Ed25519 и RSA")
 	errBadExportKind = errors.New("Неизвестный формат экспорта")
+	errExportLocked  = errors.New("Ключ с парольной фразой экспортируется только исходным файлом")
 	errNoWindow      = errors.New("Окно приложения недоступно")
 	errReadFile      = errors.New("Не удалось прочитать файл")
 )
@@ -35,10 +36,14 @@ var ErrCancelled = errors.New("cancelled")
 const passphraseRequiredPrefix = "passphrase_required:"
 
 // KeyDTO is a key as shown in the UI. The private part never leaves Go.
+// Format is openssh|pem|ppk; Encrypted means the key has its own passphrase,
+// asked in the terminal on every connection.
 type KeyDTO struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
 	Type        string   `json:"type"`
+	Format      string   `json:"format"`
+	Encrypted   bool     `json:"encrypted"`
 	PublicLine  string   `json:"public_line"`
 	Comment     string   `json:"comment"`
 	Fingerprint string   `json:"fingerprint"`
@@ -53,7 +58,7 @@ func (a *App) keyDTO(k model.Key) KeyDTO {
 		ids = append(ids, h.ID)
 	}
 	return KeyDTO{
-		ID: k.ID, Name: k.Name, Type: k.Type, PublicLine: k.PublicLine,
+		ID: k.ID, Name: k.Name, Type: k.Type, Format: k.Format, Encrypted: k.Encrypted, PublicLine: k.PublicLine,
 		Comment: k.Comment, Fingerprint: k.Fingerprint, Source: k.Source,
 		CreatedAt: k.CreatedAt.Format(time.RFC3339), HostIDs: ids,
 	}
@@ -123,8 +128,9 @@ func defaultComment() string {
 	return host
 }
 
-// KeyGenerate creates and stores a new key of kind ed25519 or rsa.
-func (a *App) KeyGenerate(name, kind, comment string) (KeyDTO, error) {
+// KeyGenerate creates and stores a new key of kind ed25519 or rsa. A
+// non-empty passphrase encrypts the key; the passphrase itself is not kept.
+func (a *App) KeyGenerate(name, kind, comment, passphrase string) (KeyDTO, error) {
 	if !a.storeUnlocked() {
 		return KeyDTO{}, errVaultLocked
 	}
@@ -135,7 +141,12 @@ func (a *App) KeyGenerate(name, kind, comment string) (KeyDTO, error) {
 	if strings.TrimSpace(comment) == "" {
 		comment = defaultComment()
 	}
-	k, err := keys.Generate(kind, strings.TrimSpace(comment))
+	var pp []byte
+	if passphrase != "" {
+		pp = []byte(passphrase)
+		defer clear(pp)
+	}
+	k, err := keys.Generate(kind, strings.TrimSpace(comment), pp)
 	if err != nil {
 		if errors.Is(err, keys.ErrUnsupportedKeyType) {
 			return KeyDTO{}, errBadKeyType
@@ -145,15 +156,20 @@ func (a *App) KeyGenerate(name, kind, comment string) (KeyDTO, error) {
 	return a.saveKey(k, name)
 }
 
-// parseKey maps key parser errors to UI messages; a missing passphrase is
-// reported as passphrase_required:<ref> so the UI can ask and retry.
+// parseKey reads a key without decrypting it and maps errors to UI messages.
+// Only a legacy encrypted PEM, which has no public part, needs the passphrase:
+// it is reported as passphrase_required:<ref> so the UI can ask and retry.
+// The passphrase only reads the public key; the key is stored as it came.
 func parseKey(data []byte, passphrase, ref string) (model.Key, error) {
-	var pp []byte
+	var k model.Key
+	var err error
 	if passphrase != "" {
-		pp = []byte(passphrase)
-		defer clear(pp)
+		pp := []byte(passphrase)
+		k, err = keys.InspectWithPassphrase(data, pp)
+		clear(pp)
+	} else {
+		k, err = keys.Inspect(data)
 	}
-	k, err := keys.ParsePrivate(data, pp)
 	switch {
 	case err == nil:
 		return k, nil
@@ -197,7 +213,8 @@ func (a *App) KeyImportFile() (KeyDTO, error) {
 	return a.KeyImportFileWithPassphrase(path, "")
 }
 
-// KeyImportFileWithPassphrase imports the key file at path, decrypting it with passphrase.
+// KeyImportFileWithPassphrase imports the key file at path; passphrase is
+// only for a legacy encrypted PEM (see parseKey).
 func (a *App) KeyImportFileWithPassphrase(path, passphrase string) (KeyDTO, error) {
 	if !a.storeUnlocked() {
 		return KeyDTO{}, errVaultLocked
@@ -220,7 +237,7 @@ func (a *App) KeyImportText(text, name string) (KeyDTO, error) {
 	return a.KeyImportTextWithPassphrase(text, name, "")
 }
 
-// KeyImportTextWithPassphrase is KeyImportText for an encrypted key.
+// KeyImportTextWithPassphrase is KeyImportText for a legacy encrypted PEM.
 func (a *App) KeyImportTextWithPassphrase(text, name, passphrase string) (KeyDTO, error) {
 	if !a.storeUnlocked() {
 		return KeyDTO{}, errVaultLocked
@@ -290,12 +307,21 @@ func (a *App) KeyCopyPublic(id string) error {
 }
 
 // exportPayload returns the file content and default file name for a format.
+// "original" is the stored file as is; an encrypted key is exported only that
+// way, never converted.
 func exportPayload(k model.Key, format string) ([]byte, string, error) {
+	if k.Encrypted && (format == "openssh" || format == "ppk") {
+		return nil, "", errExportLocked
+	}
 	switch format {
 	case "public":
 		return []byte(keys.PublicLine(k) + "\n"), k.Name + ".pub", nil
+	case "original":
+		data, ext := keys.PrivateOriginal(k)
+		return data, k.Name + ext, nil
 	case "openssh":
-		return keys.PrivateOpenSSH(k), k.Name, nil
+		data, err := keys.PrivateOpenSSH(k)
+		return data, k.Name, err
 	case "ppk":
 		data, err := keys.PrivatePPK(k)
 		return data, k.Name + ".ppk", err

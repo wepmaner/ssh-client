@@ -9,6 +9,8 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,6 +19,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
+	"sshclient/internal/keys"
 	"sshclient/internal/model"
 	"sshclient/internal/sshclient/sshtest"
 )
@@ -41,7 +44,9 @@ func testClientKey(t *testing.T, name, passphrase string) (*model.Key, ssh.Publi
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &model.Key{Name: name, Type: "ed25519", PrivatePEM: pem.EncodeToMemory(block)}, sshPub
+	k := &model.Key{Name: name, Type: "ed25519", Private: pem.EncodeToMemory(block), Format: "openssh", Encrypted: passphrase != ""}
+	k.Fingerprint = ssh.FingerprintSHA256(sshPub)
+	return k, sshPub
 }
 
 // trustedKnownHosts возвращает known_hosts, в котором уже записан ключ сервера addr.
@@ -103,6 +108,35 @@ func TestDialPassphraseKeyAsksInTerminal(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "right") || strings.Contains(out.String(), "wrong") {
 		t.Fatalf("passphrase echoed: %q", out.String())
+	}
+}
+
+func TestDialEncryptedPPKAsksInTerminal(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "keys", "testdata", "v3.ppk"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := keys.Inspect(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key.Name = "putty"
+	pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(key.PublicLine))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, out, err := dialTest(t, sshtest.Opts{AcceptKey: pub}, &key, strings.NewReader("nope\ntestkey\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(out.String(), "Парольная фраза ключа putty: "); n != 2 {
+		t.Fatalf("prompt printed %d times: %q", n, out.String())
+	}
+	if strings.Contains(out.String(), "testkey") {
+		t.Fatalf("passphrase echoed: %q", out.String())
+	}
+	if !bytes.Equal(key.Private, data) {
+		t.Fatal("the stored key must stay encrypted")
 	}
 }
 

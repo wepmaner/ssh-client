@@ -87,11 +87,11 @@ func (v *Vault) decrypt(dek []byte) error {
 	if err != nil {
 		return fmt.Errorf("%w: decrypt data: %v", ErrCorrupt, err)
 	}
-	var d model.VaultData
-	if err := json.Unmarshal(plain, &d); err != nil {
+	d, err := decodeData(plain)
+	if err != nil {
 		return fmt.Errorf("%w: decode data: %v", ErrCorrupt, err)
 	}
-	v.dek, v.data = dek, &d
+	v.dek, v.data = dek, d
 	return nil
 }
 

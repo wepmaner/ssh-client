@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"slices"
 	"sync"
@@ -67,9 +68,42 @@ func (s *Store) mutate(f func(d *model.VaultData) error) error {
 func cloneKeys(keys []model.Key) []model.Key {
 	out := slices.Clone(keys)
 	for i := range out {
-		out[i].PrivatePEM = bytes.Clone(out[i].PrivatePEM)
+		out[i].Private = bytes.Clone(out[i].Private)
 	}
 	return out
+}
+
+// legacyKeys reads the pre-9b key field: keys were always unencrypted OpenSSH
+// re-encoded by the app and stored under "private_pem".
+type legacyKeys struct {
+	Keys []struct {
+		PrivatePEM []byte `json:"private_pem"`
+	} `json:"keys"`
+}
+
+// decodeData decodes the vault payload and migrates keys stored before
+// Format existed: they become openssh, unencrypted, with Private taken from
+// the old private_pem field.
+func decodeData(plain []byte) (*model.VaultData, error) {
+	var d model.VaultData
+	if err := json.Unmarshal(plain, &d); err != nil {
+		return nil, err
+	}
+	var legacy legacyKeys
+	if err := json.Unmarshal(plain, &legacy); err != nil {
+		return nil, err
+	}
+	for i := range d.Keys {
+		k := &d.Keys[i]
+		if k.Format != "" {
+			continue
+		}
+		k.Format, k.Encrypted = "openssh", false
+		if len(k.Private) == 0 && i < len(legacy.Keys) {
+			k.Private = legacy.Keys[i].PrivatePEM
+		}
+	}
+	return &d, nil
 }
 
 // Hosts returns a copy of all hosts.

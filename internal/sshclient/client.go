@@ -2,7 +2,6 @@ package sshclient
 
 import (
 	"context"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +14,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"sshclient/internal/keys"
 	"sshclient/internal/model"
 )
 
@@ -213,12 +213,11 @@ func isAuthDenied(err error) bool {
 func (d *dialState) authMethods(t Target) ([]ssh.AuthMethod, error) {
 	var methods []ssh.AuthMethod
 	if t.Key != nil {
-		signer, err := ssh.ParsePrivateKey(t.Key.PrivatePEM)
-		var missing *ssh.PassphraseMissingError
+		signer, err := keys.Signer(*t.Key, nil)
 		switch {
 		case err == nil:
 			methods = append(methods, ssh.PublicKeys(signer))
-		case errors.As(err, &missing):
+		case errors.Is(err, keys.ErrPassphraseRequired):
 			methods = append(methods, ssh.PublicKeysCallback(d.passphraseSigners(t.Key)))
 		default:
 			return nil, fmt.Errorf("ключ %s: %w", t.Key.Name, err)
@@ -244,12 +243,13 @@ func (d *dialState) passphraseSigners(k *model.Key) func() ([]ssh.Signer, error)
 			}
 			// Копию фразы затираем сразу; строку pass Go затереть не даёт, её заберёт сборщик мусора.
 			pb := []byte(pass)
-			signer, err := ssh.ParsePrivateKeyWithPassphrase(k.PrivatePEM, pb)
+			signer, err := keys.Signer(*k, pb)
 			clear(pb)
 			if err == nil {
 				return []ssh.Signer{signer}, nil
 			}
-			if !errors.Is(err, x509.IncorrectPasswordError) {
+			// Пустой ответ считается неверной фразой, как и у OpenSSH.
+			if !errors.Is(err, keys.ErrWrongPassphrase) && !errors.Is(err, keys.ErrPassphraseRequired) {
 				return nil, fmt.Errorf("ключ %s: %w", k.Name, err)
 			}
 		}

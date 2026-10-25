@@ -27,96 +27,223 @@ var (
 	ErrUnsupportedKeyType = errors.New("keys: unsupported key type")
 	// ErrInvalidKey means the key material is internally inconsistent.
 	ErrInvalidKey = errors.New("keys: invalid key")
+	// ErrKeyEncrypted means the operation needs an unencrypted key.
+	ErrKeyEncrypted = errors.New("keys: key is encrypted")
+)
+
+// Key container formats stored in model.Key.Format.
+const (
+	FormatOpenSSH = "openssh"
+	FormatPEM     = "pem"
+	FormatPPK     = "ppk"
 )
 
 const (
 	ppkMagic     = "PuTTY-User-Key-File-"
 	opensshMagic = "openssh-key-v1\x00"
+	opensshBlock = "OPENSSH PRIVATE KEY"
 )
 
-// ParsePrivate parses an OpenSSH, PEM or PuTTY PPK private key. The result is
-// always re-encoded as an unencrypted OpenSSH private key.
-func ParsePrivate(data []byte, passphrase []byte) (model.Key, error) {
-	if bytes.HasPrefix(bytes.TrimSpace(data), []byte(ppkMagic)) {
-		return parsePPK(data, passphrase)
-	}
-	return parseOpenSSH(data, passphrase)
+func isPPK(data []byte) bool {
+	return bytes.HasPrefix(bytes.TrimSpace(data), []byte(ppkMagic))
 }
 
-func parseOpenSSH(data, passphrase []byte) (model.Key, error) {
+// Inspect reads an OpenSSH, PEM or PuTTY PPK private key without a
+// passphrase. Encrypted OpenSSH and PPK keys keep their public key in the
+// clear, so the metadata comes from there. A legacy encrypted PEM
+// (Proc-Type: 4,ENCRYPTED) has no public part and returns
+// ErrPassphraseRequired; use InspectWithPassphrase for it. Private is always
+// a copy of data, never decrypted or re-encoded.
+func Inspect(data []byte) (model.Key, error) {
+	if isPPK(data) {
+		return inspectPPK(data)
+	}
+	return inspectPEM(data, nil)
+}
+
+// InspectWithPassphrase is Inspect for a legacy encrypted PEM: the passphrase
+// only decrypts a transient copy to read the public key. It is not kept, and
+// Private stays the original encrypted bytes. Other formats ignore it.
+func InspectWithPassphrase(data, passphrase []byte) (model.Key, error) {
+	if isPPK(data) {
+		return inspectPPK(data)
+	}
+	return inspectPEM(data, passphrase)
+}
+
+func inspectPEM(data, passphrase []byte) (model.Key, error) {
+	blk, _ := pem.Decode(data)
+	if blk == nil {
+		return model.Key{}, errors.New("keys: parse private key: no PEM block")
+	}
+	format := FormatPEM
+	if blk.Type == opensshBlock {
+		format = FormatOpenSSH
+	}
 	raw, err := ssh.ParseRawPrivateKey(data)
 	var missing *ssh.PassphraseMissingError
-	if errors.As(err, &missing) {
+	switch {
+	case err == nil:
+		s, err := signerFromRaw(raw)
+		if err != nil {
+			return model.Key{}, err
+		}
+		return newKey(s.PublicKey(), opensshComment(data), format, false, data)
+	case errors.As(err, &missing) && missing.PublicKey != nil:
+		// OpenSSH container: the public key is stored unencrypted, the
+		// comment is inside the encrypted part.
+		return newKey(missing.PublicKey, "", format, true, data)
+	case errors.As(err, &missing):
 		if len(passphrase) == 0 {
 			return model.Key{}, ErrPassphraseRequired
 		}
-		raw, err = ssh.ParseRawPrivateKeyWithPassphrase(data, passphrase)
-		if errors.Is(err, x509.IncorrectPasswordError) {
-			return model.Key{}, fmt.Errorf("%w: %v", ErrWrongPassphrase, err)
+		raw, err := pemRaw(data, format, true, passphrase)
+		if err != nil {
+			return model.Key{}, err
 		}
+		s, err := signerFromRaw(raw)
+		if err != nil {
+			return model.Key{}, err
+		}
+		return newKey(s.PublicKey(), "", format, true, data)
 	}
-	if err != nil {
-		return model.Key{}, fmt.Errorf("keys: parse private key: %w", err)
-	}
-	return build(raw, opensshComment(data), "openssh")
+	return model.Key{}, fmt.Errorf("keys: parse private key: %w", err)
 }
 
-func parsePPK(data, passphrase []byte) (model.Key, error) {
+func inspectPPK(data []byte) (model.Key, error) {
 	pk, err := putty.New(data)
 	if err != nil {
 		return model.Key{}, fmt.Errorf("keys: parse ppk: %w", err)
 	}
-	if pk.Encryption != "none" && len(passphrase) == 0 {
-		return model.Key{}, ErrPassphraseRequired
-	}
-	raw, err := pk.ParseRawPrivateKey(passphrase)
-	if err != nil {
-		if pk.Encryption != "none" {
-			return model.Key{}, fmt.Errorf("%w: %v", ErrWrongPassphrase, err)
+	encrypted := pk.Encryption != "none"
+	var pub ssh.PublicKey
+	if encrypted {
+		// Public-Lines are stored in the clear.
+		if pub, err = ssh.ParsePublicKey(pk.PublicKey); err != nil {
+			return model.Key{}, fmt.Errorf("keys: parse ppk public key: %w", err)
 		}
-		return model.Key{}, fmt.Errorf("keys: parse ppk: %w", err)
+	} else {
+		// An unencrypted key is read in full so a broken one fails at import.
+		raw, err := ppkRaw(data, nil)
+		if err != nil {
+			return model.Key{}, err
+		}
+		s, err := signerFromRaw(raw)
+		if err != nil {
+			return model.Key{}, err
+		}
+		pub = s.PublicKey()
 	}
-	return build(raw, pk.Comment, "ppk")
+	return newKey(pub, pk.Comment, FormatPPK, encrypted, data)
 }
 
-// build normalizes a parsed private key into a model.Key with an unencrypted
-// OpenSSH private key, public line and fingerprint.
-func build(raw any, comment, source string) (model.Key, error) {
+// pemRaw parses an OpenSSH or PEM key. For an encrypted legacy PEM any
+// failure after decryption is a wrong passphrase: CBC padding catches most
+// wrong passphrases, the rest surface as a garbled ASN.1 structure.
+func pemRaw(data []byte, format string, encrypted bool, passphrase []byte) (any, error) {
+	var raw any
+	var err error
+	if encrypted {
+		raw, err = ssh.ParseRawPrivateKeyWithPassphrase(data, passphrase)
+	} else {
+		raw, err = ssh.ParseRawPrivateKey(data)
+	}
+	var missing *ssh.PassphraseMissingError
+	switch {
+	case err == nil:
+		return raw, nil
+	case errors.As(err, &missing):
+		return nil, ErrPassphraseRequired
+	case errors.Is(err, x509.IncorrectPasswordError) || (encrypted && format == FormatPEM):
+		return nil, fmt.Errorf("%w: %v", ErrWrongPassphrase, err)
+	}
+	return nil, fmt.Errorf("keys: parse private key: %w", err)
+}
+
+// ppkRaw parses a PPK key; a nil passphrase reads an unencrypted one. A wrong
+// passphrase is detected by the file MAC.
+func ppkRaw(data, passphrase []byte) (any, error) {
+	pk, err := putty.New(data)
+	if err != nil {
+		return nil, fmt.Errorf("keys: parse ppk: %w", err)
+	}
+	encrypted := pk.Encryption != "none"
+	if encrypted && len(passphrase) == 0 {
+		return nil, ErrPassphraseRequired
+	}
+	if !encrypted {
+		passphrase = nil
+	}
+	raw, err := pk.ParseRawPrivateKey(passphrase)
+	// The library decrypts in place; the parsed key holds its own copies.
+	clear(pk.PrivateKey)
+	if err != nil {
+		if encrypted {
+			return nil, fmt.Errorf("%w: %v", ErrWrongPassphrase, err)
+		}
+		return nil, fmt.Errorf("keys: parse ppk: %w", err)
+	}
+	return raw, nil
+}
+
+// signerFromRaw validates a parsed private key and makes a signer of it.
+func signerFromRaw(raw any) (ssh.Signer, error) {
 	var priv any
-	var kind string
 	switch v := raw.(type) {
 	case *rsa.PrivateKey:
 		if err := v.Validate(); err != nil {
-			return model.Key{}, fmt.Errorf("%w: %v", ErrInvalidKey, err)
+			return nil, fmt.Errorf("%w: %v", ErrInvalidKey, err)
 		}
 		v.Precompute()
-		priv, kind = v, "rsa"
+		priv = v
 	case ed25519.PrivateKey:
-		priv, kind = v, "ed25519"
+		priv = v
 	case *ed25519.PrivateKey:
-		priv, kind = *v, "ed25519"
+		priv = *v
 	case *ecdsa.PrivateKey:
-		return model.Key{}, fmt.Errorf("%w: ecdsa", ErrUnsupportedKeyType)
+		return nil, fmt.Errorf("%w: ecdsa", ErrUnsupportedKeyType)
 	default:
-		return model.Key{}, fmt.Errorf("%w: %T", ErrUnsupportedKeyType, raw)
+		return nil, fmt.Errorf("%w: %T", ErrUnsupportedKeyType, raw)
+	}
+	s, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		return nil, fmt.Errorf("keys: signer: %w", err)
+	}
+	return s, nil
+}
+
+// keyKind maps an SSH public key type to model.Key.Type.
+func keyKind(pub ssh.PublicKey) (string, error) {
+	switch pub.Type() {
+	case ssh.KeyAlgoED25519:
+		return "ed25519", nil
+	case ssh.KeyAlgoRSA:
+		return "rsa", nil
+	}
+	return "", fmt.Errorf("%w: %s", ErrUnsupportedKeyType, pub.Type())
+}
+
+// newKey fills the metadata of a key from its public part; Private is a copy
+// of the original bytes.
+func newKey(pub ssh.PublicKey, comment, format string, encrypted bool, data []byte) (model.Key, error) {
+	kind, err := keyKind(pub)
+	if err != nil {
+		return model.Key{}, err
 	}
 	comment = sanitizeComment(comment)
-	signer, err := ssh.NewSignerFromKey(priv)
-	if err != nil {
-		return model.Key{}, fmt.Errorf("keys: signer: %w", err)
-	}
-	blk, err := ssh.MarshalPrivateKey(priv, comment)
-	if err != nil {
-		return model.Key{}, fmt.Errorf("keys: encode private key: %w", err)
-	}
-	pub := signer.PublicKey()
 	line := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub)))
 	if comment != "" {
 		line += " " + comment
 	}
+	source := "openssh"
+	if format == FormatPPK {
+		source = "ppk"
+	}
 	return model.Key{
 		Type:        kind,
-		PrivatePEM:  pem.EncodeToMemory(blk),
+		Private:     bytes.Clone(data),
+		Format:      format,
+		Encrypted:   encrypted,
 		PublicLine:  line,
 		Comment:     comment,
 		Fingerprint: FingerprintSHA256(pub),
@@ -129,7 +256,7 @@ func build(raw any, comment, source string) (model.Key, error) {
 // or anything it cannot read.
 func opensshComment(data []byte) string {
 	blk, _ := pem.Decode(data)
-	if blk == nil || blk.Type != "OPENSSH PRIVATE KEY" || !bytes.HasPrefix(blk.Bytes, []byte(opensshMagic)) {
+	if blk == nil || blk.Type != opensshBlock || !bytes.HasPrefix(blk.Bytes, []byte(opensshMagic)) {
 		return ""
 	}
 	r := &wireReader{b: blk.Bytes[len(opensshMagic):]}

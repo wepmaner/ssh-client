@@ -131,11 +131,53 @@ func TestEmptyKeyIDGuards(t *testing.T) {
 
 func TestKeysReturnsDeepCopy(t *testing.T) {
 	s := newTestStore(t)
-	if _, err := s.SaveKey(model.Key{Name: "k", PrivatePEM: []byte("secret")}); err != nil {
+	if _, err := s.SaveKey(model.Key{Name: "k", Private: []byte("secret")}); err != nil {
 		t.Fatal(err)
 	}
-	s.Keys()[0].PrivatePEM[0] = 'X'
-	if string(s.Keys()[0].PrivatePEM) != "secret" {
+	s.Keys()[0].Private[0] = 'X'
+	if string(s.Keys()[0].Private) != "secret" {
 		t.Fatal("internal key bytes were mutated")
+	}
+}
+
+func TestDecodeDataMigratesLegacyKeys(t *testing.T) {
+	// Before Task 9b keys were always unencrypted OpenSSH under "private_pem".
+	legacy := `{"keys":[{"id":"k1","name":"old","private_pem":"c2VjcmV0","source":"generated"}]}`
+	d, err := decodeData([]byte(legacy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := d.Keys[0]
+	if string(k.Private) != "secret" || k.Format != "openssh" || k.Encrypted {
+		t.Fatalf("legacy key not migrated: %+v", k)
+	}
+
+	current := `{"keys":[{"id":"k2","name":"new","private":"c2VjcmV0","format":"ppk","encrypted":true}]}`
+	d, err = decodeData([]byte(current))
+	if err != nil {
+		t.Fatal(err)
+	}
+	k = d.Keys[0]
+	if string(k.Private) != "secret" || k.Format != "ppk" || !k.Encrypted {
+		t.Fatalf("current key changed: %+v", k)
+	}
+}
+
+func TestKeyFormatSurvivesReopen(t *testing.T) {
+	path := newVaultPath(t)
+	v, err := OpenVault(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewStore(v).SaveKey(model.Key{Name: "k", Private: []byte("x"), Format: "pem", Encrypted: true}); err != nil {
+		t.Fatal(err)
+	}
+	v2, err := OpenVault(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := NewStore(v2).Keys()[0]
+	if string(k.Private) != "x" || k.Format != "pem" || !k.Encrypted {
+		t.Fatalf("reopened key: %+v", k)
 	}
 }

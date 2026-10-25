@@ -24,11 +24,15 @@ type Group struct {
 }
 
 // Key is a stored private key. Type is ed25519|rsa; Source is generated|openssh|ppk.
+// Private holds the original key file bytes in Format (openssh|pem|ppk); when
+// Encrypted, they stay encrypted with the key's own passphrase, which is never stored.
 type Key struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
 	Type        string    `json:"type"`
-	PrivatePEM  []byte    `json:"private_pem"`
+	Private     []byte    `json:"private"`
+	Format      string    `json:"format"`
+	Encrypted   bool      `json:"encrypted"`
 	PublicLine  string    `json:"public_line"`
 	Comment     string    `json:"comment"`
 	Fingerprint string    `json:"fingerprint"`
