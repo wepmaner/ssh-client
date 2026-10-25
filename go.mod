@@ -2,6 +2,8 @@ module sshclient
 
 go 1.25.0
 
+toolchain go1.27.0
+
 require (
 	github.com/google/uuid v1.6.0
 	github.com/kayrus/putty v1.0.5
