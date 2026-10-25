@@ -342,3 +342,69 @@ func TestDialHandshakeWallTimeCapped(t *testing.T) {
 
 // ignoreErr явно отбрасывает ошибку закрытия в тестах: проверять её нечем и незачем.
 func ignoreErr(error) {}
+
+// slowAsker отвечает answer после задержки — как пользователь, который долго сверяет отпечаток.
+type slowAsker struct {
+	delay  time.Duration
+	answer bool
+	asked  chan TrustQuestion
+}
+
+func (s *slowAsker) AskTrust(_ context.Context, q TrustQuestion) (bool, error) {
+	s.asked <- q
+	time.Sleep(s.delay)
+	return s.answer, nil
+}
+
+func TestDialTrustAskerPausesDeadline(t *testing.T) {
+	setHandshakeTimeout(t, time.Second)
+	key, pub := testClientKey(t, "work", "")
+	addr, hostKey := sshtest.Start(t, sshtest.Opts{AcceptKey: pub})
+	path := writeKnown(t, "")
+	kh, err := OpenKnownHosts(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &slowAsker{delay: 2 * time.Second, answer: true, asked: make(chan TrustQuestion, 1)}
+	tg := targetFor(t, addr, key)
+	tg.Trust = a
+	out := &bytes.Buffer{}
+	c, err := Dial(context.Background(), tg, NewPrompter(out, strings.NewReader("")), kh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ignoreErr(c.Close())
+	if q := <-a.asked; q.FingerprintSHA256 != ssh.FingerprintSHA256(hostKey) || q.Port != tg.Port {
+		t.Fatalf("question %+v", q)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("console asked although a TrustAsker is set: %q", out.String())
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path is a test temp file
+	if err != nil || string(data) != knownhosts.Line([]string{knownhosts.Normalize(addr)}, hostKey)+"\n" {
+		t.Fatalf("known_hosts = %q, %v", data, err)
+	}
+}
+
+func TestDialHostNotTrusted(t *testing.T) {
+	key, pub := testClientKey(t, "work", "")
+	addr, _ := sshtest.Start(t, sshtest.Opts{AcceptKey: pub})
+	path := writeKnown(t, "")
+	kh, err := OpenKnownHosts(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tg := targetFor(t, addr, key)
+	tg.Trust = &slowAsker{answer: false, asked: make(chan TrustQuestion, 1)}
+	c, err := Dial(context.Background(), tg, NewPrompter(io.Discard, strings.NewReader("")), kh)
+	if c != nil {
+		ignoreErr(c.Close())
+		t.Fatal("connected to an untrusted server")
+	}
+	if !errors.Is(err, ErrHostNotTrusted) || err.Error() != "Подключение отменено: сервер не подтверждён" {
+		t.Fatalf("err = %v", err)
+	}
+	if data, err := os.ReadFile(path); err != nil || len(data) != 0 { //nolint:gosec // G304: path is a test temp file
+		t.Fatalf("known_hosts = %q, %v", data, err)
+	}
+}

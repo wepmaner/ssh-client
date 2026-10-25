@@ -163,3 +163,23 @@ func TestPrompterPendingOnlySkippedLF(t *testing.T) {
 		t.Fatalf("Pending = %q, want nil", got)
 	}
 }
+
+func TestPrompterAskTrustConsole(t *testing.T) {
+	q := TrustQuestion{Host: "example.test", Port: 22, KeyType: "ssh-ed25519", FingerprintSHA256: "SHA256:abc"}
+	for in, want := range map[string]bool{"yes\r": true, "y\r": true, "да\r": true, "Д\r": true, "no\r": false, "нет\r": false} {
+		p, out := newTestPrompter(in)
+		ok, err := p.AskTrust(t.Context(), q)
+		if err != nil || ok != want {
+			t.Errorf("%q: ok=%v err=%v", in, ok, err)
+		}
+		for _, s := range []string{"Сервер example.test:22 неизвестен.\r\n", "ssh-ed25519", "SHA256:abc", "Доверять и запомнить? [yes/no] "} {
+			if !strings.Contains(out.String(), s) {
+				t.Errorf("%q: out missing %q: %q", in, s, out.String())
+			}
+		}
+	}
+	p, _ := newTestPrompter("\x03")
+	if _, err := p.AskTrust(t.Context(), q); !errors.Is(err, ErrCancelled) {
+		t.Fatalf("Ctrl+C: %v", err)
+	}
+}

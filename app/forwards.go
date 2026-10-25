@@ -100,7 +100,7 @@ func (a *App) startForward(f model.Forward) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	run := &fwdRun{in: newInputQueue(), cancel: cancel, done: make(chan struct{})}
-	run.runner = sshclient.NewForwardRunner(f, a.forwardDial(f.HostID, e.out, run))
+	run.runner = sshclient.NewForwardRunner(f, a.forwardDial(f.ID, f.HostID, e.out, run))
 	e.run = run
 	a.fwdMu.Unlock()
 
@@ -208,9 +208,10 @@ func (a *App) autostartForwards() {
 }
 
 // forwardDial returns the runner's dial: like a terminal session it looks the host and key up
-// at dial time and asks its questions through a Prompter, here over the mini-terminal of the
-// forward's card. Cancelling ctx closes the run's input, so a pending prompt returns at once.
-func (a *App) forwardDial(hostID string, out *outStream, run *fwdRun) func(ctx context.Context) (*ssh.Client, error) {
+// at dial time, asks to trust an unknown server key through the trust dialog and asks its other
+// questions through a Prompter, here over the mini-terminal of the forward's card. Cancelling
+// ctx closes the run's input and withdraws the trust question, so a pending prompt returns at once.
+func (a *App) forwardDial(id, hostID string, out *outStream, run *fwdRun) func(ctx context.Context) (*ssh.Client, error) {
 	interval := a.fwdKeepalive
 	if interval <= 0 {
 		interval = keepaliveInterval
@@ -229,6 +230,7 @@ func (a *App) forwardDial(hostID string, out *outStream, run *fwdRun) func(ctx c
 		if err != nil {
 			return nil, err
 		}
+		t.Trust = a.trustAsker(trustOwner{forwardID: id}, t.User, out)
 		client, err := sshclient.Dial(ctx, t, sshclient.NewPrompter(out, run.in), kh)
 		run.hostKeyChanged.Store(errors.Is(err, sshclient.ErrHostKeyChanged))
 		if err != nil {

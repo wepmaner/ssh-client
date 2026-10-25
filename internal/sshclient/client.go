@@ -24,6 +24,7 @@ type Target struct {
 	Port    int
 	User    string
 	Key     *model.Key // nil — без ключа, только keyboard-interactive и пароль
+	Trust   TrustAsker // кто подтверждает неизвестный ключ сервера; nil — вопрос в консоли через Prompter
 }
 
 const (
@@ -53,9 +54,11 @@ func (e *userError) Error() string { return e.msg }
 func (e *userError) Unwrap() error { return e.cause }
 
 // Dial подключается к серверу и проходит аутентификацию: ключ из t.Key, затем keyboard-interactive,
-// затем пароль. Все вопросы (доверие ключу сервера, парольная фраза, пароль, вопросы сервера) задаются
-// текстом через p. Изменившийся ключ сервера отклоняется (ErrHostKeyChanged), Ctrl+C на любом вопросе
-// прерывает подключение (ErrCancelled), молчание сервера дольше 10 секунд даёт ErrTimeout.
+// затем пароль. Доверие неизвестному ключу сервера подтверждает t.Trust (без него — p), остальные
+// вопросы (парольная фраза, пароль, вопросы сервера) задаются текстом через p; пока идёт любой вопрос,
+// срок ожидания сервера приостановлен. Изменившийся ключ сервера отклоняется (ErrHostKeyChanged),
+// отказ доверять — ErrHostNotTrusted, Ctrl+C на любом вопросе прерывает подключение (ErrCancelled),
+// молчание сервера дольше 10 секунд даёт ErrTimeout.
 func Dial(ctx context.Context, t Target, p *Prompter, kh *KnownHosts) (*ssh.Client, error) {
 	addr := net.JoinHostPort(t.Address, strconv.Itoa(t.Port))
 	d := &dialState{p: p}
@@ -74,15 +77,20 @@ func Dial(ctx context.Context, t Target, p *Prompter, kh *KnownHosts) (*ssh.Clie
 	}
 	d.conn = conn
 
-	cfg := &ssh.ClientConfig{
-		User:            t.User,
-		HostKeyCallback: d.hostKeyCallback(kh.Callback(p)),
-		Auth:            auth,
-		AuthCallback:    d.abortIfCancelled,
-	}
 	// Общий предел рукопожатия вместе с вопросами: сервер не может держать соединение бесконечно.
 	hctx, cancel := context.WithTimeout(ctx, maxHandshakeTime)
 	defer cancel()
+	var trust TrustAsker = p
+	if t.Trust != nil {
+		trust = t.Trust
+	}
+	cfg := &ssh.ClientConfig{
+		User: t.User,
+		// Вопрос о доверии снимается и по общему пределу, и по отмене ctx.
+		HostKeyCallback: d.hostKeyCallback(kh.Callback(hctx, trust)),
+		Auth:            auth,
+		AuthCallback:    d.abortIfCancelled,
+	}
 	stop := context.AfterFunc(hctx, func() { _ = conn.Close() }) //nolint:gosec // G104: closing aborts the handshake; its error is irrelevant
 	d.armDeadline()
 	c, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)

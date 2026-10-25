@@ -38,6 +38,10 @@ type App struct {
 	khMu sync.Mutex
 	kh   *sshclient.KnownHosts // opened on the first session
 
+	trustMu      sync.Mutex
+	trustByID    map[string]*pendingTrust     // open trust questions by question ID
+	trustByOwner map[trustOwner]*pendingTrust // at most one open question per session or forward
+
 	fwdMu        sync.Mutex
 	fwds         map[string]*fwdEntry // forward runtimes by forward ID
 	fwdKeepalive time.Duration        // keepalive interval of forward clients; 0 means keepaliveInterval

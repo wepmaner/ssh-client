@@ -44,6 +44,7 @@ func (a *App) SessionOpen(hostID string, cols, rows int) (string, error) {
 		return "", err
 	}
 	s := newSession(uuid.NewString(), h.ID, h.Name, cols, rows, a.events())
+	t.Trust = a.trustAsker(trustOwner{sessionID: s.id}, t.User, s.out)
 	a.addSession(s)
 	go s.run(t, a.knownHosts)
 	return s.id, nil

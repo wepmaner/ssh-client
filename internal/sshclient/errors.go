@@ -8,6 +8,8 @@ var (
 	ErrCancelled = errors.New("отменено пользователем")
 	// ErrHostKeyChanged означает, что ключ сервера не совпадает с записанным в known_hosts.
 	ErrHostKeyChanged = errors.New("ключ сервера изменился")
+	// ErrHostNotTrusted означает, что пользователь не подтвердил неизвестный ключ сервера.
+	ErrHostNotTrusted = errors.New("сервер не подтверждён")
 	// ErrTimeout означает превышение времени ожидания.
 	ErrTimeout = errors.New("превышено время ожидания")
 	// ErrAuthDenied означает, что сервер не принял ни ключ, ни ответы пользователя.

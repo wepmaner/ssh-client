@@ -265,6 +265,9 @@ func exitCode(err error) *int {
 func errorState(err error) SessionStateDTO {
 	st := SessionStateDTO{State: stateError, Message: err.Error(), Detail: errorDetail(err), Retryable: true}
 	switch {
+	case errors.Is(err, sshclient.ErrHostNotTrusted):
+		st.Kind = "cancelled"
+		st.Message = "Подключение отменено: сервер не подтверждён"
 	case errors.Is(err, sshclient.ErrCancelled) || errors.Is(err, context.Canceled):
 		st.Kind = "cancelled"
 		st.Message = "Подключение отменено"

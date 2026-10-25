@@ -1,6 +1,7 @@
 package sshclient
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -76,9 +77,13 @@ func (k *KnownHosts) changedError(hostname string, keyErr *knownhosts.KeyError, 
 		ErrHostKeyChanged, hostname, ssh.FingerprintSHA256(old), ssh.FingerprintSHA256(key), k.path)
 }
 
-// Callback возвращает ssh.HostKeyCallback: неизвестный хост спрашивается у пользователя через p,
-// изменившийся ключ отклоняется без вопросов.
-func (k *KnownHosts) Callback(p *Prompter) ssh.HostKeyCallback {
+// msgHostNotTrusted — сообщение для пользователя, когда он не подтвердил неизвестный ключ сервера.
+const msgHostNotTrusted = "Подключение отменено: сервер не подтверждён"
+
+// Callback возвращает ssh.HostKeyCallback: о неизвестном хосте спрашивается a (отказ даёт
+// ErrHostNotTrusted, отмена ctx — ctx.Err(), в обоих случаях файл не меняется), изменившийся ключ
+// отклоняется без вопросов.
+func (k *KnownHosts) Callback(ctx context.Context, a TrustAsker) ssh.HostKeyCallback {
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		if remote == nil {
 			return errors.New("проверка ключа сервера: не указан адрес сервера")
@@ -95,13 +100,15 @@ func (k *KnownHosts) Callback(p *Prompter) ssh.HostKeyCallback {
 			return k.changedError(hostname, keyErr, key)
 		}
 
-		ok, err := p.Confirm(fmt.Sprintf("Сервер %s неизвестен.\r\nОтпечаток %s\r\nДоверять и запомнить? ",
-			hostname, ssh.FingerprintSHA256(key)))
+		ok, err := a.AskTrust(ctx, trustQuestion(hostname, key))
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
 		if err != nil {
 			return err
 		}
 		if !ok {
-			return ErrCancelled
+			return &userError{msg: msgHostNotTrusted, cause: ErrHostNotTrusted}
 		}
 
 		k.mu.Lock()
