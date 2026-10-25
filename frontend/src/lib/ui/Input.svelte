@@ -5,10 +5,10 @@
     value?: string
     el?: HTMLInputElement
   }
-  let { value = $bindable(''), el = $bindable(), ...rest }: Props = $props()
+  let { value = $bindable(''), el = $bindable(), class: cls = '', ...rest }: Props = $props()
 </script>
 
-<input bind:this={el} bind:value class="input" {...rest} />
+<input bind:this={el} bind:value class="input {cls}" {...rest} />
 
 <style>
   .input {
