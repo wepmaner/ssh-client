@@ -161,13 +161,17 @@ func (a *App) HostSave(in HostDTO) (HostDTO, error) {
 	return a.hostDTO(saved.ID)
 }
 
-// HostDelete closes the host's sessions and removes it.
+// HostDelete removes the host and then closes its sessions; if the store
+// fails, the sessions stay open together with their tabs.
 func (a *App) HostDelete(id string) error {
 	if !a.storeUnlocked() {
 		return errVaultLocked
 	}
+	if err := a.store.DeleteHost(id); err != nil {
+		return err
+	}
 	a.closeSessionsOfHost(id)
-	return a.store.DeleteHost(id)
+	return nil
 }
 
 // GroupsList returns all groups sorted by name with their host counts.

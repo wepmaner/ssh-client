@@ -132,4 +132,17 @@ describe('HostDialog', () => {
       expect(api.HostSave).toHaveBeenCalledWith(expect.objectContaining({ id: 'h1', name: 'prod', port: 2222 })),
     )
   })
+
+  it('creates a new group before saving the host into it', async () => {
+    api.GroupSave.mockResolvedValue({ id: 'g9', name: 'Lab', host_count: 0, connected_count: 0 })
+    setup()
+    await fill('Адрес', 'srv.example.test')
+    await fill('Пользователь', 'deploy')
+    await fireEvent.change(screen.getByLabelText('Группа'), { target: { value: '__new' } })
+    await fill('Название группы', 'Lab')
+    await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
+    await vi.waitFor(() => expect(api.HostSave).toHaveBeenCalledWith(expect.objectContaining({ group_id: 'g9' })))
+    expect(api.GroupSave).toHaveBeenCalledWith('Lab')
+    expect(api.GroupSave.mock.invocationCallOrder[0]).toBeLessThan(api.HostSave.mock.invocationCallOrder[0])
+  })
 })

@@ -90,9 +90,13 @@
       title: `Удалить хост ${h.name}?`,
       text: 'Хост будет удалён из хранилища, его открытые вкладки закроются. Ключ останется в разделе «Ключи».',
       run: async () => {
-        await HostDelete(h.id)
-        for (const t of sessions.list.filter((t) => t.hostId === h.id)) closeSession(t.id)
-        await Promise.all([refreshHosts(), refreshKeys()])
+        try {
+          // Go closes the sessions only after the host is gone; a failed delete keeps both.
+          await HostDelete(h.id)
+          for (const t of sessions.list.filter((t) => t.hostId === h.id)) closeSession(t.id)
+        } finally {
+          await Promise.all([refreshHosts(), refreshKeys()])
+        }
       },
     }
   }
@@ -156,7 +160,7 @@
         bind:value={query}
         type="text"
         placeholder="Поиск по имени или адресу"
-        aria-label="Поиск хостов"
+        aria-label="Поиск хостов по имени, адресу или пользователю"
         autocomplete="off"
         spellcheck="false"
         disabled={hosts.length === 0}

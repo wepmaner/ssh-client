@@ -10,16 +10,43 @@
   interface Props {
     items: MenuItem[]
     onclose: () => void
-    /** The button that opened the menu: pressing it again must not reopen through the outside click. */
+    /**
+     * The button that opened the menu. The menu is placed at it with fixed positioning, so no
+     * overflow of a parent clips it, and pressing the button again does not count as an outside click.
+     */
     anchor?: HTMLElement
   }
   let { items, onclose, anchor }: Props = $props()
 
+  const GAP = 4
+
   let el: HTMLDivElement | undefined = $state()
+  let pos = $state<{ top: number; right: number } | null>(null)
+
+  // Below the anchor, right edges aligned; above it when there is no room below.
+  function place() {
+    if (!el || !anchor) return
+    const r = anchor.getBoundingClientRect()
+    const h = el.offsetHeight
+    const below = r.bottom + GAP
+    const top = below + h > window.innerHeight && r.top - GAP - h >= 0 ? r.top - GAP - h : below
+    pos = { top, right: window.innerWidth - r.right }
+  }
 
   $effect(() => {
+    place()
     el?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
+    // A fixed menu would drift away from a scrolled anchor: close instead.
+    const onscroll = (e: Event) => !el?.contains(e.target as Node) && onclose()
+    document.addEventListener('scroll', onscroll, true)
+    return () => document.removeEventListener('scroll', onscroll, true)
   })
+
+  /** Tab or a click elsewhere moves focus out: the menu closes, focus goes where it was sent. */
+  function onfocusout(e: FocusEvent) {
+    const to = e.relatedTarget as Node | null
+    if (to && !el?.contains(to)) onclose()
+  }
 
   function onmousedown(e: MouseEvent) {
     const t = e.target as Node
@@ -48,9 +75,19 @@
   }
 </script>
 
-<svelte:window {onmousedown} />
+<svelte:window {onmousedown} onresize={onclose} />
 
-<div class="menu" role="menu" tabindex="-1" bind:this={el} {onkeydown}>
+<div
+  class="menu"
+  class:fixed={!!anchor}
+  role="menu"
+  tabindex="-1"
+  bind:this={el}
+  style:top={pos ? pos.top + 'px' : undefined}
+  style:right={pos ? pos.right + 'px' : undefined}
+  {onkeydown}
+  {onfocusout}
+>
   {#each items as it (it.label)}
     <button type="button" role="menuitem" class:danger={it.danger} onclick={() => select(it)}>{it.label}</button>
   {/each}
@@ -70,6 +107,9 @@
     border: 1px solid #333a44;
     border-radius: var(--radius-card);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  }
+  .menu.fixed {
+    position: fixed;
   }
   button {
     height: 30px;

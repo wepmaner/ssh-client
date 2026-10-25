@@ -68,7 +68,7 @@ describe('HostsView', () => {
     load(list)
     render(HostsView)
     expect(names()).toEqual(['prod-1', 'db-01', 'nas'])
-    const search = screen.getByLabelText('Поиск хостов')
+    const search = screen.getByLabelText('Поиск хостов по имени, адресу или пользователю')
     await fireEvent.input(search, { target: { value: 'DB' } })
     expect(names()).toEqual(['db-01'])
     await fireEvent.input(search, { target: { value: '10.0.4' } })
@@ -84,7 +84,7 @@ describe('HostsView', () => {
     load(list)
     render(HostsView)
     await fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
-    expect(document.activeElement).toBe(screen.getByLabelText('Поиск хостов'))
+    expect(document.activeElement).toBe(screen.getByLabelText('Поиск хостов по имени, адресу или пользователю'))
   })
 
   it('a tile click opens a session', async () => {
@@ -148,5 +148,98 @@ describe('HostsView', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Изменить хост' })
     expect((within(dialog).getByLabelText('Адрес') as HTMLInputElement).value).toBe('db.example.test')
     expect(ui.editHostId).toBe('')
+  })
+
+  it('the list view menu is anchored to its button and closes on Esc', async () => {
+    load(list)
+    render(HostsView)
+    await fireEvent.click(screen.getByRole('button', { name: 'Список' }))
+    const more = screen.getAllByRole('button', { name: 'Ещё' })[2]
+    await fireEvent.click(more)
+    const menu = screen.getByRole('menu')
+    expect(within(menu).getAllByRole('menuitem').map((e) => e.textContent)).toEqual(['Изменить', 'Дублировать', 'Удалить'])
+    expect(menu.style.top).not.toBe('')
+    expect(document.activeElement).toBe(within(menu).getAllByRole('menuitem')[0])
+    await fireEvent.keyDown(menu, { key: 'Escape' })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.activeElement).toBe(more)
+    await fireEvent.click(screen.getByRole('button', { name: 'Плитки' }))
+  })
+
+  it('Tab out of the menu closes it', async () => {
+    load(list)
+    render(HostsView)
+    await fireEvent.click(screen.getAllByRole('button', { name: 'Ещё' })[0])
+    const item = screen.getAllByRole('menuitem')[0]
+    await fireEvent.focusOut(item, { relatedTarget: screen.getByLabelText('Поиск хостов по имени, адресу или пользователю') })
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  it('a failed delete keeps the host tabs', async () => {
+    load(list)
+    sess.sessions.list = [{ id: 's1', hostId: 'h1', state: 'connected' }]
+    api.HostDelete.mockRejectedValue('disk full')
+    render(HostsView)
+    await fireEvent.click(screen.getAllByRole('button', { name: 'Ещё' })[0])
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Удалить' }))
+    await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Удалить' }))
+    await vi.waitFor(() => expect(api.HostDelete).toHaveBeenCalledWith('h1'))
+    await Promise.resolve()
+    expect(sess.closeSession).not.toHaveBeenCalled()
+  })
+
+  describe('groups', () => {
+    const group = { id: 'g1', name: 'Production', host_count: 1, connected_count: 0 }
+    beforeEach(() => {
+      load([{ ...list[0], group_id: 'g1', group_name: 'Production' }, list[1]])
+      groups.splice(0, groups.length, group as never)
+      api.GroupsList.mockResolvedValue([group])
+    })
+
+    it('creates a group and shows the Go error inline', async () => {
+      api.GroupSave.mockRejectedValueOnce('field:name: Группа с таким названием уже есть').mockResolvedValueOnce({ id: 'g2', name: 'Lab' })
+      render(HostsView)
+      await fireEvent.click(screen.getByRole('button', { name: 'Новая группа' }))
+      const dialog = screen.getByRole('dialog', { name: 'Новая группа' })
+      await fireEvent.input(within(dialog).getByLabelText('Название группы'), { target: { value: 'Lab' } })
+      await fireEvent.click(within(dialog).getByRole('button', { name: 'Создать' }))
+      expect((await within(dialog).findByRole('alert')).textContent).toBe('Группа с таким названием уже есть')
+      await fireEvent.click(within(dialog).getByRole('button', { name: 'Создать' }))
+      await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      expect(api.GroupSave).toHaveBeenLastCalledWith('Lab')
+    })
+
+    it('renames a group from its menu', async () => {
+      api.GroupRename.mockResolvedValue(undefined)
+      render(HostsView)
+      await fireEvent.click(screen.getByRole('button', { name: 'Ещё о группе Production' }))
+      await fireEvent.click(screen.getByRole('menuitem', { name: 'Переименовать' }))
+      const dialog = screen.getByRole('dialog', { name: 'Переименовать группу' })
+      const input = within(dialog).getByLabelText('Название группы') as HTMLInputElement
+      expect(input.value).toBe('Production')
+      await fireEvent.input(input, { target: { value: 'Prod' } })
+      await fireEvent.click(within(dialog).getByRole('button', { name: 'Переименовать' }))
+      await vi.waitFor(() => expect(api.GroupRename).toHaveBeenCalledWith('g1', 'Prod'))
+    })
+
+    it('deletes a group after confirmation', async () => {
+      api.GroupDelete.mockResolvedValue(undefined)
+      render(HostsView)
+      await fireEvent.click(screen.getByRole('button', { name: 'Ещё о группе Production' }))
+      await fireEvent.click(screen.getByRole('menuitem', { name: 'Удалить' }))
+      expect(api.GroupDelete).not.toHaveBeenCalled()
+      await fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Удалить' }))
+      await vi.waitFor(() => expect(api.GroupDelete).toHaveBeenCalledWith('g1'))
+    })
+
+    it('a group tile filters the hosts', async () => {
+      render(HostsView)
+      const tile = screen.getByRole('button', { name: /^Production/ })
+      await fireEvent.click(tile)
+      expect(tile.getAttribute('aria-pressed')).toBe('true')
+      expect(names()).toEqual(['prod-1'])
+      await fireEvent.click(tile)
+      expect(names()).toEqual(['prod-1', 'db-01'])
+    })
   })
 })
