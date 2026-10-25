@@ -27,6 +27,7 @@ const (
 type ForwardStateDTO struct {
 	Status    string `json:"status"`
 	Error     string `json:"error"`
+	Detail    string `json:"detail"` // the system text under Error, shown small on the card
 	Conns     int    `json:"conns"`
 	Retryable bool   `json:"retryable"`
 }
@@ -105,7 +106,7 @@ func (r *fwdRun) stop() {
 func (r *fwdRun) state() ForwardStateDTO { return r.dto(r.runner.State()) }
 
 func (r *fwdRun) dto(st sshclient.ForwardState) ForwardStateDTO {
-	return ForwardStateDTO{Status: st.Status, Error: st.Error, Conns: st.Conns, Retryable: !r.hostKeyChanged.Load()}
+	return ForwardStateDTO{Status: st.Status, Error: st.Error, Detail: st.Detail, Conns: st.Conns, Retryable: !r.hostKeyChanged.Load()}
 }
 
 // active reports a run that is about to start, connecting or forwarding. A run in e.run is only

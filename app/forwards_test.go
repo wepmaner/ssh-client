@@ -20,6 +20,7 @@ import (
 
 	"sshclient/internal/appdir"
 	"sshclient/internal/model"
+	"sshclient/internal/sshclient"
 	"sshclient/internal/sshclient/sshtest"
 )
 
@@ -723,5 +724,13 @@ func TestForwardSecretNeverInStore(t *testing.T) {
 	}
 	if b, err := json.Marshal(s.ForwardsList()); err != nil || bytes.Contains(b, []byte(fwdPassphrase)) {
 		t.Fatalf("passphrase in ForwardsList (%v)", err)
+	}
+}
+
+func TestForwardStateDTOCarriesDetail(t *testing.T) {
+	r := &fwdRun{}
+	dto := r.dto(sshclient.ForwardState{Status: sshclient.ForwardError, Error: "Сервер h отклонил подключение", Detail: "dial tcp: connectex"})
+	if dto.Detail != "dial tcp: connectex" || dto.Error == "" {
+		t.Fatalf("dto %+v", dto)
 	}
 }

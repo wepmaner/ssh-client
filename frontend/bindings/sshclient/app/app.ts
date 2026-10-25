@@ -259,7 +259,7 @@ export function KeysList(): $CancellablePromise<$models.KeyDTO[]> {
 }
 
 /**
- * OpenDataFolder shows the data folder (%LOCALAPPDATA%\sshclient) in Explorer.
+ * OpenDataFolder shows the data folder (%APPDATA%\sshclient) in Explorer.
  */
 export function OpenDataFolder(): $CancellablePromise<void> {
     return $Call.ByID(3968336675);

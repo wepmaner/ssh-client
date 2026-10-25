@@ -27,6 +27,7 @@ export class ForwardDTO {
      */
     "status": string;
     "error": string;
+    "detail": string;
     "conns": number;
     "retryable": boolean;
 
@@ -61,6 +62,9 @@ export class ForwardDTO {
         }
         if (!("error" in $$source)) {
             this["error"] = "";
+        }
+        if (!("detail" in $$source)) {
+            this["detail"] = "";
         }
         if (!("conns" in $$source)) {
             this["conns"] = 0;

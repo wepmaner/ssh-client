@@ -10,6 +10,8 @@ export type ForwardStatus = 'stopped' | 'starting' | 'running' | 'error'
 export interface ForwardStatePayload {
   status: ForwardStatus
   error: string
+  /** The system text under error (connectex, lookup …); may be absent. */
+  detail?: string
   conns: number
   retryable: boolean
 }
@@ -49,7 +51,7 @@ function onData(id: string, b64: string): void {
 function onState(id: string, p: ForwardStatePayload): void {
   stateSeq.set(id, (stateSeq.get(id) ?? 0) + 1)
   const f = forwards.list.find((x) => x.id === id)
-  if (f) Object.assign(f, { status: p.status, error: p.error, conns: p.conns, retryable: p.retryable })
+  if (f) Object.assign(f, { status: p.status, error: p.error, detail: p.detail ?? '', conns: p.conns, retryable: p.retryable })
   // Prompts belong to one dial: once it is over, the next one starts with a clean mini-terminal.
   if (p.status !== 'starting') clearOutput(id)
 }
@@ -72,7 +74,7 @@ export async function refreshForwards(): Promise<void> {
   for (const f of list) {
     const cur = forwards.list.find((x) => x.id === f.id)
     if (cur && stateSeq.get(f.id) !== seqBefore.get(f.id)) {
-      Object.assign(f, { status: cur.status, error: cur.error, conns: cur.conns, retryable: cur.retryable })
+      Object.assign(f, { status: cur.status, error: cur.error, detail: cur.detail, conns: cur.conns, retryable: cur.retryable })
     }
   }
   forwards.list.splice(0, forwards.list.length, ...list)

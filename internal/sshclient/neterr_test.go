@@ -8,6 +8,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/ssh"
+
+	"sshclient/internal/model"
 )
 
 // opError is the shape net.Dialer returns: dial tcp → connectex (or connect) → errno.
@@ -28,7 +32,7 @@ func TestDialErrorTexts(t *testing.T) {
 		{"host unreachable", opError(errHostUnreachable), "Нет маршрута до example.test: сеть недоступна или адрес вне вашей сети", nil},
 		{"network unreachable", opError(errNetUnreachable), "Нет маршрута до example.test: сеть недоступна или адрес вне вашей сети", nil},
 		{"dns not found", &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "example.test", IsNotFound: true}},
-			"Адрес example.test не найден: проверьте имя хоста", nil},
+			"Адрес example.test не найден: проверьте имя хоста или подключение к сети", nil},
 		{"dns failure", &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "server misbehaving", Name: "example.test", IsTemporary: true}},
 			"Не удалось узнать адрес example.test: нет связи с DNS-сервером", nil},
 	}
@@ -84,4 +88,21 @@ func errorChain(err error) string {
 		b.WriteString(e.Error() + "\n")
 	}
 	return b.String()
+}
+
+func TestForwardStateKeepsSystemText(t *testing.T) {
+	sys := opError(errRefused)
+	refused := func(context.Context) (*ssh.Client, error) { return nil, dialError("example.test:22", sys) }
+	r := NewForwardRunner(model.Forward{Kind: "L", Listen: freeAddr(t), Target: "127.0.0.1:1"}, refused)
+	t.Cleanup(r.Stop)
+	if err := r.Start(context.Background()); err == nil {
+		t.Fatal("Start succeeded with a refused dial")
+	}
+	st := r.State()
+	if !strings.Contains(st.Error, "отклонил подключение") {
+		t.Fatalf("error %q", st.Error)
+	}
+	if st.Detail != sys.Error() {
+		t.Fatalf("detail %q, want the system text %q", st.Detail, sys.Error())
+	}
 }

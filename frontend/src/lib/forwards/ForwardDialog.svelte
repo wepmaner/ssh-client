@@ -93,6 +93,7 @@
         auto_start: form.auto_start,
         status: '',
         error: '',
+        detail: '',
         conns: 0,
         retryable: true,
       })

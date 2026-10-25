@@ -113,6 +113,18 @@ describe('ForwardsView', () => {
     expect(within(card('SOCKS')).getByRole('button', { name: 'Остановить' })).toBeTruthy()
   })
 
+  it('shows the system text under the Russian error, starting or failed', async () => {
+    render(ForwardsView)
+    const sys = 'dial tcp 10.0.0.1:22: connectex: No connection could be made because the target machine actively refused it.'
+    handlers.get('fwd:state:f2')?.({ status: 'starting', error: 'Сервер 10.0.0.1 отклонил подключение к порту 22', detail: sys, conns: 0, retryable: true })
+    await vi.waitFor(() => expect(within(card('SOCKS')).getByText(sys)).toBeTruthy())
+    handlers.get('fwd:state:f2')?.({ status: 'error', error: 'Сервер 10.0.0.1 отклонил подключение к порту 22', detail: sys, conns: 0, retryable: true })
+    await vi.waitFor(() => expect(within(card('SOCKS')).getByRole('alert').textContent).toBe('Сервер 10.0.0.1 отклонил подключение к порту 22'))
+    expect(within(card('SOCKS')).getByText(sys).getAttribute('class')).toContain('detail')
+    handlers.get('fwd:state:f2')?.({ status: 'running', error: '', detail: '', conns: 0, retryable: true })
+    await vi.waitFor(() => expect(within(card('SOCKS')).queryByText(sys)).toBeNull())
+  })
+
   it('shows the mini-terminal while a starting forward has prompt output', async () => {
     render(ForwardsView)
     handlers.get('fwd:state:f2')?.({ status: 'starting', error: '', conns: 0, retryable: true })

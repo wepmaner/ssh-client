@@ -151,7 +151,7 @@ func newSessionsApp(t *testing.T, opts sshtest.Opts, withKey bool) sessionsApp {
 	t.Helper()
 	tmp := t.TempDir()
 	t.Setenv("APPDATA", tmp)
-	t.Setenv("XDG_CACHE_HOME", tmp) // os.UserCacheDir on Linux
+	t.Setenv("XDG_CONFIG_HOME", tmp) // os.UserConfigDir on Linux
 	a := &App{}
 	a.openVault()
 	if !a.storeUnlocked() {

@@ -57,6 +57,10 @@
   {:else if forward.status === 'starting' && forward.error}
     <p class="note">{forward.error}</p>
   {/if}
+  {#if (forward.status === 'error' || forward.status === 'starting') && forward.error && forward.detail}
+    <!-- The system text, as in the details of the session error card. -->
+    <p class="detail">{forward.detail}</p>
+  {/if}
   {#if prompting}
     <MiniTerminal forwardId={forward.id} />
   {/if}
@@ -213,6 +217,15 @@
   }
   .error {
     color: var(--error);
+  }
+  .detail {
+    margin: -6px 0 0;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    user-select: text;
   }
   .note {
     color: var(--muted);

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -263,7 +262,7 @@ func exitCode(err error) *int {
 
 // errorState turns a dial or session error into the error card payload.
 func errorState(err error) SessionStateDTO {
-	st := SessionStateDTO{State: stateError, Message: err.Error(), Detail: errorDetail(err), Retryable: true}
+	st := SessionStateDTO{State: stateError, Message: err.Error(), Detail: sshclient.ErrorDetail(err), Retryable: true}
 	switch {
 	case errors.Is(err, sshclient.ErrHostNotTrusted):
 		st.Kind = "cancelled"
@@ -281,33 +280,6 @@ func errorState(err error) SessionStateDTO {
 		st.Kind = "other"
 	}
 	return st
-}
-
-// errorDetail is the error text followed by every wrapped cause it does not already contain.
-func errorDetail(err error) string {
-	var b strings.Builder
-	b.WriteString(err.Error())
-	var walk func(error)
-	walk = func(e error) {
-		var causes []error
-		switch u := e.(type) {
-		case interface{ Unwrap() []error }:
-			causes = u.Unwrap()
-		case interface{ Unwrap() error }:
-			causes = []error{u.Unwrap()}
-		}
-		for _, c := range causes {
-			if c == nil {
-				continue
-			}
-			if text := c.Error(); !strings.Contains(b.String(), text) {
-				b.WriteString("\n" + text)
-			}
-			walk(c)
-		}
-	}
-	walk(err)
-	return b.String()
 }
 
 // knownHosts opens the app's known_hosts on first use; one instance serialises its writes.

@@ -30,6 +30,7 @@ type ForwardDTO struct {
 	AutoStart bool   `json:"auto_start"`
 	Status    string `json:"status"` // stopped|starting|running|error
 	Error     string `json:"error"`
+	Detail    string `json:"detail"`
 	Conns     int    `json:"conns"`
 	Retryable bool   `json:"retryable"`
 }
@@ -39,7 +40,7 @@ func (a *App) forwardDTO(f model.Forward, hostNames map[string]string) ForwardDT
 	return ForwardDTO{
 		ID: f.ID, Name: f.Name, Kind: f.Kind, HostID: f.HostID, HostName: hostNames[f.HostID],
 		Listen: f.Listen, Target: f.Target, AutoStart: f.AutoStart,
-		Status: st.Status, Error: st.Error, Conns: st.Conns, Retryable: st.Retryable,
+		Status: st.Status, Error: st.Error, Detail: st.Detail, Conns: st.Conns, Retryable: st.Retryable,
 	}
 }
 

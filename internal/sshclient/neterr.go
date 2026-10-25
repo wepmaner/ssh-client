@@ -23,7 +23,7 @@ func dialError(addr string, err error) error {
 	case errors.Is(err, errHostUnreachable) || errors.Is(err, errNetUnreachable):
 		return &userError{msg: fmt.Sprintf("Нет маршрута до %s: сеть недоступна или адрес вне вашей сети", host), cause: err}
 	case errors.As(err, &dns) && dns.IsNotFound:
-		return &userError{msg: fmt.Sprintf("Адрес %s не найден: проверьте имя хоста", host), cause: err}
+		return &userError{msg: fmt.Sprintf("Адрес %s не найден: проверьте имя хоста или подключение к сети", host), cause: err}
 	case errors.As(err, &dns):
 		return &userError{msg: fmt.Sprintf("Не удалось узнать адрес %s: нет связи с DNS-сервером", host), cause: err}
 	}

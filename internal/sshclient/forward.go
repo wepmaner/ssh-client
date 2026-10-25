@@ -44,6 +44,7 @@ var (
 type ForwardState struct {
 	Status string `json:"status"` // stopped | starting | running | error
 	Error  string `json:"error"`  // причина error; во время переподключения — последняя ошибка подключения
+	Detail string `json:"detail"` // системный текст под Error (connectex, lookup …); пусто, если нечего добавить
 	Conns  int    `json:"conns"`  // живые проксируемые соединения
 }
 
@@ -159,7 +160,7 @@ func (r *ForwardRunner) Start(ctx context.Context) error {
 	if err != nil {
 		cancel()
 		r.mu.Lock()
-		r.setLocked(ForwardState{Status: ForwardError, Error: err.Error()})
+		r.setLocked(ForwardState{Status: ForwardError, Error: err.Error(), Detail: errorCauses(err)})
 		r.mu.Unlock()
 		return err
 	}
@@ -344,13 +345,13 @@ func (r *ForwardRunner) reconnect(ctx context.Context) *ssh.Client {
 			r.failed = true
 			ln := r.ln
 			r.ln = nil
-			r.setLocked(ForwardState{Status: ForwardError, Error: err.Error(), Conns: r.state.Conns})
+			r.setLocked(ForwardState{Status: ForwardError, Error: err.Error(), Detail: errorCauses(err), Conns: r.state.Conns})
 			r.mu.Unlock()
 			closeAll(ln, nil, nil)
 			return nil
 		}
 		if err != nil {
-			r.setLocked(ForwardState{Status: ForwardStarting, Error: err.Error(), Conns: r.state.Conns})
+			r.setLocked(ForwardState{Status: ForwardStarting, Error: err.Error(), Detail: errorCauses(err), Conns: r.state.Conns})
 			r.mu.Unlock()
 			continue
 		}
@@ -448,7 +449,7 @@ func (r *ForwardRunner) track(c net.Conn, needClient bool) (*ssh.Client, bool) {
 		return nil, false
 	}
 	r.conns[c] = struct{}{}
-	r.setLocked(ForwardState{Status: r.state.Status, Error: r.state.Error, Conns: len(r.conns)})
+	r.setLocked(ForwardState{Status: r.state.Status, Error: r.state.Error, Detail: r.state.Detail, Conns: len(r.conns)})
 	return r.client, true
 }
 
@@ -457,7 +458,7 @@ func (r *ForwardRunner) untrack(c net.Conn) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.conns, c)
-	r.setLocked(ForwardState{Status: r.state.Status, Error: r.state.Error, Conns: len(r.conns)})
+	r.setLocked(ForwardState{Status: r.state.Status, Error: r.state.Error, Detail: r.state.Detail, Conns: len(r.conns)})
 }
 
 // socksDial открывает соединение к цели SOCKS-запроса через текущий SSH-клиент.

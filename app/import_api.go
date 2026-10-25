@@ -176,7 +176,7 @@ func (a *App) HostsExport() error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-// OpenDataFolder shows the data folder (%LOCALAPPDATA%\sshclient) in Explorer.
+// OpenDataFolder shows the data folder (%APPDATA%\sshclient) in Explorer.
 func (a *App) OpenDataFolder() error {
 	dir, err := appdir.Dir()
 	if err != nil {
