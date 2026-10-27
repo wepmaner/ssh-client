@@ -857,3 +857,45 @@ func TestSharedRunnerRemoteRefusedBacksOff(t *testing.T) {
 		t.Fatalf("acquire called %d times within a second of the refusal, want at most 3", n)
 	}
 }
+
+func TestSharedRunnerNoPauseAfterAcquireError(t *testing.T) {
+	srv, dial := forwardServer(t)
+	var (
+		mu    sync.Mutex
+		calls int
+		back  time.Time // when the host connection is up again; zero before the drop
+	)
+	acquire := func(ctx context.Context) (*ssh.Client, error) {
+		mu.Lock()
+		calls++
+		n, up := calls, back
+		mu.Unlock()
+		if n > 1 && time.Now().Before(up) {
+			// Like a host connection: blocks until its next attempt, which fails.
+			time.Sleep(50 * time.Millisecond)
+			return nil, errors.New("connection refused")
+		}
+		return dial(ctx)
+	}
+	listen := freeAddr(t)
+	r := startSharedRunner(t, model.Forward{Kind: "L", Listen: listen, Target: echoServer(t)}, acquire)
+	drainEvents(r)
+
+	mu.Lock()
+	back = time.Now().Add(120 * time.Millisecond) // two failed attempts, then success
+	mu.Unlock()
+	srv.DropConnections()
+	waitState(t, r, "running again", func(s ForwardState) bool {
+		return s.Status == ForwardRunning && time.Now().After(back)
+	})
+	if d := time.Since(back); d > 100*time.Millisecond {
+		t.Fatalf("running %v after the host connection came back: the runner paused on its own", d)
+	}
+	mu.Lock()
+	n := calls
+	mu.Unlock()
+	if n < 3 {
+		t.Fatalf("acquire called %d times, want the failed attempts too", n)
+	}
+	dialEcho(t, listen, "after the host connection came back")
+}

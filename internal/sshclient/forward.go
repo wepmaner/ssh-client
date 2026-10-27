@@ -89,9 +89,10 @@ type ForwardRunner struct {
 
 // NewSharedForwardRunner создаёт раннер поверх общего клиента подключения хоста. acquire блокируется
 // до готового клиента, ошибки попытки или отмены ctx; вызывается при Start и при каждом переподключении.
-// Первая попытка после обрыва идёт без паузы (подключение хоста само ждёт своего переподключения);
-// после неудачной попытки — ошибки acquire, отказа сервера открыть порт R или возврата того самого
-// оборвавшегося клиента — пауза backoff, как у NewForwardRunner, чтобы раннер не крутился впустую.
+// После обрыва и после ошибки acquire раннер вызывает acquire снова без паузы: паузы между попытками
+// выдерживает подключение хоста, и acquire ждёт его следующей попытки. Пауза backoff, как у
+// NewForwardRunner, — только после неудачи самого раннера на живом клиенте (сервер не открыл порт R,
+// acquire вернул тот самый оборвавшийся клиент), чтобы раннер не крутился впустую.
 // ErrHostNotTrusted и ErrHostKeyChanged из acquire — окончательная ошибка, как у NewForwardRunner.
 //
 // Клиент принадлежит вызывающему: раннер его никогда не закрывает, ни при остановке, ни при ошибках.
@@ -374,10 +375,11 @@ func (r *ForwardRunner) supervise(ctx context.Context, client *ssh.Client) {
 // reconnect повторяет dial с нарастающей паузой; nil — раннер останавливается. dropped — клиент,
 // который только что оборвался: общий раннер не принимает его обратно.
 func (r *ForwardRunner) reconnect(ctx context.Context, dropped *ssh.Client) *ssh.Client {
+	runnerFailed := false // общий раннер: прошлая попытка не удалась на живом клиенте
 	for attempt := 1; ; attempt++ {
-		delay := r.backoff(attempt)
-		if r.shared && attempt == 1 {
-			delay = 0
+		var delay time.Duration
+		if !r.shared || runnerFailed {
+			delay = r.backoff(attempt)
 		}
 		t := time.NewTimer(delay)
 		select {
@@ -388,12 +390,15 @@ func (r *ForwardRunner) reconnect(ctx context.Context, dropped *ssh.Client) *ssh
 		}
 
 		client, err := r.dial(ctx)
+		runnerFailed = false
 		if err == nil && r.shared && client == dropped {
 			client, err = nil, errReconnecting // неудачная попытка: этот клиент уже мёртв
+			runnerFailed = true
 		}
 		var rln net.Listener
 		if err == nil && r.f.Kind == "R" {
 			if rln, err = r.listenRemote(ctx, client); err != nil {
+				runnerFailed = true
 				r.closeClient(client)
 				client = nil
 			}
