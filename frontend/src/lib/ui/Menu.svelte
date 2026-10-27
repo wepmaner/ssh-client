@@ -79,8 +79,11 @@
     all[(i + (e.key === 'ArrowDown' ? 1 : -1) + all.length) % all.length]?.focus()
   }
 
+  // The anchor takes focus before the action, so a dialog the action opens hands focus back
+  // to it on close instead of to the page.
   function select(it: MenuItem) {
     onclose()
+    anchor?.focus()
     it.onselect()
   }
 </script>
