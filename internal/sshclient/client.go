@@ -170,6 +170,7 @@ type dialState struct {
 
 	remembered     []byte // пароль из Target (буфер Dial, его затирает Dial); nil после первой попытки
 	passKept       []byte // пароль, которым, вероятно, прошёл вход; своя копия, затирается в forgetSecrets
+	kiQuestion     string // текст вопроса keyboard-interactive, на который дан запомненный пароль
 	passwordUntold bool   // password взят из памяти и ещё не подтверждён: первый введённый пароль его заменит
 }
 
@@ -227,6 +228,27 @@ func (d *dialState) takeRemembered() string {
 	d.passKept = bytes.Clone([]byte(pw))
 	d.passwordUntold = true
 	return pw
+}
+
+func (d *dialState) setKIQuestion(q string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.kiQuestion = q
+}
+
+// keepKBIPassword запоминает ответ на вопрос q keyboard-interactive. Первый ответ запоминается.
+// Позднее вопрос с тем же текстом — повтор после отказа, его ответ заменяет сохранённый;
+// вопрос с другим текстом (одноразовый код) — второй фактор, он не запоминается.
+func (d *dialState) keepKBIPassword(pw, q string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.passKept) != 0 && q != d.kiQuestion {
+		return
+	}
+	clear(d.passKept)
+	d.passKept = []byte(pw)
+	d.passwordUntold = false
+	d.kiQuestion = q
 }
 
 // keepPassword запоминает введённый пароль. Первый ответ запоминается; запомненный из памяти
@@ -420,6 +442,7 @@ func (d *dialState) keyboardInteractive(_, instruction string, questions []strin
 	answers := make([]string, len(questions))
 	if len(questions) == 1 && len(echos) == 1 && !echos[0] {
 		if pw := d.takeRemembered(); pw != "" {
+			d.setKIQuestion(questions[0])
 			if err := printInstruction(); err != nil {
 				return nil, err
 			}
@@ -447,7 +470,7 @@ func (d *dialState) keyboardInteractive(_, instruction string, questions []strin
 		return nil, err
 	}
 	if len(questions) == 1 && len(echos) == 1 && !echos[0] {
-		d.keepPassword(answers[0], false)
+		d.keepKBIPassword(answers[0], questions[0])
 	}
 	return answers, nil
 }

@@ -693,3 +693,17 @@ func TestDialOnPasswordNotCalledOnFailure(t *testing.T) {
 		t.Fatalf("OnPassword called: %q", rec.copies)
 	}
 }
+
+func TestDialKBIWrongRememberedPasswordReplaced(t *testing.T) {
+	old := []byte("old")
+	out, rec, err := dialWithPassword(t, sshtest.Opts{KBIAnswer: "s3cret"}, old, "s3cret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(out.String(), "Код: "); n != 1 {
+		t.Fatalf("asked %d times: %q", n, out.String())
+	}
+	if len(rec.copies) != 1 || string(rec.copies[0]) != "s3cret" {
+		t.Fatalf("OnPassword got %q", rec.copies)
+	}
+}
