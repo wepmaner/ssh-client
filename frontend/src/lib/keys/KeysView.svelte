@@ -179,6 +179,7 @@
   }
   .status {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 12px;
     padding: 10px 14px;
@@ -202,9 +203,10 @@
   }
   .status-text {
     display: flex;
-    flex: 1;
+    flex: 1 1 240px;
     flex-direction: column;
     gap: 2px;
+    min-width: 0;
     font-size: 13px;
   }
   .status-text .muted {

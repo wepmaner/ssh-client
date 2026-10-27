@@ -12,9 +12,12 @@
 <button {type} class="btn {variant}" {...rest}>{@render children()}</button>
 
 <style>
+  /* A fixed-height button never shrinks or wraps its label: a wrapped second line would spill out. */
   .btn {
+    flex-shrink: 0;
     height: var(--control-height);
     padding: 0 14px;
+    white-space: nowrap;
     border: 1px solid transparent;
     border-radius: var(--radius-control);
     font: inherit;
