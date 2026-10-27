@@ -36,6 +36,16 @@ type Target struct {
 	// аутентификация прошла и сервер принял этот ключ. Получатель обязан скопировать фразу:
 	// после вызова Dial затирает свой буфер.
 	OnPassphrase func(p []byte)
+
+	// Password — уже известный пароль (необязательно). Dial пробует его один раз в первом
+	// подходящем месте (запрос пароля или первый раунд keyboard-interactive с одним вопросом
+	// без эха) и не спрашивает; неверный пароль ведёт к обычным вопросам в консоли.
+	// Dial затирает этот буфер перед возвратом при любом исходе.
+	Password []byte
+	// OnPassword (необязательно) вызывается не больше одного раза, только после успешной
+	// аутентификации, с паролем, которым прошёл вход. Получатель обязан скопировать пароль:
+	// после вызова Dial затирает свой буфер.
+	OnPassword func(p []byte)
 }
 
 const (
@@ -73,9 +83,10 @@ func (e *userError) Unwrap() error { return e.cause }
 // молчание сервера дольше 10 секунд даёт ErrTimeout.
 func Dial(ctx context.Context, t Target, p *Prompter, kh *KnownHosts) (*ssh.Client, error) {
 	defer clear(t.Passphrase)
+	defer clear(t.Password)
 	addr := net.JoinHostPort(t.Address, strconv.Itoa(t.Port))
-	d := &dialState{p: p}
-	defer d.forgetPassphrase()
+	d := &dialState{p: p, remembered: t.Password}
+	defer d.forgetSecrets()
 	auth, err := d.authMethods(t)
 	if err != nil {
 		return nil, err
@@ -129,6 +140,9 @@ func Dial(ctx context.Context, t Target, p *Prompter, kh *KnownHosts) (*ssh.Clie
 	if phrase := d.acceptedPassphrase(); phrase != nil && t.OnPassphrase != nil {
 		t.OnPassphrase(phrase)
 	}
+	if pw := d.acceptedPassword(); pw != nil && t.OnPassword != nil {
+		t.OnPassword(pw)
+	}
 	return ssh.NewClient(c, chans, reqs), nil
 }
 
@@ -151,8 +165,12 @@ type dialState struct {
 	deadline   time.Time // текущий срок ожидания сервера; ноль — идёт вопрос пользователю
 	cancelled  bool      // пользователь отменил ввод: остальные методы не пробовать
 	hostKeyErr error     // отказ проверки ключа сервера, вернуть как есть
-	phrase     []byte    // фраза, которой открылся ключ; своя копия, затирается в forgetPassphrase
+	phrase     []byte    // фраза, которой открылся ключ; своя копия, затирается в forgetSecrets
 	keyFailed  bool      // сервер не принял ключ: publickey среди неудачных методов
+
+	remembered     []byte // пароль из Target (буфер Dial, его затирает Dial); nil после первой попытки
+	passKept       []byte // пароль, которым, вероятно, прошёл вход; своя копия, затирается в forgetSecrets
+	passwordUntold bool   // password взят из памяти и ещё не подтверждён: первый введённый пароль его заменит
 }
 
 // acceptedPassphrase возвращает фразу ключа, если ключ открылся ею и сервер его не отверг.
@@ -174,12 +192,55 @@ func (d *dialState) keepPassphrase(pb []byte) {
 	d.phrase = pb
 }
 
-// forgetPassphrase затирает копию фразы ключа.
-func (d *dialState) forgetPassphrase() {
+// forgetSecrets затирает копии фразы ключа и пароля.
+func (d *dialState) forgetSecrets() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	clear(d.phrase)
 	d.phrase = nil
+	clear(d.passKept)
+	d.passKept = nil
+}
+
+// acceptedPassword возвращает пароль, которым прошёл вход, или nil. Вызывается после успешной
+// аутентификации; буфер принадлежит d и затирается в forgetSecrets.
+func (d *dialState) acceptedPassword() []byte {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.passKept) == 0 {
+		return nil
+	}
+	return d.passKept
+}
+
+// takeRemembered отдаёт запомненный пароль ровно один раз и держит его копию как кандидата.
+// Пусто, если пароля нет или его уже пробовали.
+func (d *dialState) takeRemembered() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.remembered) == 0 {
+		return ""
+	}
+	pw := string(d.remembered)
+	d.remembered = nil
+	clear(d.passKept)
+	d.passKept = bytes.Clone([]byte(pw))
+	d.passwordUntold = true
+	return pw
+}
+
+// keepPassword запоминает введённый пароль. Первый ответ запоминается; запомненный из памяти
+// заменяется один раз, если сервер его не принял и пользователь ввёл другой (replace).
+// Позднейшие ответы (например, одноразовый код во втором раунде) не запоминаются.
+func (d *dialState) keepPassword(pw string, replace bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.passKept) != 0 && !(replace && d.passwordUntold) {
+		return
+	}
+	clear(d.passKept)
+	d.passKept = []byte(pw)
+	d.passwordUntold = false
 }
 
 // armDeadline заново отсчитывает handshakeTimeout ожидания сервера.
@@ -324,7 +385,7 @@ func (d *dialState) passphraseSigners(k *model.Key, cached []byte) func() ([]ssh
 			pb := []byte(pass)
 			signer, err := keys.Signer(*k, pb)
 			if err == nil {
-				d.keepPassphrase(pb) // затрёт forgetPassphrase в конце Dial
+				d.keepPassphrase(pb) // затрёт forgetSecrets в конце Dial
 				return []ssh.Signer{signer}, nil
 			}
 			clear(pb)
@@ -357,6 +418,14 @@ func (d *dialState) keyboardInteractive(_, instruction string, questions []strin
 		return nil, nil
 	}
 	answers := make([]string, len(questions))
+	if len(questions) == 1 && len(echos) == 1 && !echos[0] {
+		if pw := d.takeRemembered(); pw != "" {
+			if err := printInstruction(); err != nil {
+				return nil, err
+			}
+			return []string{pw}, nil
+		}
+	}
 	err := d.prompting(func() error {
 		if err := printInstruction(); err != nil {
 			return err
@@ -377,16 +446,25 @@ func (d *dialState) keyboardInteractive(_, instruction string, questions []strin
 	if err != nil {
 		return nil, err
 	}
+	if len(questions) == 1 && len(echos) == 1 && !echos[0] {
+		d.keepPassword(answers[0], false)
+	}
 	return answers, nil
 }
 
 func (d *dialState) password(t Target) func() (string, error) {
 	return func() (string, error) {
+		if pw := d.takeRemembered(); pw != "" {
+			return pw, nil
+		}
 		var pw string
 		err := d.prompting(func() (err error) {
 			pw, err = d.p.AskSecret("Пароль " + t.User + "@" + t.Address + ": ")
 			return err
 		})
+		if err == nil {
+			d.keepPassword(pw, true)
+		}
 		return pw, err
 	}
 }

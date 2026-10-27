@@ -588,7 +588,7 @@ func TestPassphraseSignersSecondCallAsks(t *testing.T) {
 	c1, c2 := net.Pipe()
 	t.Cleanup(func() { ignoreErr(c1.Close()); ignoreErr(c2.Close()) })
 	d.conn = c1
-	defer d.forgetPassphrase()
+	defer d.forgetSecrets()
 	cached := []byte("right")
 	signers := d.passphraseSigners(key, cached)
 
@@ -603,5 +603,93 @@ func TestPassphraseSignersSecondCallAsks(t *testing.T) {
 	}
 	if n := strings.Count(out.String(), "Парольная фраза ключа work: "); n != 1 {
 		t.Fatalf("second call asked %d times: %q", n, out.String())
+	}
+}
+
+// dialWithPassword — как dialWithPassphrase, но для пароля: возвращает вывод Prompter,
+// копии паролей, переданных в OnPassword, и буфер Target.Password.
+func dialWithPassword(t *testing.T, opts sshtest.Opts, remembered []byte, in string) (*bytes.Buffer, *passphraseRecorder, error) {
+	t.Helper()
+	addr, hostKey := sshtest.Start(t, opts)
+	rec := &passphraseRecorder{}
+	tg := targetFor(t, addr, nil)
+	tg.Password = remembered
+	tg.OnPassword = rec.on
+	out := &bytes.Buffer{}
+	c, err := Dial(context.Background(), tg, NewPrompter(out, strings.NewReader(in)), trustedKnownHosts(t, addr, hostKey))
+	if c != nil {
+		ignoreErr(c.Close())
+	}
+	return out, rec, err
+}
+
+func TestDialPasswordFromMemoryNoPrompt(t *testing.T) {
+	pw := []byte("s3cret")
+	out, rec, err := dialWithPassword(t, sshtest.Opts{Password: "s3cret"}, pw, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "Пароль") {
+		t.Fatalf("asked although the password was given: %q", out.String())
+	}
+	if len(rec.copies) != 1 || string(rec.copies[0]) != "s3cret" {
+		t.Fatalf("OnPassword got %q", rec.copies)
+	}
+	if !allZero(pw) || !allZero(rec.buffers[0]) {
+		t.Fatalf("buffers not zeroed: %q, %q", pw, rec.buffers[0])
+	}
+}
+
+func TestDialKBIPasswordFromMemoryNoPrompt(t *testing.T) {
+	pw := []byte("s3cret")
+	out, rec, err := dialWithPassword(t, sshtest.Opts{KBIAnswer: "s3cret"}, pw, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "Код") {
+		t.Fatalf("asked although the password was given: %q", out.String())
+	}
+	if len(rec.copies) != 1 || string(rec.copies[0]) != "s3cret" {
+		t.Fatalf("OnPassword got %q", rec.copies)
+	}
+	if !allZero(pw) {
+		t.Fatalf("buffer not zeroed: %q", pw)
+	}
+}
+
+func TestDialOnPasswordGetsAcceptedSecret(t *testing.T) {
+	_, rec, err := dialWithPassword(t, sshtest.Opts{Password: "s3cret"}, nil, "s3cret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.copies) != 1 || string(rec.copies[0]) != "s3cret" {
+		t.Fatalf("OnPassword got %q", rec.copies)
+	}
+}
+
+func TestDialWrongRememberedPasswordAsks(t *testing.T) {
+	old := []byte("old")
+	out, rec, err := dialWithPassword(t, sshtest.Opts{Password: "s3cret"}, old, "s3cret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(out.String(), "Пароль alice@127.0.0.1: "); n != 1 {
+		t.Fatalf("password asked %d times: %q", n, out.String())
+	}
+	if len(rec.copies) != 1 || string(rec.copies[0]) != "s3cret" {
+		t.Fatalf("OnPassword got %q", rec.copies)
+	}
+	if !allZero(old) {
+		t.Fatalf("buffer not zeroed: %q", old)
+	}
+}
+
+func TestDialOnPasswordNotCalledOnFailure(t *testing.T) {
+	_, rec, err := dialWithPassword(t, sshtest.Opts{Password: "s3cret"}, nil, "abc")
+	if !errors.Is(err, ErrAuthDenied) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(rec.copies) != 0 {
+		t.Fatalf("OnPassword called: %q", rec.copies)
 	}
 }
