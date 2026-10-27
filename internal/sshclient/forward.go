@@ -285,6 +285,9 @@ func (r *ForwardRunner) listenRemote(ctx context.Context, client *ssh.Client) (n
 	rln, err := client.Listen("tcp", r.f.Listen)
 	stop()
 	if err != nil {
+		if ctx.Err() != nil { // отмена закрыла клиент: это не отказ сервера
+			return nil, ctx.Err()
+		}
 		return nil, remoteListenError(r.f.Listen, err)
 	}
 	return rln, nil

@@ -285,7 +285,7 @@ func TestForwardStartStopList(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := s.ev.waitFwdState(t, f.ID, "error", n, 5*time.Second)
-	if !strings.Contains(st.Error, "уже занят") && strings.Contains(st.Detail, listen) {
+	if !strings.Contains(st.Error, "уже занят") || !strings.Contains(st.Detail, listen) {
 		t.Fatalf("busy port error %+v", st)
 	}
 	if got := listed(t, s.App, f.ID); got.Status != "error" || !strings.Contains(got.Error, "уже занят") {

@@ -48,6 +48,9 @@ func listenError(addr string, err error) error {
 	case errors.Is(err, errAccess):
 		return &userError{msg: fmt.Sprintf("Windows не даёт занять порт %s: он зарезервирован системой (часто Hyper-V или WSL), выберите другой порт", port), cause: err}
 	case errors.Is(err, errAddrNotAvail):
+		if host == "" {
+			host = addr
+		}
 		return &userError{msg: fmt.Sprintf("Адрес %s не принадлежит этому компьютеру: укажите 127.0.0.1 или адрес своей сети", host), cause: err}
 	}
 	return &userError{msg: fmt.Sprintf("Не удалось занять локальный порт %s", port), cause: err}
