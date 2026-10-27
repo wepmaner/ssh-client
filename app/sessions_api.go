@@ -30,8 +30,9 @@ type SessionDTO struct {
 	LatencyMs int    `json:"latency_ms"` // 0 until the first keepalive answer
 }
 
-// SessionOpen starts connecting to a saved host and returns the session id at once. Progress
-// arrives as term:state:<id> and term:data:<id> events, released after the view's first SessionResize.
+// SessionOpen starts a console on the host's shared connection and returns the session id at once:
+// a live connection is used without a login, a login in progress is waited for. Progress arrives as
+// term:state:<id> and term:data:<id> events, released after the view's first SessionResize.
 func (a *App) SessionOpen(hostID string, cols, rows int) (string, error) {
 	if !a.storeUnlocked() {
 		return "", errVaultLocked
@@ -39,14 +40,20 @@ func (a *App) SessionOpen(hostID string, cols, rows int) (string, error) {
 	if cols <= 0 || rows <= 0 {
 		return "", errBadSize
 	}
-	h, t, err := a.hostTarget(hostID)
+	all := a.storeRef().Hosts()
+	i := slices.IndexFunc(all, func(h model.Host) bool { return h.ID == hostID })
+	if i < 0 {
+		return "", errHostNotFound
+	}
+	h := all[i]
+	s := newSession(uuid.NewString(), h.ID, h.Name, cols, rows, a.events())
+	conn, err := a.joinHostConn(h.ID, s)
 	if err != nil {
 		return "", err
 	}
-	s := newSession(uuid.NewString(), h.ID, h.Name, cols, rows, a.events())
-	t.Trust = a.trustAsker(trustOwner{sessionID: s.id}, t.User, s.out)
+	s.conn = conn
 	a.addSession(s)
-	go s.run(t, a.knownHosts)
+	go s.run(conn.params)
 	return s.id, nil
 }
 

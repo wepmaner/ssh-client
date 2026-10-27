@@ -34,10 +34,18 @@ type SessionStateDTO struct {
 	Retryable bool   `json:"retryable"`
 }
 
-// session is one terminal tab: dialling with prompts in the stream, then an interactive shell.
+// errConnLost is the error card of a console whose shared connection dropped under its shell.
+var errConnLost = errors.New("Соединение с сервером прервано") //nolint:staticcheck // ST1005: Russian UI text starts with a capital letter
+
+// session is one terminal tab on its host's shared connection: the login with prompts in the stream
+// (or a wait for the login others answer), then an interactive shell on a channel of its own. The
+// session never closes the shared client, only its channel; it leaves the connection when run ends.
 type session struct {
 	id, hostID, hostName string
 	seq                  int // opening order for SessionList
+
+	conn      *hostConn // the connection joined in SessionOpen
+	leaveOnce sync.Once
 
 	out    *outStream
 	in     *inputQueue // keystrokes for the Prompter until the shell starts
@@ -50,7 +58,6 @@ type session struct {
 	mu         sync.Mutex
 	state      string
 	sess       *sshclient.Session
-	client     *ssh.Client
 	cols, rows int
 	latencyMs  int
 	closing    bool
@@ -68,44 +75,39 @@ func newSession(id, hostID, hostName string, cols, rows int, e emitter) *session
 
 func (s *session) stateEvent() string { return "term:state:" + s.id }
 
-// run dials, starts the shell and pumps its output until the session ends.
-func (s *session) run(t sshclient.Target, knownHosts func() (*sshclient.KnownHosts, error)) {
+// run acquires the host connection's client, starts the shell on a channel of its own and pumps
+// its output until the shell ends or close() is called. It never waits on the network once closed.
+func (s *session) run(p hostParams) {
 	defer close(s.done)
+	defer s.leave()
 	defer s.cancel()
 	s.out.Event(s.stateEvent(), SessionStateDTO{State: stateConnecting, Retryable: true}, false)
-	_, _ = fmt.Fprintf(s.out, "Подключение к %s@%s:%d …\r\n", t.User, t.Address, t.Port) //nolint:gosec // G104: outStream never fails
+	_, _ = fmt.Fprintf(s.out, "Подключение к %s@%s:%d …\r\n", p.User, p.Address, p.Port) //nolint:gosec // G104: outStream never fails
 
-	kh, err := knownHosts()
-	if err != nil {
-		s.fail(err)
-		return
-	}
-	p := sshclient.NewPrompter(s.out, s.in)
-	client, err := dialTarget(s.ctx, t, p, kh)
+	pr := sshclient.NewPrompter(s.out, s.in)
+	ask := &connAsker{out: s.out, in: s.in, trust: trustOwner{sessionID: s.id}, label: s.hostName, prompter: pr}
+	client, err := s.conn.acquire(s.ctx, s, ask)
 	if err != nil {
 		s.fail(err)
 		return
 	}
 	s.mu.Lock()
-	if s.closing {
-		s.mu.Unlock()
-		_ = client.Close() //nolint:gosec // G104: best-effort cleanup of a cancelled session
+	closing := s.closing
+	cols, rows := s.cols, s.rows
+	s.mu.Unlock()
+	if closing {
 		s.fail(sshclient.ErrCancelled)
 		return
 	}
-	s.client = client
-	cols, rows := s.cols, s.rows
-	s.mu.Unlock()
 
 	sess, err := sshclient.NewSession(client, cols, rows, terminalType)
 	if err != nil {
-		_ = client.Close() //nolint:gosec // G104: best-effort cleanup after the primary error
 		s.fail(err)
 		return
 	}
-	if !s.handover(p, sess, cols, rows) {
-		_ = sess.Close()   //nolint:gosec // G104: best-effort cleanup of a cancelled session
-		_ = client.Close() //nolint:gosec // G104: best-effort cleanup of a cancelled session
+	// Closing the channel sends a message: on a stuck connection it must not hold up run.
+	defer func() { go func() { _ = sess.Close() }() }() //nolint:gosec // G104: the channel is being discarded
+	if !s.handover(pr, sess, cols, rows) {
 		s.fail(sshclient.ErrCancelled)
 		return
 	}
@@ -116,14 +118,55 @@ func (s *session) run(t sshclient.Target, knownHosts func() (*sshclient.KnownHos
 		defer wg.Done()
 		s.keepalive(client)
 	}()
-	for b := range sess.Output() {
-		_, _ = s.out.Write(b) //nolint:gosec // G104: outStream never fails
+	closed := s.pump(sess)
+	var waitErr error
+	if !closed {
+		waited := make(chan error, 1)
+		go func() { waited <- sess.Wait() }()
+		select {
+		case waitErr = <-waited:
+		case <-s.ctx.Done():
+			closed = true
+		}
 	}
-	code := exitCode(sess.Wait())
 	s.cancel()
-	_ = client.Close() //nolint:gosec // G104: the session is over, close errors are irrelevant
 	wg.Wait()
-	s.finish(SessionStateDTO{State: stateClosed, ExitCode: code, Retryable: true})
+	code := exitCode(waitErr)
+	switch {
+	case closed:
+		s.finish(SessionStateDTO{State: stateClosed, Retryable: true})
+	case code == nil:
+		// The channel ended without an exit status: the shared connection dropped.
+		st := errorState(fmt.Errorf("%w: %w", errConnLost, waitErr))
+		st.Message = errConnLost.Error() // the system text stays in Detail
+		s.finish(st)
+	default:
+		s.finish(SessionStateDTO{State: stateClosed, ExitCode: code, Retryable: true})
+	}
+}
+
+// pump copies the shell's output to the stream until the shell ends (false) or close() is called (true).
+func (s *session) pump(sess *sshclient.Session) bool {
+	for {
+		select {
+		case b, ok := <-sess.Output():
+			if !ok {
+				return s.ctx.Err() != nil
+			}
+			_, _ = s.out.Write(b) //nolint:gosec // G104: outStream never fails
+		case <-s.ctx.Done():
+			return true
+		}
+	}
+}
+
+// leave takes the session off its connection once; the last user closes it and wipes its secrets.
+func (s *session) leave() {
+	s.leaveOnce.Do(func() {
+		if s.conn != nil {
+			s.conn.leave(s)
+		}
+	})
 }
 
 // handover switches input from the Prompter to the shell: keystrokes the Prompter buffered past
@@ -155,13 +198,25 @@ func (s *session) handover(p *sshclient.Prompter, sess *sshclient.Session, cols,
 }
 
 // keepalive measures the round trip of keepalive@openssh.com right away and every latencyInterval.
+// It ends with the session without waiting for an unanswered request (the shared client's own
+// keepalive deals with a dead connection).
 func (s *session) keepalive(c *ssh.Client) {
 	t := time.NewTicker(latencyInterval)
 	defer t.Stop()
 	for {
 		start := time.Now()
-		if _, _, err := c.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+		reply := make(chan error, 1)
+		go func() {
+			_, _, err := c.SendRequest("keepalive@openssh.com", true, nil)
+			reply <- err
+		}()
+		select {
+		case <-s.ctx.Done():
 			return
+		case err := <-reply:
+			if err != nil {
+				return
+			}
 		}
 		ms := max(int(time.Since(start).Milliseconds()), 1) // 0 means "not measured yet"
 		s.mu.Lock()
@@ -190,7 +245,7 @@ func (s *session) fail(err error) {
 func (s *session) finish(st SessionStateDTO) {
 	s.mu.Lock()
 	s.state = st.State
-	s.sess, s.client = nil, nil
+	s.sess = nil
 	s.mu.Unlock()
 	s.out.Event(s.stateEvent(), st, true)
 }
@@ -225,20 +280,14 @@ func (s *session) resize(cols, rows int) error {
 	return nil
 }
 
-// close aborts dialling (a blocked prompt returns ErrCancelled) or ends the shell. It does not wait.
+// close aborts the login or the wait for it (a blocked prompt returns ErrCancelled) or ends the
+// shell; run then closes the session's channel. The shared client stays open. It does not wait.
 func (s *session) close() {
 	s.mu.Lock()
 	s.closing = true
-	sess, client := s.sess, s.client
 	s.mu.Unlock()
 	s.cancel()
 	s.in.Close()
-	if sess != nil {
-		_ = sess.Close() //nolint:gosec // G104: closing the client below ends the session anyway
-	}
-	if client != nil {
-		_ = client.Close() //nolint:gosec // G104: best-effort, the session is being discarded
-	}
 }
 
 func (s *session) dto() SessionDTO {

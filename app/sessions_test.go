@@ -483,3 +483,174 @@ func TestHostWithoutKeyLogsInWithPassword(t *testing.T) {
 	s.write(t, id, "s3cret\r")
 	s.ev.waitState(t, id, "connected", 5*time.Second)
 }
+
+// openWithPassphrase opens a console, answers the key passphrase in it and waits until it is connected.
+func (s sessionsApp) openWithPassphrase(t *testing.T) string {
+	t.Helper()
+	id := s.open(t)
+	s.ev.waitData(t, id, passphrasePrompt)
+	s.write(t, id, fwdPassphrase+"\r")
+	s.ev.waitState(t, id, "connected", hcWait)
+	return id
+}
+
+// runningForward saves an L forward to an echo server and starts it, answering the passphrase in
+// the host's forwards group.
+func (s sessionsApp) runningForward(t *testing.T) ForwardDTO {
+	t.Helper()
+	f := s.saveL(t, freePort(t), echoServer(t), false)
+	s.startWithPassphrase(t, f)
+	return f
+}
+
+func (s sessionsApp) checkAccepted(t *testing.T, want int) {
+	t.Helper()
+	if n := s.srv.Accepted(); n != want {
+		t.Fatalf("server accepted %d connections, want %d", n, want)
+	}
+}
+
+func TestSessionReusesForwardConnection(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	f := s.runningForward(t)
+	id := s.open(t)
+	s.ev.waitState(t, id, "connected", hcWait)
+	s.ev.waitData(t, id, "ok\r\n")
+	if out := s.ev.data(t, id); strings.Contains(out, passphrasePrompt) {
+		t.Fatalf("the console asked the passphrase on a live connection: %q", out)
+	}
+	roundTrip(t, f.Listen)
+	s.checkAccepted(t, 1)
+}
+
+func TestForwardReusesSessionConnection(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	s.openWithPassphrase(t)
+	f := s.saveL(t, freePort(t), echoServer(t), false)
+	if err := s.ForwardStart(f.ID); err != nil {
+		t.Fatal(err)
+	}
+	s.ev.waitFwdState(t, f.ID, "running", 0, hcWait)
+	roundTrip(t, f.Listen)
+	if out := s.groupData(t); out != "" {
+		t.Fatalf("the forwards group printed %q on a live connection", out)
+	}
+	s.checkAccepted(t, 1)
+}
+
+func TestSessionCloseKeepsForwards(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	f := s.runningForward(t)
+	id := s.open(t)
+	s.ev.waitState(t, id, "connected", hcWait)
+	if err := s.SessionClose(id); err != nil {
+		t.Fatal(err)
+	}
+	s.ev.waitState(t, id, "closed", hcWait)
+	roundTrip(t, f.Listen)
+	if got := listed(t, s.App, f.ID); got.Status != "running" {
+		t.Fatalf("forward after the console closed %+v", got)
+	}
+	s.checkAccepted(t, 1)
+}
+
+func TestStopAllForwardsKeepsSession(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	id := s.openWithPassphrase(t)
+	f := s.saveL(t, freePort(t), echoServer(t), false)
+	if err := s.ForwardStart(f.ID); err != nil {
+		t.Fatal(err)
+	}
+	s.ev.waitFwdState(t, f.ID, "running", 0, hcWait)
+	if err := s.ForwardStopAll(s.hostID); err != nil {
+		t.Fatal(err)
+	}
+	portFree(t, f.Listen)
+	s.write(t, id, "hi\r")
+	s.ev.waitData(t, id, "ok\r\nhi\r")
+	if l := s.SessionList(); len(l) != 1 || l[0].State != "connected" {
+		t.Fatalf("sessions after stop all %+v", l)
+	}
+	s.checkAccepted(t, 1)
+}
+
+func TestSessionWaitsForForwardsLogin(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	f := s.saveL(t, freePort(t), echoServer(t), false)
+	if err := s.ForwardStart(f.ID); err != nil {
+		t.Fatal(err)
+	}
+	s.waitHostPrompts(t, s.hostID, 1)
+	id := s.open(t)
+	s.ev.waitData(t, id, "Идёт вход для пробросов: ответьте в разделе «Пробросы»\r\n")
+	s.answer(t, s.hostID, fwdPassphrase)
+	s.ev.waitState(t, id, "connected", hcWait)
+	s.ev.waitFwdState(t, f.ID, "running", 0, hcWait)
+	if out := s.ev.data(t, id); strings.Contains(out, passphrasePrompt) {
+		t.Fatalf("the waiting console was asked the passphrase: %q", out)
+	}
+	s.checkAccepted(t, 1)
+}
+
+func TestSessionCloseDuringLoginHandsOverToForwards(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	id := s.open(t)
+	s.ev.waitData(t, id, passphrasePrompt)
+	f := s.saveL(t, freePort(t), echoServer(t), false)
+	if err := s.ForwardStart(f.ID); err != nil {
+		t.Fatal(err)
+	}
+	s.waitGroupData(t, "Идёт вход в консоли «srv»", 1)
+	if err := s.SessionClose(id); err != nil {
+		t.Fatal(err)
+	}
+	if st := s.ev.waitState(t, id, "error", hcWait); st.Kind != "cancelled" {
+		t.Fatalf("closed console %+v", st)
+	}
+	s.waitHostPrompts(t, s.hostID, 1)
+	s.answer(t, s.hostID, fwdPassphrase)
+	s.ev.waitFwdState(t, f.ID, "running", 0, hcWait)
+	roundTrip(t, f.Listen)
+}
+
+func TestSessionDropShowsErrorForwardsReconnect(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	s.hcBackoff = func(int) time.Duration { return 10 * time.Millisecond }
+	f := s.runningForward(t)
+	id := s.open(t)
+	s.ev.waitState(t, id, "connected", hcWait)
+
+	n := len(s.ev.fwdStates(f.ID))
+	s.srv.DropConnections()
+	st := s.ev.waitState(t, id, "error", hcWait)
+	if st.Kind != "other" || !st.Retryable || st.Message != "Соединение с сервером прервано" || st.Detail == "" {
+		t.Fatalf("dropped console %+v", st)
+	}
+	s.ev.waitFwdState(t, f.ID, "starting", n, hcWait)
+	s.ev.waitFwdState(t, f.ID, "running", n+1, hcWait)
+	roundTrip(t, f.Listen)
+	if c := s.prompts(t); c != 1 {
+		t.Fatalf("passphrase asked %d times: %q", c, s.groupData(t))
+	}
+	s.checkAccepted(t, 2)
+}
+
+// A server that stopped answering requests must not hold up closing its console: the console
+// never waits on the shared client, whose own keepalive ends it later.
+func TestSessionCloseDoesNotWaitOnFrozenServer(t *testing.T) {
+	s := newForwardsApp(t, sshtest.Opts{}, true)
+	s.srv.FreezeConnections() // the console's first latency request stays unanswered
+	id := s.open(t)
+	s.ev.waitState(t, id, "connected", hcWait)
+	time.Sleep(50 * time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		s.closeAllSessions()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("closing the console waited on the frozen server")
+	}
+}
