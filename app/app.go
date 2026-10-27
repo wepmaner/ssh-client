@@ -54,6 +54,7 @@ type App struct {
 	hcMu           sync.Mutex
 	hostConns      map[string]*hostConn            // the current connection of each host
 	hcLive         map[*hostConn]struct{}          // every connection with users, stale ones included
+	hcUsers        map[any]*hostConn               // the connection each user (*fwdRun, *session) is on
 	hostKeyChanged map[string]bool                 // hosts whose server key changed: blocked until restart
 	hcDown         bool                            // closeAllHostConns has run
 	hcBackoff      func(attempt int) time.Duration // reconnect pauses; nil means sshclient.DefaultBackoff

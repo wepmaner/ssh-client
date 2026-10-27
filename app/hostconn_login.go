@@ -60,8 +60,16 @@ func waitText(answering, ask *connAsker) string {
 	}
 }
 
-// login dials the host as it is in the store now, with the remembered secrets, asking through att.ask.
+// login dials the host with the remembered secrets, asking through att.ask. When the host's login
+// parameters in the store are no longer the connection's, it does not dial: the connection goes
+// stale (wiping the secrets) and the login fails with errConnStale.
 func (c *hostConn) login(att *loginAttempt) (*ssh.Client, error) {
+	c.mu.Lock()
+	stale := c.stale
+	c.mu.Unlock()
+	if stale {
+		return nil, errConnStale
+	}
 	ask := att.ask
 	in := ask.in
 	if ask.newInput != nil {
@@ -76,9 +84,16 @@ func (c *hostConn) login(att *loginAttempt) (*ssh.Client, error) {
 	if !a.storeUnlocked() {
 		return nil, errVaultLocked
 	}
-	_, t, err := a.hostTarget(c.hostID)
+	h, t, err := a.hostTarget(c.hostID)
 	if err != nil {
 		return nil, err
+	}
+	if paramsOf(h) != c.params {
+		if t.Key != nil {
+			clear(t.Key.Private)
+		}
+		c.markStale()
+		return nil, errConnStale
 	}
 	kh, err := knownHostsFor(t, a.knownHosts)
 	if err != nil {

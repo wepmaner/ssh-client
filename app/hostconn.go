@@ -83,25 +83,86 @@ type hostConn struct {
 	password   []byte
 }
 
-// hostConnFor returns the host's current connection, creating it on demand. A connection whose
-// login parameters no longer match the host is detached (markStale) and replaced.
-func (a *App) hostConnFor(hostID string) (*hostConn, error) {
+var errConnStale = errors.New("Параметры входа хоста изменились") //nolint:staticcheck // ST1005: Russian UI text starts with a capital letter
+
+func paramsOf(h model.Host) hostParams {
+	return hostParams{Address: h.Address, Port: h.Port, User: h.User, KeyID: h.KeyID}
+}
+
+// hostParamsOf returns the login parameters the host has in the store now.
+func (a *App) hostParamsOf(hostID string) (hostParams, error) {
 	if !a.storeUnlocked() {
-		return nil, errVaultLocked
+		return hostParams{}, errVaultLocked
 	}
 	hosts := a.storeRef().Hosts()
 	i := slices.IndexFunc(hosts, func(h model.Host) bool { return h.ID == hostID })
 	if i < 0 {
-		return nil, errHostNotFound
+		return hostParams{}, errHostNotFound
 	}
-	h := hosts[i]
-	p := hostParams{Address: h.Address, Port: h.Port, User: h.User, KeyID: h.KeyID}
+	return paramsOf(hosts[i]), nil
+}
 
+// hostConnFor returns the host's current connection, creating it on demand. A connection whose
+// login parameters no longer match the host is detached (markStale) and replaced.
+func (a *App) hostConnFor(hostID string) (*hostConn, error) {
+	p, err := a.hostParamsOf(hostID)
+	if err != nil {
+		return nil, err
+	}
 	a.hcMu.Lock()
 	defer a.hcMu.Unlock()
+	return a.currentConnLocked(hostID, p), nil
+}
+
+// joinHostConn adds u to the host's current connection and returns it, in one step: a connection
+// with users is always the host's current one until it goes stale.
+func (a *App) joinHostConn(hostID string, u any) (*hostConn, error) {
+	p, err := a.hostParamsOf(hostID)
+	if err != nil {
+		return nil, err
+	}
+	a.hcMu.Lock()
+	c := a.currentConnLocked(hostID, p)
+	var drop *ssh.Client
+	if prev := a.hcUsers[u]; prev != nil && prev != c {
+		drop = prev.leaveLocked(u)
+	}
+	c.joinLocked(u)
+	a.hcMu.Unlock()
+	closeClient(drop)
+	return c, nil
+}
+
+// moveToCurrent moves u from the stale connection old to the host's current one.
+func (a *App) moveToCurrent(old *hostConn, u any) (*hostConn, error) {
+	p, err := a.hostParamsOf(old.hostID)
+	if err != nil {
+		return nil, err
+	}
+	a.hcMu.Lock()
+	c := a.currentConnLocked(old.hostID, p)
+	var drop *ssh.Client
+	if a.hcUsers[u] == old {
+		drop = old.leaveLocked(u)
+		c.joinLocked(u)
+	}
+	a.hcMu.Unlock()
+	closeClient(drop)
+	return c, nil
+}
+
+// connOf is the connection u has joined, nil if none.
+func (a *App) connOf(u any) *hostConn {
+	a.hcMu.Lock()
+	defer a.hcMu.Unlock()
+	return a.hcUsers[u]
+}
+
+// currentConnLocked returns the host's connection for p, creating it; the caller holds hcMu.
+func (a *App) currentConnLocked(hostID string, p hostParams) *hostConn {
 	if c := a.hostConns[hostID]; c != nil {
 		if c.params == p {
-			return c, nil
+			return c
 		}
 		c.markStaleLocked()
 	}
@@ -130,14 +191,12 @@ func (a *App) hostConnFor(hostID string) (*hostConn, error) {
 		}
 		a.hostConns[hostID] = c
 	}
-	return c, nil
+	return c
 }
 
-// join adds a user. A connection its last user closed after hostConnFor returned it comes back to life.
-func (c *hostConn) join(u any) {
+// joinLocked adds u to c; the caller holds hcMu.
+func (c *hostConn) joinLocked(u any) {
 	a := c.a
-	a.hcMu.Lock()
-	defer a.hcMu.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.shutdown {
@@ -145,49 +204,73 @@ func (c *hostConn) join(u any) {
 			a.hcLive = map[*hostConn]struct{}{}
 		}
 		a.hcLive[c] = struct{}{}
-		if !c.stale && a.hostConns[c.hostID] == nil {
-			if a.hostConns == nil {
-				a.hostConns = map[string]*hostConn{}
-			}
-			a.hostConns[c.hostID] = c
-		}
 	}
 	if _, ok := c.users[u]; !ok {
 		c.users[u] = nil
 	}
+	if a.hcUsers == nil {
+		a.hcUsers = map[any]*hostConn{}
+	}
+	a.hcUsers[u] = c
 }
 
-// leave removes a user. The last one closes the client, stops the login or reconnect and wipes the
-// secrets; the connection leaves a.hostConns. When only sessions remain, a reconnect stops.
+// leave removes u from the connection it is on now, which may be another one than c when u was
+// moved off a stale connection. See leaveLocked.
 func (c *hostConn) leave(u any) {
 	a := c.a
 	a.hcMu.Lock()
-	c.mu.Lock()
-	delete(c.users, u)
-	var drop *ssh.Client
-	switch {
-	case len(c.users) == 0:
-		drop = c.idleLocked()
-		if a.hostConns[c.hostID] == c {
-			delete(a.hostConns, c.hostID)
-		}
-		delete(a.hcLive, c)
-	case c.att != nil && c.att.loop && !c.hasForwardsLocked():
-		c.att.cancel()
-		c.att = nil
-		c.forgetLocked()
-		c.setLocked(HostConnStateDTO{Status: hostConnNone})
+	target := a.hcUsers[u]
+	if target == nil {
+		target = c
 	}
-	c.mu.Unlock()
+	drop := target.leaveLocked(u)
 	a.hcMu.Unlock()
 	closeClient(drop)
 }
 
+// leaveLocked removes u. The last user closes the client, stops the login or reconnect and wipes
+// the secrets; the connection leaves a.hostConns. When the last forward leaves a reconnect, the
+// reconnect stops; sessions waiting for it get a login of their own, which may use the secrets.
+// It returns the client for the caller to close outside the locks; the caller holds hcMu.
+func (c *hostConn) leaveLocked(u any) *ssh.Client {
+	a := c.a
+	if a.hcUsers[u] == c {
+		delete(a.hcUsers, u)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.users, u)
+	switch {
+	case len(c.users) == 0:
+		if a.hostConns[c.hostID] == c {
+			delete(a.hostConns, c.hostID)
+		}
+		delete(a.hcLive, c)
+		return c.idleLocked()
+	case c.att != nil && c.att.loop && !c.hasForwardsLocked():
+		att := c.att
+		c.att = nil
+		if len(att.waiting) > 0 {
+			att.handover = true
+		} else {
+			c.forgetLocked()
+		}
+		att.cancel()
+		c.setLocked(HostConnStateDTO{Status: hostConnNone})
+	}
+	return nil
+}
+
 // acquire returns the connection's client: at once when connected, otherwise after the login in
 // progress or a new one answered by ask. It never returns a client whose connection has ended.
-// While the connection reconnects for its forwards, acquire waits for that attempt.
+// While the connection reconnects for its forwards, acquire waits for that attempt. A stale
+// connection serves its live client but never logs in again: without one, u moves to the host's
+// current connection and acquires there, with the host's new parameters and none of the old secrets.
 func (c *hostConn) acquire(ctx context.Context, u any, ask *connAsker) (*ssh.Client, error) {
 	for {
+		if cur := c.a.connOf(u); cur != nil && cur != c {
+			return cur.acquire(ctx, u, ask) // u was moved off this stale connection
+		}
 		c.mu.Lock()
 		if c.blocked != nil {
 			err := c.blocked
@@ -219,6 +302,14 @@ func (c *hostConn) acquire(ctx context.Context, u any, ask *connAsker) (*ssh.Cli
 			case <-t.C:
 				return cl, nil
 			}
+		}
+		if c.stale {
+			c.mu.Unlock()
+			next, err := c.a.moveToCurrent(c, u)
+			if err != nil {
+				return nil, err
+			}
+			return next.acquire(ctx, u, ask)
 		}
 		att := c.att
 		if att == nil {
@@ -274,8 +365,9 @@ func (c *hostConn) stopWaiting(att *loginAttempt, ask *connAsker) {
 	}
 }
 
-// markStale wipes the secrets and detaches the connection from the host: its users stay on it,
-// new users get a new connection.
+// markStale wipes the secrets and detaches the connection from the host: its users stay on its
+// client while it lives, new users get a new connection. A stale connection emits no state and
+// never logs in again; a reconnect in progress ends and its waiters move to the current connection.
 func (c *hostConn) markStale() {
 	c.a.hcMu.Lock()
 	defer c.a.hcMu.Unlock()
@@ -291,6 +383,11 @@ func (c *hostConn) markStaleLocked() {
 	defer c.mu.Unlock()
 	c.stale = true
 	c.forgetLocked()
+	if att := c.att; att != nil && att.loop {
+		c.att = nil
+		att.handover = true
+		att.cancel()
+	}
 }
 
 func (c *hostConn) state() HostConnStateDTO {
@@ -310,7 +407,7 @@ func (a *App) closeAllHostConns() {
 	for _, c := range a.hostConns {
 		all[c] = struct{}{}
 	}
-	a.hostConns, a.hcLive = nil, nil
+	a.hostConns, a.hcLive, a.hcUsers = nil, nil, nil
 	a.hcMu.Unlock()
 	for c := range all {
 		c.mu.Lock()
@@ -386,6 +483,9 @@ func (c *hostConn) finish(att *loginAttempt, client *ssh.Client, err error) {
 		c.setLocked(HostConnStateDTO{Status: hostConnConnected})
 	case !current:
 		// Abandoned by the last user or the shutdown, which have already reset the state.
+	case errors.Is(err, errConnStale):
+		att.handover = true // its waiters move to the host's current connection
+		c.setLocked(HostConnStateDTO{Status: hostConnNone})
 	case keyChanged || errors.Is(err, sshclient.ErrHostNotTrusted):
 		if keyChanged {
 			c.blocked = err
@@ -394,7 +494,7 @@ func (c *hostConn) finish(att *loginAttempt, client *ssh.Client, err error) {
 		c.setLocked(errorDTO(err))
 	case cancelled:
 		c.setLocked(HostConnStateDTO{Status: hostConnNone})
-	case att.loop && c.hasForwardsLocked():
+	case att.loop && !c.stale && c.hasForwardsLocked():
 		if errors.Is(err, sshclient.ErrAuthDenied) {
 			c.forgetLocked() // the server rejected the remembered secret: the next try asks again
 		}
@@ -448,13 +548,14 @@ func (c *hostConn) liveClientLocked() *ssh.Client {
 }
 
 // dropLocked handles the end of cl's connection once: with forwards on it a reconnect starts,
-// otherwise the secrets are wiped and the next acquire logs in anew. The caller holds mu.
+// otherwise the secrets are wiped and the next acquire logs in anew (on a stale connection: moves
+// to the current one). The caller holds mu.
 func (c *hostConn) dropLocked(cl *ssh.Client) {
 	if c.client != cl {
 		return
 	}
 	c.client, c.dead = nil, nil
-	if !c.shutdown && c.blocked == nil && c.hasForwardsLocked() {
+	if !c.shutdown && !c.stale && c.blocked == nil && c.hasForwardsLocked() {
 		c.retries = 1
 		c.startLocked(c.askFwd(), true, c.backoff(c.retries))
 		return
@@ -496,11 +597,12 @@ func (c *hostConn) hasForwardsLocked() bool {
 	return false
 }
 
-// setLocked records and emits the state; Retryable follows the host key block. The caller holds mu.
+// setLocked records and emits the state; Retryable follows the host key block. A stale connection
+// only records it: the host's group shows the current connection. The caller holds mu.
 func (c *hostConn) setLocked(st HostConnStateDTO) {
 	st.Retryable = c.blocked == nil
 	c.st = st
-	if c.emit != nil {
+	if c.emit != nil && !c.stale {
 		c.emit(st)
 	}
 }

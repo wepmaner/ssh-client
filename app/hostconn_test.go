@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -465,29 +466,17 @@ func TestHostConnStaleOnHostEdit(t *testing.T) {
 
 func TestHostConnCloseDuringReconnect(t *testing.T) {
 	s := newEncryptedHostConnApp(t)
-	s.hcBackoff = func(int) time.Duration { return 20 * time.Millisecond }
+	s.hcBackoff = func(int) time.Duration { return 10 * time.Second }
 	c := mustConn(t, s)
 	fw := &fwdRun{}
 	c.join(fw)
 	cl := loginWithPassphrase(t, c, fw, testAsker(s, "t1", "srv"), s, "t1")
 	pass, _ := c.secretsForTest()
 
-	// The server goes away: its port refuses, so the reconnect loop keeps failing.
-	h := s.storeRef().Hosts()[0]
-	_, port, err := net.SplitHostPort(freePort(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.Port, err = strconv.Atoi(port)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.storeRef().SaveHost(h); err != nil {
-		t.Fatal(err)
-	}
+	// The reconnect loop runs and waits in its pause.
 	s.srv.DropConnections()
 	waitClosed(t, cl)
-	waitConnState(t, c, "a failed reconnect", func(st HostConnStateDTO) bool { return st.Error != "" })
+	waitConnState(t, c, "the reconnect", func(st HostConnStateDTO) bool { return st.Status == "connecting" && st.Asker == "forwards" })
 
 	start := time.Now()
 	s.closeAllHostConns()
@@ -532,5 +521,160 @@ func TestHostConnMarkStaleDetaches(t *testing.T) {
 	}
 	if got, err := c.acquire(context.Background(), sess, testAsker(s, "t2", "srv")); err != nil || got != cl {
 		t.Fatalf("the stale connection stopped serving its user: %v", err)
+	}
+}
+
+// join adds u through joinHostConn and checks it lands on c, the host's current connection.
+func (c *hostConn) join(u any) {
+	got, err := c.a.joinHostConn(c.hostID, u)
+	if err != nil || got != c {
+		panic(fmt.Sprintf("joinHostConn: %v, same connection %v", err, got == c))
+	}
+}
+
+// groupStates counts the fwdhost:state events of the host.
+func (s sessionsApp) groupStates() int {
+	n := 0
+	for _, e := range s.ev.snapshot() {
+		if e.name == "fwdhost:state:"+s.hostID {
+			n++
+		}
+	}
+	return n
+}
+
+// editHost changes the stored host with edit.
+func (s sessionsApp) editHost(t *testing.T, edit func(*model.Host)) {
+	t.Helper()
+	h := s.storeRef().Hosts()[0]
+	edit(&h)
+	if _, err := s.storeRef().SaveHost(h); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHostConnStaleEmitsNothing(t *testing.T) {
+	s := newHostConnApp(t, sshtest.Opts{}, true)
+	s.fwdHostGroup(s.hostID).out.Attach()
+	old := mustConn(t, s)
+	sess := &session{}
+	old.join(sess)
+	if _, err := old.acquire(context.Background(), sess, testAsker(s, "t1", "srv")); err != nil {
+		t.Fatal(err)
+	}
+	s.editHost(t, func(h *model.Host) { h.User = "bob" })
+	if fresh := mustConn(t, s); fresh == old {
+		t.Fatal("no new connection after the edit")
+	}
+	n := s.groupStates()
+
+	s.srv.DropConnections() // the stale connection's client ends
+	waitConnState(t, old, "none", func(st HostConnStateDTO) bool { return st.Status == "none" })
+	old.leave(sess)
+	if got := s.groupStates(); got != n {
+		t.Fatalf("a stale connection emitted %d host states", got-n)
+	}
+}
+
+func TestHostConnStaleDropMovesForwardsToCurrent(t *testing.T) {
+	s := newHostConnApp(t, sshtest.Opts{Password: "s3cret"}, false)
+	s.hcBackoff = func(int) time.Duration { return 10 * time.Millisecond }
+	s.fwdHostGroup(s.hostID).out.Attach()
+	// The edited host is another server with the same password: a leaked old secret would log in
+	// there without a question.
+	srv2 := sshtest.StartServer(t, sshtest.Opts{Password: "s3cret"})
+	dir, err := appdir.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := knownhosts.Line([]string{knownhosts.Normalize(s.srv.Addr())}, s.srv.HostKey()) + "\n" +
+		knownhosts.Line([]string{knownhosts.Normalize(srv2.Addr())}, srv2.HostKey()) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "known_hosts"), []byte(lines), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	old := mustConn(t, s)
+	fw := &fwdRun{}
+	old.join(fw)
+	ch := acquireAsync(context.Background(), old, fw, s.forwardsAsker(s.hostID))
+	s.waitGroupData(t, "Пароль alice@", 1)
+	s.answerGroup(t, "s3cret")
+	r := waitAcquired(t, ch)
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	_, pw := old.secretsForTest()
+
+	_, port, err := net.SplitHostPort(srv2.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.editHost(t, func(h *model.Host) { h.Port, err = strconv.Atoi(port) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.srv.DropConnections()
+	waitClosed(t, r.client)
+	ch = acquireAsync(context.Background(), old, fw, s.forwardsAsker(s.hostID)) // the runner re-acquires
+	s.waitGroupData(t, "Пароль alice@", 2)
+	if n := srv2.Accepted(); n != 1 {
+		t.Fatalf("edited host accepted %d connections before the answer", n)
+	}
+	s.answerGroup(t, "s3cret")
+	r2 := waitAcquired(t, ch)
+	if r2.err != nil {
+		t.Fatal(r2.err)
+	}
+
+	cur := mustConn(t, s)
+	if cur == old || s.connOf(fw) != cur {
+		t.Fatal("the forward is not on the host's current connection")
+	}
+	if n := s.srv.Accepted(); n != 1 {
+		t.Fatalf("the old server got %d connections: the stale connection reconnected", n)
+	}
+	if p, _ := old.secretsForTest(); p != nil || !zeroBytes(pw) {
+		t.Fatalf("old password kept: %q, buffer %q", p, pw)
+	}
+	if st := old.state(); st.Status != "none" {
+		t.Fatalf("old connection state %+v", st)
+	}
+	cur.leave(fw)
+	waitClosed(t, r2.client)
+}
+
+func TestHostConnLeaveDuringReconnectHandsOverToSession(t *testing.T) {
+	s := newHostConnApp(t, sshtest.Opts{Password: "s3cret"}, false)
+	s.hcBackoff = func(int) time.Duration { return 10 * time.Second }
+	s.fwdHostGroup(s.hostID).out.Attach()
+	c := mustConn(t, s)
+	fw, sess := &fwdRun{}, &session{}
+	c.join(fw)
+	c.join(sess)
+	defer c.leave(sess)
+	ch := acquireAsync(context.Background(), c, fw, s.forwardsAsker(s.hostID))
+	s.waitGroupData(t, "Пароль alice@", 1)
+	s.answerGroup(t, "s3cret")
+	r := waitAcquired(t, ch)
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+
+	s.srv.DropConnections()
+	waitClosed(t, r.client)
+	waitConnState(t, c, "the reconnect", func(st HostConnStateDTO) bool { return st.Status == "connecting" && st.Asker == "forwards" })
+	ch = acquireAsync(context.Background(), c, sess, testAsker(s, "t1", "srv"))
+	s.ev.waitData(t, "t1", "Идёт вход для пробросов")
+
+	c.leave(fw) // the last forward stops: the waiting console logs in by itself
+	r2 := waitAcquired(t, ch)
+	if r2.err != nil {
+		t.Fatalf("the waiting console got %v", r2.err)
+	}
+	if strings.Contains(s.ev.data(t, "t1"), "Пароль") {
+		t.Fatal("the console was asked the password again")
+	}
+	if n := s.srv.Accepted(); n != 2 {
+		t.Fatalf("server accepted %d connections, want 2", n)
 	}
 }
