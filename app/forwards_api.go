@@ -214,10 +214,12 @@ func (a *App) ForwardStop(id string) error {
 	if !a.storeUnlocked() {
 		return errVaultLocked
 	}
-	if _, err := a.findForward(id); err != nil {
+	f, err := a.findForward(id)
+	if err != nil {
 		return err
 	}
 	a.stopForward(id)
+	a.clearHostError(f.HostID) // the last forward stopped by hand: the group shows none
 	return nil
 }
 

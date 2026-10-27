@@ -249,7 +249,18 @@ func (c *hostConn) leaveLocked(u any) *ssh.Client {
 			delete(a.hostConns, c.hostID)
 		}
 		delete(a.hcLive, c)
-		return c.idleLocked()
+		// Closed after a failed login or a final error: the group keeps showing that error.
+		keepErr := c.st.Status == hostConnError && !c.stale && !c.shutdown
+		switch {
+		case keepErr:
+			if a.hcLastErr == nil {
+				a.hcLastErr = map[string]HostConnStateDTO{}
+			}
+			a.hcLastErr[c.hostID] = c.st
+		case !c.stale:
+			delete(a.hcLastErr, c.hostID)
+		}
+		return c.idleLocked(keepErr)
 	case c.att != nil && c.att.loop && !c.hasForwardsLocked():
 		att := c.att
 		if slices.ContainsFunc(att.waiting, func(w *connAsker) bool { return w.label != "" }) {
@@ -415,7 +426,7 @@ func (a *App) closeAllHostConns() {
 	for c := range all {
 		c.mu.Lock()
 		c.shutdown = true
-		drop := c.idleLocked()
+		drop := c.idleLocked(false)
 		c.mu.Unlock()
 		closeClient(drop)
 	}
@@ -535,9 +546,11 @@ func (a *App) hostRetryable(hostID string) bool {
 }
 
 // hostConnState is the state the host's forwards group shows: that of its current connection, else
-// of a stale one its users are still on, else none. It creates no connection.
+// of a stale one its users are still on; while neither has started a login, the error the last
+// connection closed in; else none. It creates no connection.
 func (a *App) hostConnState(hostID string) HostConnStateDTO {
 	a.hcMu.Lock()
+	defer a.hcMu.Unlock()
 	c := a.hostConns[hostID]
 	if c == nil {
 		for live := range a.hcLive {
@@ -547,12 +560,35 @@ func (a *App) hostConnState(hostID string) HostConnStateDTO {
 			}
 		}
 	}
+	if c != nil {
+		if st := c.state(); st.Status != hostConnNone {
+			return st
+		}
+	}
+	if st, ok := a.hcLastErr[hostID]; ok {
+		st.Retryable = !a.hostKeyChanged[hostID]
+		return st
+	}
+	return HostConnStateDTO{Status: hostConnNone, Retryable: !a.hostKeyChanged[hostID]}
+}
+
+// clearHostError forgets the error the host's last connection closed in, once the user has stopped
+// the host's forwards and no connection is left, and shows none in the group.
+func (a *App) clearHostError(hostID string) {
+	a.hcMu.Lock()
+	_, had := a.hcLastErr[hostID]
+	live := a.hostConns[hostID] != nil
+	for c := range a.hcLive {
+		live = live || c.hostID == hostID
+	}
+	if had && !live {
+		delete(a.hcLastErr, hostID)
+	}
 	blocked := a.hostKeyChanged[hostID]
 	a.hcMu.Unlock()
-	if c == nil {
-		return HostConnStateDTO{Status: hostConnNone, Retryable: !blocked}
+	if had && !live {
+		a.emitHostConnState(hostID, HostConnStateDTO{Status: hostConnNone, Retryable: !blocked})
 	}
-	return c.state()
 }
 
 // markHostStale detaches the host's current connection after its login parameters changed and wipes
@@ -587,11 +623,12 @@ func (a *App) closeHostConns(hostID string) {
 			delete(a.hcUsers, u)
 		}
 	}
+	delete(a.hcLastErr, hostID)
 	a.hcMu.Unlock()
 	for _, c := range conns {
 		c.mu.Lock()
 		c.shutdown = true
-		drop := c.idleLocked()
+		drop := c.idleLocked(false)
 		c.mu.Unlock()
 		closeClient(drop)
 	}
@@ -643,8 +680,8 @@ func (c *hostConn) dropLocked(cl *ssh.Client) {
 }
 
 // idleLocked stops the login, wipes the secrets and returns the client for the caller to close
-// outside mu. The caller holds mu.
-func (c *hostConn) idleLocked() *ssh.Client {
+// outside mu. keepErr leaves an error state as it is instead of none. The caller holds mu.
+func (c *hostConn) idleLocked(keepErr bool) *ssh.Client {
 	c.forgetLocked() // first, while c.att is set: a secret its dial still accepts is not kept
 	if c.att != nil {
 		c.att.cancel()
@@ -652,7 +689,9 @@ func (c *hostConn) idleLocked() *ssh.Client {
 	}
 	drop := c.client
 	c.client, c.dead, c.retries = nil, nil, 0
-	c.setLocked(HostConnStateDTO{Status: hostConnNone})
+	if !keepErr || c.st.Status != hostConnError {
+		c.setLocked(HostConnStateDTO{Status: hostConnNone})
+	}
 	return drop
 }
 

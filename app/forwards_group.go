@@ -117,6 +117,7 @@ func (a *App) ForwardStopAll(hostID string) error {
 		ids[f.ID] = true
 	}
 	a.stopForwards(func(id string) bool { return ids[id] })
+	a.clearHostError(hostID)
 	return nil
 }
 

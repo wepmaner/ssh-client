@@ -56,6 +56,7 @@ type App struct {
 	hcLive         map[*hostConn]struct{}          // every connection with users, stale ones included
 	hcUsers        map[any]*hostConn               // the connection each user (*fwdRun, *session) is on
 	hostKeyChanged map[string]bool                 // hosts whose server key changed: blocked until restart
+	hcLastErr      map[string]HostConnStateDTO     // the error state a host's connection closed in, shown until the next login
 	hcDown         bool                            // closeAllHostConns has run
 	hcBackoff      func(attempt int) time.Duration // reconnect pauses; nil means sshclient.DefaultBackoff
 

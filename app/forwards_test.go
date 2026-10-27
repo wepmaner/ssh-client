@@ -1041,3 +1041,84 @@ func TestHostSaveChangedUserMarksStale(t *testing.T) {
 		t.Fatalf("server accepted %d connections, want 2", n)
 	}
 }
+
+func TestForwardHostErrorSurvivesLastLeave(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	target := echoServer(t)
+	fwds := []ForwardDTO{s.saveL(t, freePort(t), target, false), s.saveL(t, freePort(t), target, false)}
+	if err := s.ForwardStartAll(s.hostID); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 3; i++ {
+		s.waitHostPrompts(t, s.hostID, i)
+		s.answer(t, s.hostID, "wrong")
+	}
+	for _, f := range fwds {
+		s.ev.waitFwdState(t, f.ID, "error", 0, 5*time.Second)
+	}
+	s.ev.waitFor(t, 2*time.Second, "every forward left the connection", func([]fakeEvent) bool {
+		s.hcMu.Lock()
+		defer s.hcMu.Unlock()
+		return len(s.hcLive) == 0
+	})
+	s.checkNoConns(t, s.hostID)
+	time.Sleep(50 * time.Millisecond) // a late none would be out by now
+	st := s.ev.hostStates(s.hostID)
+	last := st[len(st)-1]
+	if last.Status != "error" || last.Error == "" || !last.Retryable {
+		t.Fatalf("group state after the last forward left: %+v", st)
+	}
+	l := s.ForwardHostsList()
+	if len(l) != 1 || l[0].Status != "error" || l[0].Error != last.Error || l[0].Detail != last.Detail {
+		t.Fatalf("listed %+v, last state %+v", l, last)
+	}
+
+	// The next login replaces it.
+	n := len(st)
+	if err := s.ForwardStart(fwds[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	s.waitHostPrompts(t, s.hostID, 4)
+	if st := s.ev.hostStates(s.hostID)[n:]; len(st) == 0 || st[0].Status != "connecting" {
+		t.Fatalf("states of the next login %+v", st)
+	}
+	if l := s.ForwardHostsList(); l[0].Status != "connecting" {
+		t.Fatalf("listed during the next login %+v", l)
+	}
+	s.answer(t, s.hostID, fwdPassphrase)
+	s.ev.waitFwdState(t, fwds[0].ID, "running", 0, 5*time.Second)
+
+	// Stopping everything by hand shows none.
+	if err := s.ForwardStopAll(s.hostID); err != nil {
+		t.Fatal(err)
+	}
+	if l := s.ForwardHostsList(); l[0].Status != "none" || l[0].Error != "" {
+		t.Fatalf("listed after stop all %+v", l)
+	}
+}
+
+func TestForwardStopAllClearsHostError(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	f := s.saveL(t, freePort(t), echoServer(t), false)
+	if err := s.ForwardStart(f.ID); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 3; i++ {
+		s.waitHostPrompts(t, s.hostID, i)
+		s.answer(t, s.hostID, "wrong")
+	}
+	s.ev.waitFwdState(t, f.ID, "error", 0, 5*time.Second)
+	s.ev.waitFor(t, 2*time.Second, "group error", func([]fakeEvent) bool {
+		return s.ForwardHostsList()[0].Status == "error"
+	})
+	if err := s.ForwardStopAll(s.hostID); err != nil {
+		t.Fatal(err)
+	}
+	st := s.ev.hostStates(s.hostID)
+	if last := st[len(st)-1]; last.Status != "none" {
+		t.Fatalf("group state after stop all %+v", st)
+	}
+	if l := s.ForwardHostsList(); l[0].Status != "none" {
+		t.Fatalf("listed after stop all %+v", l)
+	}
+}
