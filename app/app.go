@@ -28,7 +28,7 @@ type App struct {
 	mainWin *application.WebviewWindow
 
 	// refs holds the vault, its store and the open error as one value: VaultResetCorrupt and
-	// VaultUnlock replace it while other bound calls read it. refsMu serialises the writers.
+	// VaultRestore replace it while other bound calls read it. refsMu serialises the writers.
 	refs   atomic.Pointer[vaultRefs]
 	refsMu sync.Mutex
 
