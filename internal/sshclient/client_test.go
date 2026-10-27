@@ -707,3 +707,13 @@ func TestDialKBIWrongRememberedPasswordReplaced(t *testing.T) {
 		t.Fatalf("OnPassword got %q", rec.copies)
 	}
 }
+
+func TestDialPasswordWrongThenRightReportsRight(t *testing.T) {
+	_, rec, err := dialWithPassword(t, sshtest.Opts{Password: "s3cret"}, nil, "bads3cret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.copies) != 1 || string(rec.copies[0]) != "s3cret" {
+		t.Fatalf("OnPassword got %q", rec.copies)
+	}
+}

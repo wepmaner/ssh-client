@@ -171,7 +171,6 @@ type dialState struct {
 	remembered     []byte // пароль из Target (буфер Dial, его затирает Dial); nil после первой попытки
 	passKept       []byte // пароль, которым, вероятно, прошёл вход; своя копия, затирается в forgetSecrets
 	kiQuestion     string // текст вопроса keyboard-interactive, на который дан запомненный пароль
-	passwordUntold bool   // password взят из памяти и ещё не подтверждён: первый введённый пароль его заменит
 }
 
 // acceptedPassphrase возвращает фразу ключа, если ключ открылся ею и сервер его не отверг.
@@ -226,7 +225,6 @@ func (d *dialState) takeRemembered() string {
 	d.remembered = nil
 	clear(d.passKept)
 	d.passKept = bytes.Clone([]byte(pw))
-	d.passwordUntold = true
 	return pw
 }
 
@@ -247,22 +245,18 @@ func (d *dialState) keepKBIPassword(pw, q string) {
 	}
 	clear(d.passKept)
 	d.passKept = []byte(pw)
-	d.passwordUntold = false
 	d.kiQuestion = q
 }
 
-// keepPassword запоминает введённый пароль. Первый ответ запоминается; запомненный из памяти
-// заменяется один раз, если сервер его не принял и пользователь ввёл другой (replace).
-// Позднейшие ответы (например, одноразовый код во втором раунде) не запоминаются.
-func (d *dialState) keepPassword(pw string, replace bool) {
+// keepPassword запоминает пароль, введённый в запросе пароля. Такой запрос задаётся только
+// после отказа сервера предыдущему ответу, поэтому ответ всегда заменяет сохранённый
+// (в том числе полученный через keyboard-interactive).
+func (d *dialState) keepPassword(pw string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if len(d.passKept) != 0 && !(replace && d.passwordUntold) {
-		return
-	}
 	clear(d.passKept)
 	d.passKept = []byte(pw)
-	d.passwordUntold = false
+	d.kiQuestion = ""
 }
 
 // armDeadline заново отсчитывает handshakeTimeout ожидания сервера.
@@ -420,6 +414,11 @@ func (d *dialState) passphraseSigners(k *model.Key, cached []byte) func() ([]ssh
 	}
 }
 
+// isPasswordRound — раунд keyboard-interactive с одним вопросом без эха: похож на запрос пароля.
+func isPasswordRound(questions []string, echos []bool) bool {
+	return len(questions) == 1 && len(echos) == 1 && !echos[0]
+}
+
 func (d *dialState) keyboardInteractive(_, instruction string, questions []string, echos []bool) ([]string, error) {
 	printInstruction := func() error {
 		if instruction = strings.TrimRight(instruction, "\r\n"); instruction != "" {
@@ -440,7 +439,7 @@ func (d *dialState) keyboardInteractive(_, instruction string, questions []strin
 		return nil, nil
 	}
 	answers := make([]string, len(questions))
-	if len(questions) == 1 && len(echos) == 1 && !echos[0] {
+	if isPasswordRound(questions, echos) {
 		if pw := d.takeRemembered(); pw != "" {
 			d.setKIQuestion(questions[0])
 			if err := printInstruction(); err != nil {
@@ -469,7 +468,7 @@ func (d *dialState) keyboardInteractive(_, instruction string, questions []strin
 	if err != nil {
 		return nil, err
 	}
-	if len(questions) == 1 && len(echos) == 1 && !echos[0] {
+	if isPasswordRound(questions, echos) {
 		d.keepKBIPassword(answers[0], questions[0])
 	}
 	return answers, nil
@@ -486,7 +485,7 @@ func (d *dialState) password(t Target) func() (string, error) {
 			return err
 		})
 		if err == nil {
-			d.keepPassword(pw, true)
+			d.keepPassword(pw)
 		}
 		return pw, err
 	}
