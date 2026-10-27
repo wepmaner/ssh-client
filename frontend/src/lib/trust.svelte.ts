@@ -10,7 +10,7 @@ import { toast, ui } from './stores.svelte'
 export interface TrustAsk {
   id: string
   session_id: string
-  forward_id: string
+  forward_host_id: string
   host: string
   port: number
   user: string
@@ -90,7 +90,7 @@ export async function answerTrust(id: string, ok: boolean): Promise<void> {
   }
 }
 
-/** Whether the forward waits for a trust answer: its mini-terminal is not needed then. */
-export function forwardAsksTrust(forwardId: string): boolean {
-  return trust.queue.some((q) => q.forward_id === forwardId)
+/** Whether the forwards of the host wait for a trust answer: their mini-terminal is not needed then. */
+export function hostAsksTrust(hostId: string): boolean {
+  return trust.queue.some((q) => q.forward_host_id === hostId)
 }

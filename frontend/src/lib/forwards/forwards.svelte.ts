@@ -1,6 +1,20 @@
-// Forwards and their live state. Go sends fwd:state:<id> on every change and fwd:data:<id> with
-// the prompts of a dial (passphrase, password, server questions) for the card's mini-terminal.
-import { EventsOn, ForwardAttach, ForwardStart, ForwardStop, ForwardsList, errorText, type app } from '../api'
+// Forwards and their live state. Go sends fwd:state:<id> on every change of a forward. All forwards
+// of a host share one connection: its state is fwdhost:state:<hostId>, and fwdhost:data:<hostId>
+// carries the prompts of its login (passphrase, password, server questions) for the group's
+// mini-terminal.
+import {
+  EventsOn,
+  ForwardAttach,
+  ForwardHostAttach,
+  ForwardHostsList,
+  ForwardStart,
+  ForwardStartAll,
+  ForwardStop,
+  ForwardStopAll,
+  ForwardsList,
+  errorText,
+  type app,
+} from '../api'
 import { toast } from '../stores.svelte'
 import { decodeBase64 } from '../terminal/base64'
 
@@ -16,11 +30,21 @@ export interface ForwardStatePayload {
   retryable: boolean
 }
 
-export const forwards = $state<{ list: app.ForwardDTO[] }>({ list: [] })
+/** Payload of fwdhost:state:<hostId>, see app.HostConnStateDTO. */
+export interface HostStatePayload {
+  status: string
+  error: string
+  detail?: string
+  retryable: boolean
+  asker: string
+  session: string
+}
+
+export const forwards = $state<{ list: app.ForwardDTO[]; hosts: app.ForwardHostDTO[] }>({ list: [], hosts: [] })
 
 /**
- * Bytes of mini-terminal output per forward, kept while the forward is starting so a card that
- * mounts later still shows the pending prompt. outputSize makes "has output" reactive.
+ * Bytes of mini-terminal output per host, kept while the host connects so a group that mounts
+ * later still shows the pending prompt. outputSize makes "has output" reactive.
  */
 const output = new Map<string, Uint8Array[]>()
 const outputSink = new Map<string, (b: Uint8Array) => void>()
@@ -29,76 +53,109 @@ const maxOutput = 64 << 10
 
 const plain = <T>(v: T): T => JSON.parse(JSON.stringify(v))
 const unsubscribe = new Map<string, () => void>()
-/** State events seen per forward: a list fetched meanwhile must not overwrite a newer event. */
+const unsubscribeHost = new Map<string, () => void>()
+/** State events seen per forward and per host: a list fetched meanwhile must not overwrite a newer event. */
 const stateSeq = new Map<string, number>()
+const hostSeq = new Map<string, number>()
 
-function clearOutput(id: string): void {
-  output.delete(id)
-  delete outputSize[id]
+function clearOutput(hostId: string): void {
+  output.delete(hostId)
+  delete outputSize[hostId]
 }
 
-function onData(id: string, b64: string): void {
+function onData(hostId: string, b64: string): void {
   const b = decodeBase64(b64)
-  const chunks = output.get(id) ?? []
+  const chunks = output.get(hostId) ?? []
   chunks.push(b)
-  let size = (outputSize[id] ?? 0) + b.length
+  let size = (outputSize[hostId] ?? 0) + b.length
   while (size > maxOutput && chunks.length > 1) size -= chunks.shift()!.length
-  output.set(id, chunks)
-  outputSize[id] = size
-  outputSink.get(id)?.(b)
+  output.set(hostId, chunks)
+  outputSize[hostId] = size
+  outputSink.get(hostId)?.(b)
+}
+
+function onHostState(hostId: string, p: HostStatePayload): void {
+  hostSeq.set(hostId, (hostSeq.get(hostId) ?? 0) + 1)
+  const h = forwards.hosts.find((x) => x.host_id === hostId)
+  if (h) Object.assign(h, { status: p.status, error: p.error, detail: p.detail ?? '', retryable: p.retryable, asker: p.asker, session: p.session })
+  // Prompts belong to one login: once it is over, the next one starts with a clean mini-terminal.
+  if (p.status !== 'connecting') clearOutput(hostId)
 }
 
 function onState(id: string, p: ForwardStatePayload): void {
   stateSeq.set(id, (stateSeq.get(id) ?? 0) + 1)
   const f = forwards.list.find((x) => x.id === id)
   if (f) Object.assign(f, { status: p.status, error: p.error, detail: p.detail ?? '', conns: p.conns, retryable: p.retryable })
-  // Prompts belong to one dial: once it is over, the next one starts with a clean mini-terminal.
-  if (p.status !== 'starting') clearOutput(id)
 }
 
 function subscribe(id: string): void {
-  const offState = EventsOn('fwd:state:' + id, (p: ForwardStatePayload) => onState(id, p))
-  const offData = EventsOn('fwd:data:' + id, (b64: string) => onData(id, b64))
-  unsubscribe.set(id, () => {
-    offState()
-    offData()
-  })
-  // Go holds output and states until the UI listens, e.g. the prompt of an autostarted forward.
+  unsubscribe.set(id, EventsOn('fwd:state:' + id, (p: ForwardStatePayload) => onState(id, p)))
+  // Go holds states until the UI listens, e.g. of an autostarted forward.
   void ForwardAttach(id).catch(() => {})
 }
 
-/** Reloads the forwards and subscribes to the events of new ones. */
+function subscribeHost(hostId: string): void {
+  const offState = EventsOn('fwdhost:state:' + hostId, (p: HostStatePayload) => onHostState(hostId, p))
+  const offData = EventsOn('fwdhost:data:' + hostId, (b64: string) => onData(hostId, b64))
+  unsubscribeHost.set(hostId, () => {
+    offState()
+    offData()
+  })
+  // Go holds the login prompts and states until the UI listens.
+  void ForwardHostAttach(hostId).catch(() => {})
+}
+
+/** Reloads the forwards and host groups and subscribes to the events of new ones. */
 export async function refreshForwards(): Promise<void> {
   const seqBefore = new Map(stateSeq)
-  const list = plain(await ForwardsList())
+  const hostSeqBefore = new Map(hostSeq)
+  const [rawList, rawHosts] = await Promise.all([ForwardsList(), ForwardHostsList()])
+  const list = plain(rawList)
+  const hostList = plain(rawHosts ?? [])
   for (const f of list) {
     const cur = forwards.list.find((x) => x.id === f.id)
     if (cur && stateSeq.get(f.id) !== seqBefore.get(f.id)) {
       Object.assign(f, { status: cur.status, error: cur.error, detail: cur.detail, conns: cur.conns, retryable: cur.retryable })
     }
   }
+  for (const h of hostList) {
+    const cur = forwards.hosts.find((x) => x.host_id === h.host_id)
+    if (cur && hostSeq.get(h.host_id) !== hostSeqBefore.get(h.host_id)) {
+      Object.assign(h, { status: cur.status, error: cur.error, detail: cur.detail, retryable: cur.retryable, asker: cur.asker, session: cur.session })
+    }
+  }
   forwards.list.splice(0, forwards.list.length, ...list)
+  forwards.hosts.splice(0, forwards.hosts.length, ...hostList)
   const ids = new Set(list.map((f) => f.id))
   for (const [id, off] of unsubscribe) {
     if (!ids.has(id)) {
       off()
       unsubscribe.delete(id)
       stateSeq.delete(id)
-      clearOutput(id)
     }
   }
   for (const id of ids) if (!unsubscribe.has(id)) subscribe(id)
+  const hostIds = new Set(hostList.map((h) => h.host_id))
+  for (const [id, off] of unsubscribeHost) {
+    if (!hostIds.has(id)) {
+      off()
+      unsubscribeHost.delete(id)
+      hostSeq.delete(id)
+      clearOutput(id)
+    }
+  }
+  for (const id of hostIds) if (!unsubscribeHost.has(id)) subscribeHost(id)
 }
 
 /**
  * Feeds a mini-terminal: first the output kept so far, then live output until the returned
  * function is called.
  */
-export function attachOutput(id: string, sink: (b: Uint8Array) => void): () => void {
-  for (const b of output.get(id) ?? []) sink(b)
-  outputSink.set(id, sink)
+export function attachOutput(hostId: string, sink: (b: Uint8Array) => void): () => void {
+  for (const b of output.get(hostId) ?? []) sink(b)
+  outputSink.set(hostId, sink)
   return () => {
-    if (outputSink.get(id) === sink) outputSink.delete(id)
+    if (outputSink.get(hostId) === sink) outputSink.delete(hostId)
   }
 }
 
@@ -113,6 +170,22 @@ export async function startForward(id: string): Promise<void> {
 export async function stopForward(id: string): Promise<void> {
   try {
     await ForwardStop(id)
+  } catch (e) {
+    toast(errorText(e))
+  }
+}
+
+export async function startAll(hostId: string): Promise<void> {
+  try {
+    await ForwardStartAll(hostId)
+  } catch (e) {
+    toast(errorText(e))
+  }
+}
+
+export async function stopAll(hostId: string): Promise<void> {
+  try {
+    await ForwardStopAll(hostId)
   } catch (e) {
     toast(errorText(e))
   }

@@ -23,14 +23,14 @@ const fp = 'SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8'
 const q1 = {
   id: 'q1',
   session_id: 's1',
-  forward_id: '',
+  forward_host_id: '',
   host: 'example.test',
   port: 22,
   user: 'alice',
   key_type: 'ssh-ed25519',
   fingerprint: fp,
 }
-const q2 = { ...q1, id: 'q2', session_id: '', forward_id: 'f1', host: '127.0.0.1', port: 2222, user: 'deploy' }
+const q2 = { ...q1, id: 'q2', session_id: '', forward_host_id: 'f1', host: '127.0.0.1', port: 2222, user: 'deploy' }
 
 async function emit(name: string, payload: unknown): Promise<void> {
   handlers.get(name)!(payload)

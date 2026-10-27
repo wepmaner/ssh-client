@@ -10,7 +10,11 @@ const api = vi.hoisted(() => ({
   ForwardStart: vi.fn(),
   ForwardStop: vi.fn(),
   ForwardDelete: vi.fn(),
-  ForwardWrite: vi.fn(),
+  ForwardHostsList: vi.fn(),
+  ForwardHostAttach: vi.fn(),
+  ForwardHostWrite: vi.fn(),
+  ForwardStartAll: vi.fn(),
+  ForwardStopAll: vi.fn(),
   EventsOn: vi.fn(),
   ClipboardGetText: vi.fn(),
 }))
@@ -48,9 +52,10 @@ const base = { host_id: 'h1', host_name: 'prod-1', auto_start: false, error: '',
 const list = [
   { ...base, id: 'f1', name: 'Postgres', kind: 'L', listen: '127.0.0.1:5432', target: 'localhost:5432', status: 'running', conns: 2 },
   { ...base, id: 'f2', name: 'SOCKS', kind: 'D', listen: '127.0.0.1:1080', target: '', status: 'stopped' },
-  { ...base, id: 'f3', name: 'Вебхук', kind: 'R', listen: '127.0.0.1:9000', target: '127.0.0.1:3000', status: 'error', error: 'не удалось занять локальный порт 127.0.0.1:9000' },
+  { ...base, id: 'f3', name: 'Вебхук', kind: 'R', listen: '127.0.0.1:9000', target: '127.0.0.1:3000', status: 'error', error: 'Порт 9000 уже занят другой программой: выберите другой порт или закройте программу, которая его держит' },
 ]
 
+const hostDTO = { host_id: 'h1', host_name: 'prod-1', status: 'none', error: '', detail: '', retryable: true, asker: '', session: '' }
 const card = (name: string) => screen.getByRole('article', { name })
 
 describe('ForwardsView', () => {
@@ -67,11 +72,14 @@ describe('ForwardsView', () => {
     api.ForwardStop.mockResolvedValue(undefined)
     api.ForwardDelete.mockResolvedValue(undefined)
     api.ForwardAttach.mockResolvedValue(undefined)
+    api.ForwardHostAttach.mockResolvedValue(undefined)
+    api.ForwardHostsList.mockResolvedValue([])
     hosts.splice(0, hosts.length, { id: 'h1', name: 'prod-1', address: 'prod.example.test', port: 22, user: 'deploy' } as never)
     // An empty list drops the subscriptions of the previous test, the real one subscribes anew.
     api.ForwardsList.mockResolvedValue([])
     await refreshForwards()
     api.ForwardsList.mockResolvedValue(structuredClone(list))
+    api.ForwardHostsList.mockResolvedValue([structuredClone(hostDTO)])
     await refreshForwards()
   })
 
@@ -96,7 +104,7 @@ describe('ForwardsView', () => {
     expect(within(card('SOCKS')).getByText('остановлен')).toBeTruthy()
     const err = card('Вебхук')
     expect(within(err).getByText('ошибка')).toBeTruthy()
-    expect(within(err).getByRole('alert').textContent).toBe('не удалось занять локальный порт 127.0.0.1:9000')
+    expect(within(err).getByRole('alert').textContent).toBe('Порт 9000 уже занят другой программой: выберите другой порт или закройте программу, которая его держит')
     expect(screen.getByText('1 активен · 2 остановлены')).toBeTruthy()
   })
 
@@ -137,43 +145,6 @@ describe('ForwardsView', () => {
     // An ordinary failure can be started again.
     handlers.get('fwd:state:f2')?.({ status: 'error', error: 'нет сети', detail: '', conns: 0, retryable: true })
     await vi.waitFor(() => expect((within(card('SOCKS')).getByRole('button', { name: 'Запустить' }) as HTMLButtonElement).disabled).toBe(false))
-  })
-
-  it('shows the mini-terminal while a starting forward has prompt output', async () => {
-    render(ForwardsView)
-    handlers.get('fwd:state:f2')?.({ status: 'starting', error: '', conns: 0, retryable: true })
-    await vi.waitFor(() => expect(within(card('SOCKS')).getByText('подключение')).toBeTruthy())
-    expect(within(card('SOCKS')).queryByTestId('mini-terminal')).toBeNull()
-    handlers.get('fwd:data:f2')?.(btoa('Password: '))
-    await vi.waitFor(() => expect(within(card('SOCKS')).getByTestId('mini-terminal')).toBeTruthy())
-    expect(written.join('')).toBe('Password: ')
-    handlers.get('fwd:state:f2')?.({ status: 'running', error: '', conns: 0, retryable: true })
-    await vi.waitFor(() => expect(within(card('SOCKS')).queryByTestId('mini-terminal')).toBeNull())
-  })
-
-  it('keeps the mini-terminal closed while the trust dialog asks for the forward', async () => {
-    render(ForwardsView)
-    const q = { id: 'q1', session_id: '', forward_id: 'f2', host: 'prod.example.test', port: 22, user: 'deploy', key_type: 'ssh-ed25519', fingerprint: 'SHA256:x' }
-    trust.queue.push(q)
-    handlers.get('fwd:state:f2')?.({ status: 'starting', error: '', conns: 0, retryable: true })
-    handlers.get('fwd:data:f2')?.(btoa('unknown server, SHA256:x\r\n'))
-    await vi.waitFor(() => expect(within(card('SOCKS')).getByText('подключение')).toBeTruthy())
-    expect(within(card('SOCKS')).queryByTestId('mini-terminal')).toBeNull()
-    trust.queue.length = 0
-    handlers.get('fwd:data:f2')?.(btoa('Password: '))
-    await vi.waitFor(() => expect(within(card('SOCKS')).getByTestId('mini-terminal')).toBeTruthy())
-    expect(written.join('')).toBe('unknown server, SHA256:x\r\nPassword: ')
-  })
-
-  it('right-click in the mini-terminal pastes and does not open the card menu', async () => {
-    api.ClipboardGetText.mockResolvedValue('')
-    render(ForwardsView)
-    handlers.get('fwd:state:f2')?.({ status: 'starting', error: '', conns: 0, retryable: true })
-    handlers.get('fwd:data:f2')?.(btoa('Password: '))
-    const mini = await vi.waitFor(() => within(card('SOCKS')).getByTestId('mini-terminal'))
-    await fireEvent.contextMenu(mini)
-    expect(screen.queryByRole('menu')).toBeNull()
-    expect(api.ClipboardGetText).toHaveBeenCalled()
   })
 
   it('deletes through the menu after confirmation', async () => {

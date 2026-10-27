@@ -3,22 +3,22 @@
   import { Terminal } from '@xterm/xterm'
   import '@xterm/xterm/css/xterm.css'
   import { onMount } from 'svelte'
-  import { ForwardWrite } from '../api'
+  import { ForwardHostWrite } from '../api'
   import { settings } from '../stores.svelte'
   import { inputBytes, orderedSender } from '../terminal/input'
   import { copyText, isAppShortcut, readClipboard, terminalAction } from '../terminal/keys'
   import { attachOutput } from './forwards.svelte'
 
-  /** A six-row terminal on a forward card: the dial's prompts are answered here. */
-  let { forwardId }: { forwardId: string } = $props()
+  /** A six-row terminal in a host group: the login prompts are answered here. */
+  let { hostId }: { hostId: string } = $props()
 
   const ROWS = 6
   let host: HTMLDivElement
   let term: Terminal | undefined
 
   const send = orderedSender(
-    (b64) => ForwardWrite(forwardId, b64),
-    (e) => console.error('ForwardWrite', e),
+    (b64) => ForwardHostWrite(hostId, b64),
+    (e) => console.error('ForwardHostWrite', e),
   )
 
   function paste(): void {
@@ -48,7 +48,7 @@
       return false
     })
     const sub = t.onData((d) => send(inputBytes(d)))
-    const detach = attachOutput(forwardId, (b) => t.write(b))
+    const detach = attachOutput(hostId, (b) => t.write(b))
 
     // Only the width follows the card; the height stays six rows.
     const fitWidth = () => {

@@ -4,12 +4,19 @@
   import { toast } from '../stores.svelte'
   import Button from '../ui/Button.svelte'
   import Dialog from '../ui/Dialog.svelte'
-  import ForwardCard from './ForwardCard.svelte'
+  import ForwardGroup from './ForwardGroup.svelte'
   import ForwardDialog from './ForwardDialog.svelte'
   import { forwards, refreshForwards } from './forwards.svelte'
 
-  let dialog = $state<{ open: boolean; forward: app.ForwardDTO | null }>({ open: false, forward: null })
+  let dialog = $state<{ open: boolean; forward: app.ForwardDTO | null; hostId: string }>({ open: false, forward: null, hostId: '' })
   let confirm = $state<app.ForwardDTO | null>(null)
+
+  const name = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name)
+  const groups = $derived(
+    [...forwards.hosts]
+      .sort((a, b) => a.host_name.localeCompare(b.host_name))
+      .map((host) => ({ host, items: forwards.list.filter((f) => f.host_id === host.host_id).sort(name) })),
+  )
 
   const activeCount = $derived(forwards.list.filter((f) => f.status === 'running' || f.status === 'starting').length)
   const idleCount = $derived(forwards.list.length - activeCount)
@@ -55,13 +62,13 @@
     <div class="empty">
       <h1>Пробросов пока нет</h1>
       <p>Проброс открывает порт через SSH-сервер и работает без открытого терминала.</p>
-      <Button variant="primary" onclick={() => (dialog = { open: true, forward: null })}>
+      <Button variant="primary" onclick={() => (dialog = { open: true, forward: null, hostId: '' })}>
         <span class="with-icon">{@render plus()}Новый проброс</span>
       </Button>
     </div>
   {:else}
     <div class="toolbar">
-      <Button variant="primary" onclick={() => (dialog = { open: true, forward: null })}>
+      <Button variant="primary" onclick={() => (dialog = { open: true, forward: null, hostId: '' })}>
         <span class="with-icon">{@render plus()}Новый проброс</span>
       </Button>
       <span class="hint">Пробросы живут отдельно от сессий: работают без открытого терминала</span>
@@ -69,9 +76,15 @@
       <span class="hint">{summary}</span>
     </div>
 
-    <div class="grid">
-      {#each forwards.list as f (f.id)}
-        <ForwardCard forward={f} onedit={() => (dialog = { open: true, forward: f })} ondelete={() => (confirm = f)} />
+    <div class="groups">
+      {#each groups as g (g.host.host_id)}
+        <ForwardGroup
+          host={g.host}
+          items={g.items}
+          onadd={() => (dialog = { open: true, forward: null, hostId: g.host.host_id })}
+          onedit={(f) => (dialog = { open: true, forward: f, hostId: '' })}
+          ondelete={(f) => (confirm = f)}
+        />
       {/each}
     </div>
 
@@ -83,7 +96,7 @@
   {/if}
 </div>
 
-<ForwardDialog open={dialog.open} forward={dialog.forward} onclose={() => (dialog = { open: false, forward: null })} />
+<ForwardDialog open={dialog.open} forward={dialog.forward} hostId={dialog.hostId} onclose={() => (dialog = { open: false, forward: null, hostId: '' })} />
 
 <Dialog open={confirm !== null} title={`Удалить проброс ${confirm?.name ?? ''}?`} onclose={() => (confirm = null)} width={420}>
   <p class="muted">Проброс остановится и будет удалён из хранилища.</p>
@@ -123,10 +136,10 @@
     color: var(--muted);
     font-size: 11.5px;
   }
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
-    gap: 10px;
+  .groups {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
   }
   .legend {
     display: flex;
