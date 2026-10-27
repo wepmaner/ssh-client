@@ -22,7 +22,6 @@ vi.mock('../api', async () => {
   const model = await import('../../../bindings/sshclient/internal/model/models')
   return { ...api, errorText: String, model }
 })
-const written = vi.hoisted(() => [] as string[])
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     cols = 80
@@ -35,9 +34,7 @@ vi.mock('@xterm/xterm', () => ({
     onData() {
       return { dispose() {} }
     }
-    write(b: Uint8Array) {
-      written.push(new TextDecoder().decode(b))
-    }
+    write() {}
   },
 }))
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { proposeDimensions() { return undefined } } }))
@@ -62,7 +59,6 @@ describe('ForwardsView', () => {
   beforeEach(async () => {
     vi.resetAllMocks()
     handlers.clear()
-    written.length = 0
     trust.queue.length = 0
     api.EventsOn.mockImplementation((name: string, h: Handler) => {
       handlers.set(name, h)

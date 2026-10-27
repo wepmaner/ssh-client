@@ -8,7 +8,6 @@ const api = vi.hoisted(() => ({
   ForwardStart: vi.fn(),
   ForwardStop: vi.fn(),
   ForwardDelete: vi.fn(),
-  ForwardWrite: vi.fn(),
   EventsOn: vi.fn(() => () => {}),
 }))
 vi.mock('../api', async () => {
