@@ -24,6 +24,7 @@ func (a *App) fwdHostGroup(hostID string) *fwdHostGroup {
 	g, ok := a.fwdHosts[hostID]
 	if !ok {
 		g = &fwdHostGroup{out: newOutStreamFor(a.events(), "fwdhost:data:"+hostID)}
+		g.out.latestEvent = "fwdhost:state:" + hostID // every connection of the host emits it
 		a.fwdHosts[hostID] = g
 	}
 	return g
@@ -128,6 +129,7 @@ func (a *App) ForwardHostWrite(hostID, dataB64 string) error {
 	if err != nil {
 		return errBadInput
 	}
+	defer clear(b) // the keystrokes may be a passphrase or a password; the input queue keeps its own copy
 	a.fwdHostMu.Lock()
 	defer a.fwdHostMu.Unlock()
 	if g := a.fwdHosts[hostID]; g != nil && g.in != nil {

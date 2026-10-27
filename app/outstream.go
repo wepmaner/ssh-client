@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/base64"
+	"slices"
 	"sync"
 	"time"
 )
@@ -30,6 +31,10 @@ type heldEvent struct {
 type outStream struct {
 	emit      emitter
 	dataEvent string
+	// latestEvent (optional) is a state event of which only the latest is held: a snapshot that
+	// replaces the earlier ones. A forwards group that is never attached (a host with consoles only)
+	// holds one state, not every state of its connection.
+	latestEvent string
 
 	emitMu sync.Mutex // serialises emissions so data and state events keep their order
 
@@ -128,6 +133,9 @@ func (o *outStream) Event(name string, payload any, last bool) {
 	o.mu.Lock()
 	attached := o.attached
 	if !attached {
+		if name == o.latestEvent {
+			o.held = slices.DeleteFunc(o.held, func(e heldEvent) bool { return e.data == nil && e.name == name })
+		}
 		o.held = append(o.held, heldEvent{name: name, payload: payload})
 	}
 	if last {

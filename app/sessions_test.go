@@ -686,3 +686,27 @@ func TestSessionEndWithoutExitStatusIsClosed(t *testing.T) {
 		t.Fatalf("closed payload %+v", st)
 	}
 }
+
+func TestOutStreamHoldsOnlyTheLatestState(t *testing.T) {
+	ev := newFakeEmitter()
+	o := newOutStreamFor(ev, "fwdhost:data:h")
+	o.latestEvent = "fwdhost:state:h"
+	o.Event("fwdhost:state:h", HostConnStateDTO{Status: "connecting"}, false)
+	mustWrite(t, o, "question")
+	o.Event("trust:ask", "a", false)
+	o.Event("fwdhost:state:h", HostConnStateDTO{Status: "connected"}, false)
+	o.Event("trust:ask", "b", false)
+	o.Event("fwdhost:state:h", HostConnStateDTO{Status: "none"}, false)
+	o.Attach()
+	var names []string
+	for _, e := range ev.snapshot() {
+		names = append(names, e.name)
+	}
+	want := "fwdhost:data:h trust:ask trust:ask fwdhost:state:h"
+	if got := strings.Join(names, " "); got != want {
+		t.Fatalf("events %q, want %q", got, want)
+	}
+	if st := ev.snapshot()[3].payload.(HostConnStateDTO); st.Status != "none" {
+		t.Fatalf("held state %+v, want the latest", st)
+	}
+}
