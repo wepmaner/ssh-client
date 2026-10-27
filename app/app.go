@@ -43,11 +43,11 @@ type App struct {
 
 	trustMu      sync.Mutex
 	trustByID    map[string]*pendingTrust     // open trust questions by question ID
-	trustByOwner map[trustOwner]*pendingTrust // at most one open question per session or forward
+	trustByOwner map[trustOwner]*pendingTrust // at most one open question per session or forwards group
 
 	fwdMu        sync.Mutex
 	fwds         map[string]*fwdEntry // forward runtimes by forward ID
-	fwdKeepalive time.Duration        // keepalive interval of forward clients; 0 means keepaliveInterval
+	fwdKeepalive time.Duration        // keepalive interval of host connection clients; 0 means keepaliveInterval
 	autostarted  atomic.Bool          // the autostart forwards have been started in this run
 
 	// hcMu guards the host connections (hostconn.go); it is taken before a hostConn's own lock.

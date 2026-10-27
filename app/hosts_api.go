@@ -155,7 +155,8 @@ func (a *App) validateHost(in HostDTO) (model.Host, error) {
 }
 
 // HostSave creates a host (empty ID) or updates an existing one. Port 0 means
-// 22, an empty name means the address.
+// 22, an empty name means the address. A change of the address, port, user or key detaches the
+// host's open connection: its users stay on it, new ones log in with the new parameters.
 func (a *App) HostSave(in HostDTO) (HostDTO, error) {
 	if !a.storeUnlocked() {
 		return HostDTO{}, errVaultLocked
@@ -164,15 +165,19 @@ func (a *App) HostSave(in HostDTO) (HostDTO, error) {
 	if err != nil {
 		return HostDTO{}, err
 	}
+	before, _ := a.hostParamsOf(h.ID) //nolint:gosec // G104: a new host has no parameters yet; zero never matches
 	saved, err := a.storeRef().SaveHost(h)
 	if err != nil {
 		return HostDTO{}, err
 	}
+	if h.ID != "" && paramsOf(saved) != before {
+		a.markHostStale(saved.ID)
+	}
 	return a.hostDTO(saved.ID)
 }
 
-// HostDelete removes the host and then closes its sessions and stops and removes its
-// forwards; if the store fails, the sessions and forwards stay as they were.
+// HostDelete removes the host and then closes its sessions, stops and removes its forwards and
+// closes its connections; if the store fails, the sessions and forwards stay as they were.
 func (a *App) HostDelete(id string) error {
 	if !a.storeUnlocked() {
 		return errVaultLocked
@@ -181,7 +186,10 @@ func (a *App) HostDelete(id string) error {
 		return err
 	}
 	a.closeSessionsOfHost(id)
-	return a.deleteForwardsOfHost(id)
+	err := a.deleteForwardsOfHost(id)
+	a.closeHostConns(id)
+	a.dropFwdHostGroup(id)
+	return err
 }
 
 // GroupsList returns all groups sorted by name with their host counts.

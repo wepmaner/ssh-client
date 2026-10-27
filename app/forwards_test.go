@@ -35,12 +35,12 @@ func (f *fakeEmitter) fwdStates(id string) []ForwardStateDTO {
 	return out
 }
 
-// fwdData is the decoded fwd:data:<id> output of a forward's mini-terminal.
-func (f *fakeEmitter) fwdData(t *testing.T, id string) string {
+// groupDataOf is the decoded fwdhost:data:<hostID> output of a host's forwards group.
+func (f *fakeEmitter) groupDataOf(t *testing.T, hostID string) string {
 	t.Helper()
 	var b strings.Builder
 	for _, e := range f.snapshot() {
-		if e.name == "fwd:data:"+id {
+		if e.name == "fwdhost:data:"+hostID {
 			raw, err := base64.StdEncoding.DecodeString(e.payload.(string))
 			if err != nil {
 				t.Fatal(err)
@@ -49,6 +49,17 @@ func (f *fakeEmitter) fwdData(t *testing.T, id string) string {
 		}
 	}
 	return b.String()
+}
+
+// hostStates returns the fwdhost:state:<hostID> payloads recorded so far.
+func (f *fakeEmitter) hostStates(hostID string) []HostConnStateDTO {
+	var out []HostConnStateDTO
+	for _, e := range f.snapshot() {
+		if e.name == "fwdhost:state:"+hostID {
+			out = append(out, e.payload.(HostConnStateDTO))
+		}
+	}
+	return out
 }
 
 // waitFwdState waits for a fwd:state event with the status after the first skip events.
@@ -141,6 +152,7 @@ func portFree(t *testing.T, addr string) {
 func newForwardsApp(t *testing.T, opts sshtest.Opts, withKey bool) sessionsApp {
 	t.Helper()
 	s := newSessionsApp(t, opts, withKey)
+	t.Cleanup(s.closeAllHostConns) // runs after stopAllForwards
 	t.Cleanup(s.stopAllForwards)
 	return s
 }
@@ -152,6 +164,9 @@ func (s sessionsApp) saveL(t *testing.T, listen, target string, autostart bool) 
 		t.Fatal(err)
 	}
 	if err := s.ForwardAttach(f.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ForwardHostAttach(s.hostID); err != nil {
 		t.Fatal(err)
 	}
 	return f
@@ -211,7 +226,7 @@ func TestForwardSaveValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.ID == "" || f.Listen != "127.0.0.1:15432" || f.Name != "L 127.0.0.1:15432 → db.example.test:5432" ||
+	if f.ID == "" || f.Listen != "127.0.0.1:15432" || f.Name != "L 15432 → db.example.test:5432" ||
 		f.HostName != "srv" || f.Status != "stopped" {
 		t.Fatalf("saved %+v", f)
 	}
@@ -220,7 +235,7 @@ func TestForwardSaveValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Listen != "127.0.0.1:1080" || d.Target != "" || d.Name != "SOCKS5 127.0.0.1:1080" {
+	if d.Listen != "127.0.0.1:1080" || d.Target != "" || d.Name != "SOCKS5 1080" {
 		t.Fatalf("socks %+v", d)
 	}
 
@@ -352,6 +367,7 @@ func TestForwardAutostartOnStartup(t *testing.T) {
 
 	// Restart: a fresh App over the same vault and known_hosts.
 	b := &App{emit: s.ev}
+	t.Cleanup(b.closeAllHostConns)
 	t.Cleanup(b.stopAllForwards)
 	b.initVault()
 	if err := b.ForwardAttach(auto.ID); err != nil {
@@ -381,6 +397,7 @@ func TestForwardAutostartOnStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := &App{emit: s.ev}
+	t.Cleanup(c.closeAllHostConns)
 	t.Cleanup(c.stopAllForwards)
 	c.initVault()
 	if !c.VaultState().Locked || len(c.ForwardsList()) != 0 {
@@ -428,7 +445,7 @@ func TestForwardPromptAndStopDuringPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.ev.waitFor(t, 5*time.Second, "password prompt", func([]fakeEvent) bool {
-		return strings.Contains(s.ev.fwdData(t, f.ID), "Пароль alice@")
+		return strings.Contains(s.groupData(t), "Пароль alice@")
 	})
 	if got := listed(t, s.App, f.ID); got.Status != "starting" {
 		t.Fatalf("prompting forward %+v", got)
@@ -447,13 +464,11 @@ func TestForwardPromptAndStopDuringPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.ev.waitFor(t, 5*time.Second, "second prompt", func([]fakeEvent) bool {
-		return strings.Count(s.ev.fwdData(t, f.ID), "Пароль alice@") == 2
+		return strings.Count(s.groupData(t), "Пароль alice@") == 2
 	})
-	if err := s.ForwardWrite(f.ID, base64.StdEncoding.EncodeToString([]byte("s3cret\r"))); err != nil {
-		t.Fatal(err)
-	}
+	s.answer(t, s.hostID, "s3cret")
 	s.ev.waitFwdState(t, f.ID, "running", n, 5*time.Second)
-	if strings.Contains(s.ev.fwdData(t, f.ID), "s3cret") {
+	if strings.Contains(s.groupData(t), "s3cret") {
 		t.Fatal("password echoed")
 	}
 	roundTrip(t, listen)
@@ -476,6 +491,22 @@ func TestHostDeleteStopsForwards(t *testing.T) {
 	}
 	if len(s.storeRef().Forwards()) != 0 {
 		t.Fatal("forwards of the deleted host still stored")
+	}
+	s.checkNoConns(t, s.hostID)
+}
+
+// checkNoConns fails if any connection of hostID, stale ones included, is still known.
+func (s sessionsApp) checkNoConns(t *testing.T, hostID string) {
+	t.Helper()
+	s.hcMu.Lock()
+	defer s.hcMu.Unlock()
+	if s.hostConns[hostID] != nil {
+		t.Fatal("the host still has a current connection")
+	}
+	for c := range s.hcLive {
+		if c.hostID == hostID {
+			t.Fatal("a connection of the host is still live")
+		}
 	}
 }
 
@@ -511,41 +542,41 @@ func newEncryptedForwardsApp(t *testing.T) sessionsApp {
 	return s
 }
 
+
 const passphrasePrompt = "Парольная фраза ключа work: " //nolint:gosec // G101: prompt text, not a credential
 
-// waitPassphrasePrompts waits until the forward's mini-terminal shows the n-th passphrase question.
-func (s sessionsApp) waitPassphrasePrompts(t *testing.T, id string, n int) {
+// waitHostPrompts waits until hostID's forwards group shows the n-th passphrase question.
+func (s sessionsApp) waitHostPrompts(t *testing.T, hostID string, n int) {
 	t.Helper()
 	s.ev.waitFor(t, 5*time.Second, "passphrase prompt", func([]fakeEvent) bool {
-		return strings.Count(s.ev.fwdData(t, id), passphrasePrompt) >= n
+		return strings.Count(s.ev.groupDataOf(t, hostID), passphrasePrompt) >= n
 	})
 }
 
-func (s sessionsApp) answer(t *testing.T, id, text string) {
+func (s sessionsApp) prompts(t *testing.T) int {
 	t.Helper()
-	if err := s.ForwardWrite(id, base64.StdEncoding.EncodeToString([]byte(text+"\r"))); err != nil {
+	return strings.Count(s.groupData(t), passphrasePrompt)
+}
+
+// answer types text and Enter into hostID's forwards group through ForwardHostWrite.
+func (s sessionsApp) answer(t *testing.T, hostID, text string) {
+	t.Helper()
+	if err := s.ForwardHostWrite(hostID, base64.StdEncoding.EncodeToString([]byte(text+"\r"))); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// startWithPassphrase starts f, answers the passphrase question and waits for running.
+// startWithPassphrase starts f, answers the passphrase question in its host's group and waits for running.
 func (s sessionsApp) startWithPassphrase(t *testing.T, f ForwardDTO) {
 	t.Helper()
 	n := len(s.ev.fwdStates(f.ID))
-	asked := strings.Count(s.ev.fwdData(t, f.ID), passphrasePrompt)
+	asked := strings.Count(s.ev.groupDataOf(t, f.HostID), passphrasePrompt)
 	if err := s.ForwardStart(f.ID); err != nil {
 		t.Fatal(err)
 	}
-	s.waitPassphrasePrompts(t, f.ID, asked+1)
-	s.answer(t, f.ID, fwdPassphrase)
+	s.waitHostPrompts(t, f.HostID, asked+1)
+	s.answer(t, f.HostID, fwdPassphrase)
 	s.ev.waitFwdState(t, f.ID, "running", n, 5*time.Second)
-}
-
-// secretForTest is the run's remembered passphrase buffer itself (not a copy).
-func (r *fwdRun) secretForTest() []byte {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.secret
 }
 
 func zeroBytes(b []byte) bool {
@@ -557,24 +588,26 @@ func zeroBytes(b []byte) bool {
 	return true
 }
 
-// runSecret returns the current run's secret and checks it holds the phrase.
-func (s sessionsApp) runSecret(t *testing.T, id string) (*fwdRun, []byte) {
+// connSecret returns the passphrase buffer of the host's current connection and checks it holds the phrase.
+func (s sessionsApp) connSecret(t *testing.T, hostID string) []byte {
 	t.Helper()
-	run := s.currentRun(id)
-	if run == nil {
-		t.Fatal("forward has no run")
+	s.hcMu.Lock()
+	c := s.hostConns[hostID]
+	s.hcMu.Unlock()
+	if c == nil {
+		t.Fatal("the host has no connection")
 	}
-	sec := run.secretForTest()
+	sec, _ := c.secretsForTest()
 	if string(sec) != fwdPassphrase {
 		t.Fatalf("remembered passphrase %q", sec)
 	}
-	return run, sec
+	return sec
 }
 
-func checkForgotten(t *testing.T, run *fwdRun, buf []byte) {
+func checkWiped(t *testing.T, buf []byte) {
 	t.Helper()
-	if run.secretForTest() != nil || !zeroBytes(buf) {
-		t.Fatalf("passphrase kept: run %q, buffer %q", run.secretForTest(), buf)
+	if !zeroBytes(buf) {
+		t.Fatalf("passphrase kept: %q", buf)
 	}
 }
 
@@ -590,7 +623,7 @@ func TestForwardReconnectDoesNotReaskPassphrase(t *testing.T) {
 	s.ev.waitFwdState(t, f.ID, "starting", n, 5*time.Second)
 	s.ev.waitFwdState(t, f.ID, "running", n+1, 10*time.Second)
 	roundTrip(t, listen)
-	out := s.ev.fwdData(t, f.ID)
+	out := s.groupData(t)
 	if c := strings.Count(out, passphrasePrompt); c != 1 {
 		t.Fatalf("passphrase asked %d times: %q", c, out)
 	}
@@ -603,37 +636,38 @@ func TestForwardStopClearsPassphrase(t *testing.T) {
 	s := newEncryptedForwardsApp(t)
 	f := s.saveL(t, freePort(t), echoServer(t), false)
 	s.startWithPassphrase(t, f)
-	run, buf := s.runSecret(t, f.ID)
+	buf := s.connSecret(t, s.hostID)
 	if err := s.ForwardStop(f.ID); err != nil {
 		t.Fatal(err)
 	}
-	checkForgotten(t, run, buf)
+	checkWiped(t, buf)
+	s.checkNoConns(t, s.hostID)
 
 	// A new start asks again.
 	s.startWithPassphrase(t, f)
-	if c := strings.Count(s.ev.fwdData(t, f.ID), passphrasePrompt); c != 2 {
+	if c := s.prompts(t); c != 2 {
 		t.Fatalf("passphrase asked %d times", c)
 	}
 
 	// Delete and app exit forget it too.
-	run, buf = s.runSecret(t, f.ID)
+	buf = s.connSecret(t, s.hostID)
 	if err := s.ForwardDelete(f.ID); err != nil {
 		t.Fatal(err)
 	}
-	checkForgotten(t, run, buf)
+	checkWiped(t, buf)
 
 	g := s.saveL(t, freePort(t), echoServer(t), false)
 	s.startWithPassphrase(t, g)
-	run, buf = s.runSecret(t, g.ID)
+	buf = s.connSecret(t, s.hostID)
 	s.stopAllForwards()
-	checkForgotten(t, run, buf)
+	checkWiped(t, buf)
 }
 
 func TestForwardHostChangeClearsPassphrase(t *testing.T) {
 	s := newEncryptedForwardsApp(t)
 	f := s.saveL(t, freePort(t), echoServer(t), false)
 	s.startWithPassphrase(t, f)
-	run, buf := s.runSecret(t, f.ID)
+	buf := s.connSecret(t, s.hostID)
 
 	other := s.storeRef().Hosts()[0]
 	other.ID = ""
@@ -642,34 +676,90 @@ func TestForwardHostChangeClearsPassphrase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := s.ForwardHostAttach(h2.ID); err != nil {
+		t.Fatal(err)
+	}
+	n := len(s.ev.fwdStates(f.ID))
 	f.HostID = h2.ID
 	if _, err := s.ForwardSave(f); err != nil {
 		t.Fatal(err)
 	}
-	checkForgotten(t, run, buf)
-	s.waitPassphrasePrompts(t, f.ID, 2)
+	// The forward was the old host's only user: that connection closed and forgot the phrase.
+	checkWiped(t, buf)
+	s.checkNoConns(t, s.hostID)
+	s.waitHostPrompts(t, h2.ID, 1)
+	s.answer(t, h2.ID, fwdPassphrase)
+	s.ev.waitFwdState(t, f.ID, "running", n, 5*time.Second)
+	roundTrip(t, f.Listen)
 }
 
 func TestForwardErrorClearsPassphrase(t *testing.T) {
-	// The reconnect meets an unknown server key and the user refuses: the run ends in error and
-	// stays listed until Start or Stop, but the passphrase is forgotten at once.
+	// The reconnect meets an unknown server key and the user refuses: the forward ends in error and
+	// the connection forgets the passphrase at once.
 	s := newEncryptedForwardsApp(t)
 	f := s.saveL(t, freePort(t), echoServer(t), false)
 	s.startWithPassphrase(t, f)
-	run, buf := s.runSecret(t, f.ID)
+	buf := s.connSecret(t, s.hostID)
 
 	untrust(t)
 	n := len(s.ev.fwdStates(f.ID))
 	s.srv.DropConnections()
 	q := s.ev.waitTrustAsk(t, 1)
+	if q.ForwardHostID != s.hostID {
+		t.Fatalf("trust question %+v", q)
+	}
 	if err := s.TrustAnswer(q.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	s.ev.waitFwdState(t, f.ID, "error", n, 5*time.Second)
-	s.ev.waitFor(t, 2*time.Second, "passphrase forgotten", func([]fakeEvent) bool {
-		return run.secretForTest() == nil
+	checkWiped(t, buf)
+	portFree(t, f.Listen)
+}
+
+// checkSecretNowhere fails if secret reached the vault, a file of the app dir, an event or a list.
+func (s sessionsApp) checkSecretNowhere(t *testing.T, secret string) {
+	t.Helper()
+	data, err := json.Marshal(s.vaultRef().Data())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte(secret)) {
+		t.Fatal("secret in the vault data")
+	}
+	dir, err := appdir.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		raw, err := os.ReadFile(path) //nolint:gosec // G304: path is under the test's temp app dir
+		if err != nil {
+			return err
+		}
+		if bytes.Contains(raw, []byte(secret)) {
+			t.Errorf("secret in %s", path)
+		}
+		return nil
 	})
-	checkForgotten(t, run, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range s.ev.snapshot() {
+		if b, err := json.Marshal(e.payload); err != nil || bytes.Contains(b, []byte(secret)) {
+			t.Fatalf("secret in event %s (%v)", e.name, err)
+		}
+	}
+	if strings.Contains(s.groupData(t), secret) {
+		t.Fatal("secret in the group's mini-terminal output")
+	}
+	if b, err := json.Marshal(s.ForwardsList()); err != nil || bytes.Contains(b, []byte(secret)) {
+		t.Fatalf("secret in ForwardsList (%v)", err)
+	}
+	if b, err := json.Marshal(s.ForwardHostsList()); err != nil || bytes.Contains(b, []byte(secret)) {
+		t.Fatalf("secret in ForwardHostsList (%v)", err)
+	}
 }
 
 func TestForwardSecretNeverInStore(t *testing.T) {
@@ -686,51 +776,268 @@ func TestForwardSecretNeverInStore(t *testing.T) {
 	if _, err := s.ForwardSave(g); err != nil {
 		t.Fatal(err)
 	}
+	s.checkSecretNowhere(t, fwdPassphrase)
+}
 
-	data, err := json.Marshal(s.vaultRef().Data())
-	if err != nil {
+func TestForwardPasswordNeverInStore(t *testing.T) {
+	const password = "pw-for-forwards-3Kd8" //nolint:gosec // G101: test-only password of the test server
+	s := newForwardsApp(t, sshtest.Opts{Password: password}, false)
+	listen := freePort(t)
+	f := s.saveL(t, listen, echoServer(t), false)
+	if err := s.ForwardStart(f.ID); err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(data, []byte(fwdPassphrase)) {
-		t.Fatal("passphrase in the vault data")
+	s.waitGroupData(t, "Пароль alice@", 1)
+	s.answer(t, s.hostID, password)
+	s.ev.waitFwdState(t, f.ID, "running", 0, 5*time.Second)
+	n := len(s.ev.fwdStates(f.ID))
+	s.srv.DropConnections()
+	s.ev.waitFwdState(t, f.ID, "running", n+1, 10*time.Second)
+	if c := strings.Count(s.groupData(t), "Пароль alice@"); c != 1 {
+		t.Fatalf("password asked %d times", c)
 	}
-	dir, err := appdir.Dir()
-	if err != nil {
+	g := f
+	g.Name = "renamed"
+	if _, err := s.ForwardSave(g); err != nil {
 		t.Fatal(err)
 	}
-	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		raw, err := os.ReadFile(path) //nolint:gosec // G304: path is under the test's temp app dir
-		if err != nil {
-			return err
-		}
-		if bytes.Contains(raw, []byte(fwdPassphrase)) {
-			t.Errorf("passphrase in %s", path)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range s.ev.snapshot() {
-		if b, err := json.Marshal(e.payload); err != nil || bytes.Contains(b, []byte(fwdPassphrase)) {
-			t.Fatalf("passphrase in event %s (%v)", e.name, err)
-		}
-	}
-	if strings.Contains(s.ev.fwdData(t, f.ID), fwdPassphrase) {
-		t.Fatal("passphrase in the mini-terminal output")
-	}
-	if b, err := json.Marshal(s.ForwardsList()); err != nil || bytes.Contains(b, []byte(fwdPassphrase)) {
-		t.Fatalf("passphrase in ForwardsList (%v)", err)
-	}
+	s.checkSecretNowhere(t, password)
 }
 
 func TestForwardStateDTOCarriesDetail(t *testing.T) {
-	r := &fwdRun{}
-	dto := r.dto(sshclient.ForwardState{Status: sshclient.ForwardError, Error: "Сервер h отклонил подключение", Detail: "dial tcp: connectex"})
-	if dto.Detail != "dial tcp: connectex" || dto.Error == "" {
+	dto := fwdStateDTO(sshclient.ForwardState{Status: sshclient.ForwardError, Error: "Сервер h отклонил подключение", Detail: "dial tcp: connectex"}, true)
+	if dto.Detail != "dial tcp: connectex" || dto.Error == "" || !dto.Retryable {
 		t.Fatalf("dto %+v", dto)
+	}
+}
+
+// startThree saves three L forwards of the host and starts them with ForwardStartAll, answering
+// the one passphrase question.
+func (s sessionsApp) startThree(t *testing.T) []ForwardDTO {
+	t.Helper()
+	target := echoServer(t)
+	fwds := []ForwardDTO{s.saveL(t, freePort(t), target, false), s.saveL(t, freePort(t), target, false), s.saveL(t, freePort(t), target, false)}
+	if err := s.ForwardStartAll(s.hostID); err != nil {
+		t.Fatal(err)
+	}
+	s.waitHostPrompts(t, s.hostID, 1)
+	s.answer(t, s.hostID, fwdPassphrase)
+	for _, f := range fwds {
+		s.ev.waitFwdState(t, f.ID, "running", 0, 5*time.Second)
+	}
+	return fwds
+}
+
+func TestForwardStartAllAsksPassphraseOnce(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	fwds := s.startThree(t)
+	time.Sleep(100 * time.Millisecond) // a second question would be on its way by now
+	if c := s.prompts(t); c != 1 {
+		t.Fatalf("passphrase asked %d times: %q", c, s.groupData(t))
+	}
+	for _, f := range fwds {
+		roundTrip(t, f.Listen)
+	}
+	if n := s.srv.Accepted(); n != 1 {
+		t.Fatalf("server accepted %d connections, want 1", n)
+	}
+	if err := s.ForwardStartAll(s.hostID); err != nil { // running forwards are left alone
+		t.Fatal(err)
+	}
+	if err := s.ForwardStartAll("missing"); err == nil {
+		t.Fatal("start all of an unknown host succeeded")
+	}
+}
+
+func TestForwardStartOnLiveConnectionNoPrompt(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	s.startThree(t)
+	before := s.groupData(t)
+	f := s.saveL(t, freePort(t), echoServer(t), false)
+	if err := s.ForwardStart(f.ID); err != nil {
+		t.Fatal(err)
+	}
+	s.ev.waitFwdState(t, f.ID, "running", 0, 5*time.Second)
+	roundTrip(t, f.Listen)
+	if after := s.groupData(t); after != before {
+		t.Fatalf("the group printed %q on a live connection", strings.TrimPrefix(after, before))
+	}
+	if n := s.srv.Accepted(); n != 1 {
+		t.Fatalf("server accepted %d connections, want 1", n)
+	}
+}
+
+func TestForwardStopOneKeepsOthers(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	fwds := s.startThree(t)
+	keep := fwds[1]
+	c, err := net.DialTimeout("tcp", keep.Listen, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { ignore(c.Close()) }()
+	if err := c.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	echo := func(text string) {
+		t.Helper()
+		if _, err := c.Write([]byte(text)); err != nil {
+			t.Fatal(err)
+		}
+		buf := make([]byte, len(text))
+		if _, err := io.ReadFull(c, buf); err != nil || string(buf) != text {
+			t.Fatalf("echo through the kept forward: %q %v", buf, err)
+		}
+	}
+	echo("before")
+	s.ev.waitFor(t, 2*time.Second, "one connection through the kept forward", func([]fakeEvent) bool {
+		return listed(t, s.App, keep.ID).Conns == 1
+	})
+
+	if err := s.ForwardStop(fwds[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	portFree(t, fwds[0].Listen)
+	echo("after") // the open connection through another forward was not cut
+	if got := listed(t, s.App, keep.ID); got.Status != "running" || got.Conns != 1 {
+		t.Fatalf("kept forward %+v", got)
+	}
+	roundTrip(t, fwds[2].Listen)
+	if n := s.srv.Accepted(); n != 1 {
+		t.Fatalf("server accepted %d connections, want 1", n)
+	}
+}
+
+func TestForwardSaveKeepsConnection(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	old := freePort(t)
+	f := s.saveL(t, old, echoServer(t), false)
+	s.startWithPassphrase(t, f)
+
+	n := len(s.ev.fwdStates(f.ID))
+	f.Listen = freePort(t)
+	if _, err := s.ForwardSave(f); err != nil {
+		t.Fatal(err)
+	}
+	portFree(t, old)
+	s.ev.waitFwdState(t, f.ID, "running", n, 5*time.Second)
+	roundTrip(t, f.Listen)
+	if c := s.prompts(t); c != 1 {
+		t.Fatalf("passphrase asked %d times", c)
+	}
+	if n := s.srv.Accepted(); n != 1 {
+		t.Fatalf("server accepted %d connections, want 1", n)
+	}
+}
+
+func TestForwardStopAllClosesConnection(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	fwds := s.startThree(t)
+	buf := s.connSecret(t, s.hostID)
+	if st := s.ev.hostStates(s.hostID); len(st) == 0 || st[len(st)-1].Status != "connected" {
+		t.Fatalf("group states %+v", st)
+	}
+	if err := s.ForwardStopAll(s.hostID); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range fwds {
+		portFree(t, f.Listen)
+		if got := listed(t, s.App, f.ID); got.Status != "stopped" {
+			t.Fatalf("after stop all %+v", got)
+		}
+	}
+	checkWiped(t, buf)
+	s.checkNoConns(t, s.hostID)
+	s.ev.waitFor(t, 2*time.Second, "group state none", func([]fakeEvent) bool {
+		st := s.ev.hostStates(s.hostID)
+		return st[len(st)-1].Status == "none"
+	})
+	if err := s.ForwardStopAll(s.hostID); err != nil { // nothing left to stop
+		t.Fatal(err)
+	}
+}
+
+func TestForwardHostsList(t *testing.T) {
+	s := newForwardsApp(t, sshtest.Opts{}, true)
+	if l := s.ForwardHostsList(); len(l) != 0 {
+		t.Fatalf("hosts without forwards listed: %+v", l)
+	}
+	h := s.storeRef().Hosts()[0]
+	h.ID, h.Name = "", "alpha"
+	alpha, err := s.storeRef().SaveHost(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.ID, h.Name = "", "zulu" // no forwards: not listed
+	if _, err := s.storeRef().SaveHost(h); err != nil {
+		t.Fatal(err)
+	}
+	f := s.saveL(t, freePort(t), echoServer(t), false)
+	if _, err := s.ForwardSave(ForwardDTO{Kind: "D", HostID: alpha.ID, Listen: freePort(t)}); err != nil {
+		t.Fatal(err)
+	}
+	l := s.ForwardHostsList()
+	if len(l) != 2 || l[0].HostName != "alpha" || l[0].HostID != alpha.ID || l[1].HostName != "srv" ||
+		l[0].Status != "none" || !l[0].Retryable {
+		t.Fatalf("hosts %+v", l)
+	}
+	if err := s.ForwardStart(f.ID); err != nil {
+		t.Fatal(err)
+	}
+	s.ev.waitFwdState(t, f.ID, "running", 0, 5*time.Second)
+	if l := s.ForwardHostsList(); l[1].Status != "connected" {
+		t.Fatalf("hosts after start %+v", l)
+	}
+}
+
+func TestForwardDefaultNameShortListen(t *testing.T) {
+	s := newForwardsApp(t, sshtest.Opts{}, true)
+	f, err := s.ForwardSave(ForwardDTO{Kind: "L", HostID: s.hostID, Listen: "5432", Target: "db.example.test:5432"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Name != "L 5432 → db.example.test:5432" || f.Listen != "127.0.0.1:5432" {
+		t.Fatalf("forward %+v", f)
+	}
+	r, err := s.ForwardSave(ForwardDTO{Kind: "R", HostID: s.hostID, Listen: "0.0.0.0:9000", Target: "127.0.0.1:3000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.Name, "0.0.0.0:9000") {
+		t.Fatalf("forward %+v", r)
+	}
+}
+
+func TestHostSaveChangedUserMarksStale(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	target := echoServer(t)
+	a := s.saveL(t, freePort(t), target, false)
+	s.startWithPassphrase(t, a)
+	buf := s.connSecret(t, s.hostID)
+
+	h, err := s.hostDTO(s.hostID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Name = "renamed" // not a login parameter: the connection stays current
+	if _, err := s.HostSave(h); err != nil {
+		t.Fatal(err)
+	}
+	if string(s.connSecret(t, s.hostID)) != fwdPassphrase {
+		t.Fatal("renaming the host dropped the secret")
+	}
+	h.User = "bob"
+	if _, err := s.HostSave(h); err != nil {
+		t.Fatal(err)
+	}
+	checkWiped(t, buf)
+	roundTrip(t, a.Listen) // the running forward stays on its connection
+
+	b := s.saveL(t, freePort(t), target, false)
+	s.startWithPassphrase(t, b)
+	roundTrip(t, b.Listen)
+	roundTrip(t, a.Listen)
+	if n := s.srv.Accepted(); n != 2 {
+		t.Fatalf("server accepted %d connections, want 2", n)
 	}
 }

@@ -20,8 +20,8 @@ import * as model$0 from "../internal/model/models.js";
 import * as $models from "./models.js";
 
 /**
- * ForwardAttach tells Go the UI listens to the forward's events: output and states held since
- * startup (autostart prompts) are released, later ones are sent at once.
+ * ForwardAttach tells Go the UI listens to the forward's events: states held since startup
+ * (autostart) are released, later ones are sent at once.
  */
 export function ForwardAttach(id: string): $CancellablePromise<void> {
     return $Call.ByID(3854658541, id);
@@ -35,39 +35,75 @@ export function ForwardDelete(id: string): $CancellablePromise<void> {
 }
 
 /**
+ * ForwardHostAttach tells Go the UI listens to the host group's events: the output and states held
+ * since startup (autostart logins) are released, later ones are sent at once.
+ */
+export function ForwardHostAttach(hostID: string): $CancellablePromise<void> {
+    return $Call.ByID(1720250019, hostID);
+}
+
+/**
+ * ForwardHostWrite sends base64-encoded keystrokes from the host group's mini-terminal to the
+ * question of the login in progress. Input with no login waiting is dropped.
+ */
+export function ForwardHostWrite(hostID: string, dataB64: string): $CancellablePromise<void> {
+    return $Call.ByID(1691275269, hostID, dataB64);
+}
+
+/**
+ * ForwardHostsList returns the hosts that have forwards, sorted by host name, with the state of
+ * their connection.
+ */
+export function ForwardHostsList(): $CancellablePromise<$models.ForwardHostDTO[]> {
+    return $Call.ByID(3929598163).then(($result: any) => {
+        return $$createType1($result);
+    });
+}
+
+/**
  * ForwardSave creates a forward (empty ID) or updates one. Listen may omit the host
  * (127.0.0.1), D has no Target, an empty name becomes «<Kind> <Listen> → <Target>» or
- * «SOCKS5 <Listen>». A connecting or running forward restarts only when Kind, HostID, Listen
- * or Target changed; a forward in error with a changed endpoint becomes stopped.
+ * «SOCKS5 <Listen>», without a 127.0.0.1 host. A connecting or running forward restarts only when
+ * Kind, HostID, Listen or Target changed, on the same connection when the host stays; a forward in
+ * error with a changed endpoint becomes stopped.
  */
 export function ForwardSave($in: $models.ForwardDTO): $CancellablePromise<$models.ForwardDTO> {
     return $Call.ByID(3147821477, $in).then(($result: any) => {
-        return $$createType0($result);
+        return $$createType2($result);
     });
 }
 
 /**
  * ForwardStart starts the forward and returns at once; it does nothing to a forward that is
- * connecting or running. Progress, prompts and errors (a busy port, a failed dial) arrive as
- * fwd:state:<id> and fwd:data:<id> events.
+ * connecting or running. Progress and errors (a busy port, a failed login) arrive as fwd:state:<id>
+ * events; the login questions are asked in the host's forwards group (fwdhost:data:<hostID>).
  */
 export function ForwardStart(id: string): $CancellablePromise<void> {
     return $Call.ByID(3068846964, id);
 }
 
 /**
- * ForwardStop stops the forward; when it returns the local port is free. A pending prompt is cancelled.
+ * ForwardStartAll starts the host's stopped and failed forwards and returns at once. They share the
+ * host's connection: its login asks once, in the host's forwards group.
+ */
+export function ForwardStartAll(hostID: string): $CancellablePromise<void> {
+    return $Call.ByID(3728811855, hostID);
+}
+
+/**
+ * ForwardStop stops the forward; when it returns the local port is free. The host's connection and
+ * its other users go on; the login it waited for ends when nobody else waits for it.
  */
 export function ForwardStop(id: string): $CancellablePromise<void> {
     return $Call.ByID(2972702896, id);
 }
 
 /**
- * ForwardWrite sends base64-encoded keystrokes from the card's mini-terminal to the prompt of
- * the running dial. Input to a stopped forward is dropped.
+ * ForwardStopAll stops every forward of the host; when it returns their ports are free. The host's
+ * terminal sessions are left alone; without them the connection closes and forgets its secrets.
  */
-export function ForwardWrite(id: string, dataB64: string): $CancellablePromise<void> {
-    return $Call.ByID(1242780439, id, dataB64);
+export function ForwardStopAll(hostID: string): $CancellablePromise<void> {
+    return $Call.ByID(2137746275, hostID);
 }
 
 /**
@@ -75,7 +111,7 @@ export function ForwardWrite(id: string, dataB64: string): $CancellablePromise<v
  */
 export function ForwardsList(): $CancellablePromise<$models.ForwardDTO[]> {
     return $Call.ByID(3028357325).then(($result: any) => {
-        return $$createType1($result);
+        return $$createType3($result);
     });
 }
 
@@ -84,7 +120,7 @@ export function ForwardsList(): $CancellablePromise<$models.ForwardDTO[]> {
  */
 export function GetSettings(): $CancellablePromise<model$0.Settings> {
     return $Call.ByID(3557174032).then(($result: any) => {
-        return $$createType2($result);
+        return $$createType4($result);
     });
 }
 
@@ -107,7 +143,7 @@ export function GroupRename(id: string, name: string): $CancellablePromise<void>
  */
 export function GroupSave(name: string): $CancellablePromise<$models.GroupDTO> {
     return $Call.ByID(4091719495, name).then(($result: any) => {
-        return $$createType3($result);
+        return $$createType5($result);
     });
 }
 
@@ -116,13 +152,13 @@ export function GroupSave(name: string): $CancellablePromise<$models.GroupDTO> {
  */
 export function GroupsList(): $CancellablePromise<$models.GroupDTO[]> {
     return $Call.ByID(1467687219).then(($result: any) => {
-        return $$createType4($result);
+        return $$createType6($result);
     });
 }
 
 /**
- * HostDelete removes the host and then closes its sessions and stops and removes its
- * forwards; if the store fails, the sessions and forwards stay as they were.
+ * HostDelete removes the host and then closes its sessions, stops and removes its forwards and
+ * closes its connections; if the store fails, the sessions and forwards stay as they were.
  */
 export function HostDelete(id: string): $CancellablePromise<void> {
     return $Call.ByID(2673467298, id);
@@ -130,11 +166,12 @@ export function HostDelete(id: string): $CancellablePromise<void> {
 
 /**
  * HostSave creates a host (empty ID) or updates an existing one. Port 0 means
- * 22, an empty name means the address.
+ * 22, an empty name means the address. A change of the address, port, user or key detaches the
+ * host's open connection: its users stay on it, new ones log in with the new parameters.
  */
 export function HostSave($in: $models.HostDTO): $CancellablePromise<$models.HostDTO> {
     return $Call.ByID(4277690896, $in).then(($result: any) => {
-        return $$createType5($result);
+        return $$createType7($result);
     });
 }
 
@@ -150,7 +187,7 @@ export function HostsExport(): $CancellablePromise<void> {
  */
 export function HostsList(): $CancellablePromise<$models.HostDTO[]> {
     return $Call.ByID(1079401910).then(($result: any) => {
-        return $$createType6($result);
+        return $$createType8($result);
     });
 }
 
@@ -159,7 +196,7 @@ export function HostsList(): $CancellablePromise<$models.HostDTO[]> {
  */
 export function ImportPuTTY(): $CancellablePromise<$models.ImportResult> {
     return $Call.ByID(2012174936).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType9($result);
     });
 }
 
@@ -168,7 +205,7 @@ export function ImportPuTTY(): $CancellablePromise<$models.ImportResult> {
  */
 export function ImportSSHConfig(): $CancellablePromise<$models.ImportResult> {
     return $Call.ByID(907787950).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType9($result);
     });
 }
 
@@ -200,7 +237,7 @@ export function KeyExport(id: string, format: string, password: string): $Cancel
  */
 export function KeyGenerate(name: string, kind: string, comment: string, passphrase: string): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(1791015309, name, kind, comment, passphrase).then(($result: any) => {
-        return $$createType8($result);
+        return $$createType10($result);
     });
 }
 
@@ -209,7 +246,7 @@ export function KeyGenerate(name: string, kind: string, comment: string, passphr
  */
 export function KeyImportFile(): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(3439102521).then(($result: any) => {
-        return $$createType8($result);
+        return $$createType10($result);
     });
 }
 
@@ -219,7 +256,7 @@ export function KeyImportFile(): $CancellablePromise<$models.KeyDTO> {
  */
 export function KeyImportFileWithPassphrase(path: string, passphrase: string): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(829767293, path, passphrase).then(($result: any) => {
-        return $$createType8($result);
+        return $$createType10($result);
     });
 }
 
@@ -229,7 +266,7 @@ export function KeyImportFileWithPassphrase(path: string, passphrase: string): $
  */
 export function KeyImportText(text: string, name: string): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(1982037696, text, name).then(($result: any) => {
-        return $$createType8($result);
+        return $$createType10($result);
     });
 }
 
@@ -238,7 +275,7 @@ export function KeyImportText(text: string, name: string): $CancellablePromise<$
  */
 export function KeyImportTextWithPassphrase(text: string, name: string, passphrase: string): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(3955193724, text, name, passphrase).then(($result: any) => {
-        return $$createType8($result);
+        return $$createType10($result);
     });
 }
 
@@ -254,7 +291,7 @@ export function KeyRename(id: string, name: string): $CancellablePromise<void> {
  */
 export function KeysList(): $CancellablePromise<$models.KeyDTO[]> {
     return $Call.ByID(1066303763).then(($result: any) => {
-        return $$createType9($result);
+        return $$createType11($result);
     });
 }
 
@@ -286,7 +323,7 @@ export function SessionClose(id: string): $CancellablePromise<void> {
  */
 export function SessionList(): $CancellablePromise<$models.SessionDTO[]> {
     return $Call.ByID(491749225).then(($result: any) => {
-        return $$createType11($result);
+        return $$createType13($result);
     });
 }
 
@@ -327,7 +364,7 @@ export function TrustAnswer(id: string, trust: boolean): $CancellablePromise<voi
  */
 export function VaultCounts(): $CancellablePromise<$models.VaultCountsDTO> {
     return $Call.ByID(3202868421).then(($result: any) => {
-        return $$createType12($result);
+        return $$createType14($result);
     });
 }
 
@@ -368,7 +405,7 @@ export function VaultSetPassword(password: string): $CancellablePromise<void> {
  */
 export function VaultState(): $CancellablePromise<$models.VaultStateDTO> {
     return $Call.ByID(1454336566).then(($result: any) => {
-        return $$createType13($result);
+        return $$createType15($result);
     });
 }
 
@@ -388,17 +425,19 @@ export function Version(): $CancellablePromise<string> {
 }
 
 // Private type creation functions
-const $$createType0 = $models.ForwardDTO.createFrom;
+const $$createType0 = $models.ForwardHostDTO.createFrom;
 const $$createType1 = $Create.Array($$createType0);
-const $$createType2 = model$0.Settings.createFrom;
-const $$createType3 = $models.GroupDTO.createFrom;
-const $$createType4 = $Create.Array($$createType3);
-const $$createType5 = $models.HostDTO.createFrom;
+const $$createType2 = $models.ForwardDTO.createFrom;
+const $$createType3 = $Create.Array($$createType2);
+const $$createType4 = model$0.Settings.createFrom;
+const $$createType5 = $models.GroupDTO.createFrom;
 const $$createType6 = $Create.Array($$createType5);
-const $$createType7 = $models.ImportResult.createFrom;
-const $$createType8 = $models.KeyDTO.createFrom;
-const $$createType9 = $Create.Array($$createType8);
-const $$createType10 = $models.SessionDTO.createFrom;
+const $$createType7 = $models.HostDTO.createFrom;
+const $$createType8 = $Create.Array($$createType7);
+const $$createType9 = $models.ImportResult.createFrom;
+const $$createType10 = $models.KeyDTO.createFrom;
 const $$createType11 = $Create.Array($$createType10);
-const $$createType12 = $models.VaultCountsDTO.createFrom;
-const $$createType13 = $models.VaultStateDTO.createFrom;
+const $$createType12 = $models.SessionDTO.createFrom;
+const $$createType13 = $Create.Array($$createType12);
+const $$createType14 = $models.VaultCountsDTO.createFrom;
+const $$createType15 = $models.VaultStateDTO.createFrom;

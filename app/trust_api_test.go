@@ -102,7 +102,7 @@ func TestTrustAnswerConnects(t *testing.T) {
 	id := s.open(t)
 	q := s.ev.waitTrustAsk(t, 1)
 	checkQuestion(t, q, s.srv)
-	if q.SessionID != id || q.ForwardID != "" {
+	if q.SessionID != id || q.ForwardHostID != "" {
 		t.Fatalf("owner of %+v, session %s", q, id)
 	}
 	if !strings.Contains(s.ev.data(t, id), infoLine(s.srv)) {
@@ -171,27 +171,31 @@ func TestTrustCancelledWithSession(t *testing.T) {
 	}
 }
 
-func TestForwardTrustAnswer(t *testing.T) {
+func TestForwardTrustAskCarriesHost(t *testing.T) {
 	s := newForwardsApp(t, sshtest.Opts{}, true)
 	untrust(t)
-	listen := freePort(t)
-	f := s.saveL(t, listen, echoServer(t), false)
-	if err := s.ForwardStart(f.ID); err != nil {
+	target := echoServer(t)
+	f1 := s.saveL(t, freePort(t), target, false)
+	f2 := s.saveL(t, freePort(t), target, false)
+	if err := s.ForwardStartAll(s.hostID); err != nil {
 		t.Fatal(err)
 	}
 	q := s.ev.waitTrustAsk(t, 1)
 	checkQuestion(t, q, s.srv)
-	if q.ForwardID != f.ID || q.SessionID != "" {
-		t.Fatalf("owner of %+v, forward %s", q, f.ID)
+	if q.ForwardHostID != s.hostID || q.SessionID != "" {
+		t.Fatalf("owner of %+v, host %s", q, s.hostID)
 	}
-	if !strings.Contains(s.ev.fwdData(t, f.ID), infoLine(s.srv)) {
-		t.Fatalf("mini-terminal: %q", s.ev.fwdData(t, f.ID))
-	}
+	s.waitGroupData(t, infoLine(s.srv), 1)
 	if err := s.TrustAnswer(q.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	s.ev.waitFwdState(t, f.ID, "running", 0, 5*time.Second)
-	roundTrip(t, listen)
+	for _, f := range []ForwardDTO{f1, f2} {
+		s.ev.waitFwdState(t, f.ID, "running", 0, 5*time.Second)
+		roundTrip(t, f.Listen)
+	}
+	if n := len(s.ev.trustAsks()); n != 1 {
+		t.Fatalf("%d trust questions, want 1", n)
+	}
 	if got := readKnownHosts(t); !strings.Contains(got, s.srv.HostKey().Type()) {
 		t.Fatalf("known_hosts %q", got)
 	}

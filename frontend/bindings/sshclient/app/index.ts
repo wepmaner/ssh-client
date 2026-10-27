@@ -8,6 +8,7 @@ export {
 
 export {
     ForwardDTO,
+    ForwardHostDTO,
     GroupDTO,
     HostDTO,
     ImportResult,

@@ -1,11 +1,9 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"sync"
-	"sync/atomic"
 
 	"golang.org/x/crypto/ssh"
 
@@ -13,8 +11,8 @@ import (
 	"sshclient/internal/sshclient"
 )
 
-// ForwardStateDTO is the payload of fwd:state:<id>. Retryable is false when the last dial
-// failed on a changed server key: starting again cannot help until known_hosts is fixed.
+// ForwardStateDTO is the payload of fwd:state:<id>. Retryable is false while the forward's host is
+// blocked by a changed server key: starting again cannot help until known_hosts is fixed.
 type ForwardStateDTO struct {
 	Status    string `json:"status"`
 	Error     string `json:"error"`
@@ -23,81 +21,50 @@ type ForwardStateDTO struct {
 	Retryable bool   `json:"retryable"`
 }
 
-// fwdEntry is the runtime of one saved forward. out lives as long as the entry, so the
-// mini-terminal sees the prompts of every run in order; it is held until ForwardAttach.
+// fwdEntry is the runtime of one saved forward. out carries its fwd:state events and lives as long
+// as the entry, so the card sees the states of every run in order; they are held until ForwardAttach.
+// The login questions are asked in the host's forwards group (forwards_group.go), not here.
 type fwdEntry struct {
 	id  string
 	out *outStream
 	run *fwdRun // nil while stopped; guarded by App.fwdMu
 }
 
-// fwdRun is one Start…Stop cycle of a forward: a one-shot runner, its prompt input and the
-// goroutines that start it and pass its state events on.
+// fwdRun is one Start…Stop cycle of a forward: a one-shot runner on its host's shared connection
+// and the goroutines that start it and pass its state events on. The run is a user of the
+// connection from its start until it stops or ends in error.
 type fwdRun struct {
 	runner *sshclient.ForwardRunner
-	in     *inputQueue // answers to the prompts of this run's dials
+	conn   *hostConn // the connection joined at start; nil when the host could not be looked up
 	cancel context.CancelFunc
 	done   chan struct{} // closed when the start goroutine and the event pump have ended
 
-	stopOnce       sync.Once
-	hostKeyChanged atomic.Bool
-
-	// The key passphrase the server accepted in this run, so reconnects do not ask again. It
-	// lives in memory only (never in the store, a DTO, an event or a log) and dies with the run:
-	// stop (Stop, Delete, app exit, a restart by ForwardSave) and a final error clear it.
-	mu          sync.Mutex
-	secret      []byte
-	secretKeyID string // the key the secret opens
-	forgotten   bool   // the run has ended: a late OnPassphrase is not kept
+	stopOnce  sync.Once
+	leaveOnce sync.Once
 }
 
-// secretFor returns a copy of the remembered passphrase of key keyID, nil if there is none.
-// The caller owns the copy (sshclient.Dial clears it).
-func (r *fwdRun) secretFor(keyID string) []byte {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.secret == nil || r.secretKeyID != keyID {
-		return nil
-	}
-	return bytes.Clone(r.secret)
-}
-
-// rememberSecret keeps a copy of p, the passphrase of key keyID the server just accepted.
-func (r *fwdRun) rememberSecret(keyID string, p []byte) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.forgotten {
-		return
-	}
-	clear(r.secret)
-	r.secret, r.secretKeyID = bytes.Clone(p), keyID
-}
-
-// forgetSecret wipes the remembered passphrase for good.
-func (r *fwdRun) forgetSecret() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	clear(r.secret)
-	r.secret, r.secretKeyID, r.forgotten = nil, "", true
-}
-
-// stop cancels a pending prompt and the dial, stops the runner (the port is free afterwards),
-// waits for the run's goroutines and wipes the remembered passphrase. Safe to call more than
-// once and concurrently.
+// stop cancels the run's wait for a login and stops the runner (the port is free afterwards), waits
+// for the run's goroutines and leaves the connection. Safe to call more than once and concurrently.
 func (r *fwdRun) stop() {
 	r.stopOnce.Do(func() {
-		r.in.Close()
 		r.cancel()
 		r.runner.Stop()
 	})
 	<-r.done
-	r.forgetSecret()
+	r.leave()
 }
 
-func (r *fwdRun) state() ForwardStateDTO { return r.dto(r.runner.State()) }
+// leave takes the run off its connection once; the last user closes it and wipes its secrets.
+func (r *fwdRun) leave() {
+	r.leaveOnce.Do(func() {
+		if r.conn != nil {
+			r.conn.leave(r)
+		}
+	})
+}
 
-func (r *fwdRun) dto(st sshclient.ForwardState) ForwardStateDTO {
-	return ForwardStateDTO{Status: st.Status, Error: st.Error, Detail: st.Detail, Conns: st.Conns, Retryable: !r.hostKeyChanged.Load()}
+func fwdStateDTO(st sshclient.ForwardState, retryable bool) ForwardStateDTO {
+	return ForwardStateDTO{Status: st.Status, Error: st.Error, Detail: st.Detail, Conns: st.Conns, Retryable: retryable}
 }
 
 // active reports a run that is about to start, connecting or forwarding. A run in e.run is only
@@ -115,35 +82,46 @@ func (a *App) fwdEntryLocked(id string) *fwdEntry {
 	}
 	e, ok := a.fwds[id]
 	if !ok {
-		e = &fwdEntry{id: id, out: newOutStreamFor(a.events(), "fwd:data:"+id)}
+		e = &fwdEntry{id: id, out: newOutStreamFor(a.events(), "")} // never written: states only
 		a.fwds[id] = e
 	}
 	return e
 }
 
-// startForward starts f unless it is already connecting or running. It returns at once:
-// the dial, its prompts and the outcome arrive as fwd:state and fwd:data events.
-func (a *App) startForward(f model.Forward) {
+// startForward starts f unless it is already connecting or running. It returns at once: the login,
+// its questions (in the host's forwards group) and the outcome arrive as events.
+func (a *App) startForward(f model.Forward) { a.launchForward(f, false) }
+
+// restartForward replaces the forward's run with a new one for f (ForwardSave changed its kind,
+// ports or host). The new run joins its connection before the old one leaves, so a forward that is
+// the only user of the connection keeps it. When it returns the old port is free.
+func (a *App) restartForward(f model.Forward) { a.launchForward(f, true) }
+
+func (a *App) launchForward(f model.Forward, restart bool) {
 	a.fwdMu.Lock()
 	e := a.fwdEntryLocked(f.ID)
 	prev := e.run
-	if prev != nil && prev.active() {
+	if !restart && prev != nil && prev.active() {
 		a.fwdMu.Unlock()
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	run := &fwdRun{in: newInputQueue(), cancel: cancel, done: make(chan struct{})}
-	run.runner = sshclient.NewForwardRunner(f, a.forwardDial(f.ID, f.HostID, e.out, run))
+	run := &fwdRun{cancel: cancel, done: make(chan struct{})}
+	// Joined under fwdMu (lock order fwdMu, then hcMu), so a stop that takes the run from e.run
+	// always finds it on its connection.
+	conn, err := a.joinHostConn(f.HostID, run)
+	run.conn = conn
+	run.runner = sshclient.NewSharedForwardRunner(f, a.forwardAcquire(f.HostID, conn, run, err))
 	e.run = run
 	a.fwdMu.Unlock()
+	if prev != nil {
+		prev.stop() // its port is free and its pump has ended before this run's events begin
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		if prev != nil {
-			prev.stop() // a failed run: its pump must end before this run's events begin
-		}
 		if ctx.Err() == nil {
 			_ = run.runner.Start(ctx) //nolint:gosec // G104: the error reaches the UI as the error state
 		}
@@ -152,15 +130,31 @@ func (a *App) startForward(f model.Forward) {
 		defer wg.Done()
 		for st := range run.runner.Events() {
 			if st.Status == sshclient.ForwardError {
-				run.forgetSecret() // error is final for a run: no more dials will need it
+				run.leave() // error is final for a run: it no longer uses the connection
 			}
-			e.out.Event(e.stateEvent(), run.dto(st), false)
+			e.out.Event(e.stateEvent(), fwdStateDTO(st, a.hostRetryable(f.HostID)), false)
 		}
 	}()
 	go func() {
 		wg.Wait()
 		close(run.done)
 	}()
+}
+
+// forwardAcquire is the runner's source of the shared client: the client of the host's connection,
+// whose login questions go to the host's forwards group. joinErr (the host or the vault is gone)
+// fails every attempt.
+func (a *App) forwardAcquire(hostID string, conn *hostConn, run *fwdRun, joinErr error) func(ctx context.Context) (*ssh.Client, error) {
+	return func(ctx context.Context) (*ssh.Client, error) {
+		if joinErr != nil {
+			return nil, joinErr
+		}
+		cl, err := conn.acquire(ctx, run, a.forwardsAsker(hostID))
+		if errors.Is(err, sshclient.ErrHostKeyChanged) {
+			a.markHostKeyChanged(hostID) // before the runner reports the error: its state is not retryable
+		}
+		return cl, err
+	}
 }
 
 // stopForward stops the forward's current run, if any, and waits until its port is free.
@@ -184,12 +178,13 @@ func (a *App) removeForward(id string) {
 	a.fwdMu.Unlock()
 }
 
-// stopAllForwards stops every forward in parallel and waits for them (app shutdown).
-func (a *App) stopAllForwards() {
+// stopForwards stops the forwards whose IDs pass pick (every forward when pick is nil) in parallel
+// and waits until their ports are free.
+func (a *App) stopForwards(pick func(id string) bool) {
 	a.fwdMu.Lock()
 	var runs []*fwdRun
-	for _, e := range a.fwds {
-		if e.run != nil {
+	for id, e := range a.fwds {
+		if e.run != nil && (pick == nil || pick(id)) {
 			runs = append(runs, e.run)
 			e.run = nil
 		}
@@ -206,13 +201,16 @@ func (a *App) stopAllForwards() {
 	wg.Wait()
 }
 
+// stopAllForwards stops every forward and waits for them (app shutdown).
+func (a *App) stopAllForwards() { a.stopForwards(nil) }
+
 // forwardState is the current state of a forward for ForwardsList.
-func (a *App) forwardState(id string) ForwardStateDTO {
-	run := a.currentRun(id)
-	if run == nil {
-		return ForwardStateDTO{Status: sshclient.ForwardStopped, Retryable: true}
+func (a *App) forwardState(f model.Forward) ForwardStateDTO {
+	st := sshclient.ForwardState{Status: sshclient.ForwardStopped}
+	if run := a.currentRun(f.ID); run != nil {
+		st = run.runner.State()
 	}
-	return run.state()
+	return fwdStateDTO(st, a.hostRetryable(f.HostID))
 }
 
 // currentRun returns the forward's run, nil while it is stopped.
@@ -231,7 +229,8 @@ func (a *App) forwardActive(id string) bool {
 	return run != nil && run.active()
 }
 
-// autostartForwards starts every AutoStart forward that is not running yet.
+// autostartForwards starts every AutoStart forward that is not running yet. Those of one host share
+// its connection and its one login.
 func (a *App) autostartForwards() {
 	if !a.storeUnlocked() {
 		return
@@ -240,44 +239,5 @@ func (a *App) autostartForwards() {
 		if f.AutoStart {
 			a.startForward(f)
 		}
-	}
-}
-
-// forwardDial returns the runner's dial: like a terminal session it looks the host and key up
-// at dial time, asks to trust an unknown server key through the trust dialog and asks its other
-// questions through a Prompter, here over the mini-terminal of the forward's card. Cancelling
-// ctx closes the run's input and withdraws the trust question, so a pending prompt returns at once.
-func (a *App) forwardDial(id, hostID string, out *outStream, run *fwdRun) func(ctx context.Context) (*ssh.Client, error) {
-	interval := a.fwdKeepalive
-	if interval <= 0 {
-		interval = keepaliveInterval
-	}
-	return func(ctx context.Context) (*ssh.Client, error) {
-		stop := context.AfterFunc(ctx, func() { run.in.Close() })
-		defer stop()
-		if !a.storeUnlocked() {
-			return nil, errVaultLocked
-		}
-		_, t, err := a.hostTarget(hostID)
-		if err != nil {
-			return nil, err
-		}
-		kh, err := a.knownHosts()
-		if err != nil {
-			return nil, err
-		}
-		t.Trust = a.trustAsker(trustOwner{forwardID: id}, t.User, out)
-		if t.Key != nil {
-			keyID := t.Key.ID
-			t.Passphrase = run.secretFor(keyID) // Dial clears this copy
-			t.OnPassphrase = func(p []byte) { run.rememberSecret(keyID, p) }
-		}
-		client, err := dialTarget(ctx, t, sshclient.NewPrompter(out, run.in), kh)
-		run.hostKeyChanged.Store(errors.Is(err, sshclient.ErrHostKeyChanged))
-		if err != nil {
-			return nil, err
-		}
-		go keepalive(client, interval, keepaliveMaxFails)
-		return client, nil
 	}
 }

@@ -513,12 +513,87 @@ func (c *hostConn) finish(att *loginAttempt, client *ssh.Client, err error) {
 	c.mu.Unlock()
 	closeClient(drop)
 	if keyChanged {
-		c.a.hcMu.Lock()
-		if c.a.hostKeyChanged == nil {
-			c.a.hostKeyChanged = map[string]bool{}
+		c.a.markHostKeyChanged(c.hostID)
+	}
+}
+
+// markHostKeyChanged blocks the host until restart: its server key changed.
+func (a *App) markHostKeyChanged(hostID string) {
+	a.hcMu.Lock()
+	defer a.hcMu.Unlock()
+	if a.hostKeyChanged == nil {
+		a.hostKeyChanged = map[string]bool{}
+	}
+	a.hostKeyChanged[hostID] = true
+}
+
+// hostRetryable reports a host that is not blocked by a changed server key.
+func (a *App) hostRetryable(hostID string) bool {
+	a.hcMu.Lock()
+	defer a.hcMu.Unlock()
+	return !a.hostKeyChanged[hostID]
+}
+
+// hostConnState is the state the host's forwards group shows: that of its current connection, else
+// of a stale one its users are still on, else none. It creates no connection.
+func (a *App) hostConnState(hostID string) HostConnStateDTO {
+	a.hcMu.Lock()
+	c := a.hostConns[hostID]
+	if c == nil {
+		for live := range a.hcLive {
+			if live.hostID == hostID {
+				c = live
+				break
+			}
 		}
-		c.a.hostKeyChanged[c.hostID] = true
-		c.a.hcMu.Unlock()
+	}
+	blocked := a.hostKeyChanged[hostID]
+	a.hcMu.Unlock()
+	if c == nil {
+		return HostConnStateDTO{Status: hostConnNone, Retryable: !blocked}
+	}
+	return c.state()
+}
+
+// markHostStale detaches the host's current connection after its login parameters changed and wipes
+// its secrets (see markStale). It creates no connection.
+func (a *App) markHostStale(hostID string) {
+	a.hcMu.Lock()
+	defer a.hcMu.Unlock()
+	if c := a.hostConns[hostID]; c != nil {
+		c.markStaleLocked()
+	}
+}
+
+// closeHostConns closes every connection of a deleted host, stale ones included, and wipes their
+// secrets. A user still on one gets ErrCancelled from its next acquire.
+func (a *App) closeHostConns(hostID string) {
+	a.hcMu.Lock()
+	var conns []*hostConn
+	if c := a.hostConns[hostID]; c != nil {
+		conns = append(conns, c)
+		delete(a.hostConns, hostID)
+	}
+	for c := range a.hcLive {
+		if c.hostID == hostID {
+			if !slices.Contains(conns, c) {
+				conns = append(conns, c)
+			}
+			delete(a.hcLive, c)
+		}
+	}
+	for u, c := range a.hcUsers {
+		if c.hostID == hostID {
+			delete(a.hcUsers, u)
+		}
+	}
+	a.hcMu.Unlock()
+	for _, c := range conns {
+		c.mu.Lock()
+		c.shutdown = true
+		drop := c.idleLocked()
+		c.mu.Unlock()
+		closeClient(drop)
 	}
 }
 

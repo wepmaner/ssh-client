@@ -1,7 +1,6 @@
 package app
 
 import (
-	"encoding/base64"
 	"errors"
 	"net"
 	"slices"
@@ -36,7 +35,7 @@ type ForwardDTO struct {
 }
 
 func (a *App) forwardDTO(f model.Forward, hostNames map[string]string) ForwardDTO {
-	st := a.forwardState(f.ID)
+	st := a.forwardState(f)
 	return ForwardDTO{
 		ID: f.ID, Name: f.Name, Kind: f.Kind, HostID: f.HostID, HostName: hostNames[f.HostID],
 		Listen: f.Listen, Target: f.Target, AutoStart: f.AutoStart,
@@ -129,12 +128,17 @@ func (a *App) validateForward(in ForwardDTO) (model.Forward, error) {
 		}
 	}
 	if f.Name == "" {
-		f.Name = f.Kind + " " + f.Listen + " → " + f.Target
+		f.Name = f.Kind + " " + shortListen(f.Listen) + " → " + f.Target
 		if f.Kind == "D" {
-			f.Name = "SOCKS5 " + f.Listen
+			f.Name = "SOCKS5 " + shortListen(f.Listen)
 		}
 	}
 	return f, nil
+}
+
+// shortListen drops the default listen host: «127.0.0.1:5432» is shown as «5432».
+func shortListen(addr string) string {
+	return strings.TrimPrefix(addr, defaultListenHost+":")
 }
 
 // endpointChanged reports a change that needs a new connection or port.
@@ -144,8 +148,9 @@ func endpointChanged(x, y model.Forward) bool {
 
 // ForwardSave creates a forward (empty ID) or updates one. Listen may omit the host
 // (127.0.0.1), D has no Target, an empty name becomes «<Kind> <Listen> → <Target>» or
-// «SOCKS5 <Listen>». A connecting or running forward restarts only when Kind, HostID, Listen
-// or Target changed; a forward in error with a changed endpoint becomes stopped.
+// «SOCKS5 <Listen>», without a 127.0.0.1 host. A connecting or running forward restarts only when
+// Kind, HostID, Listen or Target changed, on the same connection when the host stays; a forward in
+// error with a changed endpoint becomes stopped.
 func (a *App) ForwardSave(in ForwardDTO) (ForwardDTO, error) {
 	if !a.storeUnlocked() {
 		return ForwardDTO{}, errVaultLocked
@@ -164,10 +169,10 @@ func (a *App) ForwardSave(in ForwardDTO) (ForwardDTO, error) {
 		return ForwardDTO{}, err
 	}
 	if existed && endpointChanged(old, saved) {
-		active := a.forwardActive(saved.ID)
-		a.stopForward(saved.ID)
-		if active {
-			a.startForward(saved)
+		if a.forwardActive(saved.ID) {
+			a.restartForward(saved)
+		} else {
+			a.stopForward(saved.ID)
 		}
 	}
 	return a.forwardDTO(saved, a.hostNames()), nil
@@ -189,8 +194,8 @@ func (a *App) ForwardDelete(id string) error {
 }
 
 // ForwardStart starts the forward and returns at once; it does nothing to a forward that is
-// connecting or running. Progress, prompts and errors (a busy port, a failed dial) arrive as
-// fwd:state:<id> and fwd:data:<id> events.
+// connecting or running. Progress and errors (a busy port, a failed login) arrive as fwd:state:<id>
+// events; the login questions are asked in the host's forwards group (fwdhost:data:<hostID>).
 func (a *App) ForwardStart(id string) error {
 	if !a.storeUnlocked() {
 		return errVaultLocked
@@ -203,7 +208,8 @@ func (a *App) ForwardStart(id string) error {
 	return nil
 }
 
-// ForwardStop stops the forward; when it returns the local port is free. A pending prompt is cancelled.
+// ForwardStop stops the forward; when it returns the local port is free. The host's connection and
+// its other users go on; the login it waited for ends when nobody else waits for it.
 func (a *App) ForwardStop(id string) error {
 	if !a.storeUnlocked() {
 		return errVaultLocked
@@ -215,8 +221,8 @@ func (a *App) ForwardStop(id string) error {
 	return nil
 }
 
-// ForwardAttach tells Go the UI listens to the forward's events: output and states held since
-// startup (autostart prompts) are released, later ones are sent at once.
+// ForwardAttach tells Go the UI listens to the forward's events: states held since startup
+// (autostart) are released, later ones are sent at once.
 func (a *App) ForwardAttach(id string) error {
 	if !a.storeUnlocked() {
 		return errVaultLocked
@@ -228,20 +234,6 @@ func (a *App) ForwardAttach(id string) error {
 	e := a.fwdEntryLocked(id)
 	a.fwdMu.Unlock()
 	e.out.Attach()
-	return nil
-}
-
-// ForwardWrite sends base64-encoded keystrokes from the card's mini-terminal to the prompt of
-// the running dial. Input to a stopped forward is dropped.
-func (a *App) ForwardWrite(id, dataB64 string) error {
-	b, err := base64.StdEncoding.DecodeString(dataB64)
-	if err != nil {
-		return errBadInput
-	}
-	run := a.currentRun(id)
-	if run != nil {
-		run.in.Write(b)
-	}
 	return nil
 }
 

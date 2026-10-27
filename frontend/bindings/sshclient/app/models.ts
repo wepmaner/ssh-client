@@ -86,6 +86,74 @@ export class ForwardDTO {
 }
 
 /**
+ * ForwardHostDTO is a host in the Forwards view with the state of its connection.
+ */
+export class ForwardHostDTO {
+    "host_id": string;
+    "host_name": string;
+
+    /**
+     * none|connecting|connected|error
+     */
+    "status": string;
+    "error": string;
+    "detail": string;
+
+    /**
+     * false after ErrHostKeyChanged until restart
+     */
+    "retryable": boolean;
+
+    /**
+     * ""|"forwards"|"session": who answers the current login
+     */
+    "asker": string;
+
+    /**
+     * the session's label when Asker is "session"
+     */
+    "session": string;
+
+    /** Creates a new ForwardHostDTO instance. */
+    constructor($$source: Partial<ForwardHostDTO> = {}) {
+        if (!("host_id" in $$source)) {
+            this["host_id"] = "";
+        }
+        if (!("host_name" in $$source)) {
+            this["host_name"] = "";
+        }
+        if (!("status" in $$source)) {
+            this["status"] = "";
+        }
+        if (!("error" in $$source)) {
+            this["error"] = "";
+        }
+        if (!("detail" in $$source)) {
+            this["detail"] = "";
+        }
+        if (!("retryable" in $$source)) {
+            this["retryable"] = false;
+        }
+        if (!("asker" in $$source)) {
+            this["asker"] = "";
+        }
+        if (!("session" in $$source)) {
+            this["session"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ForwardHostDTO instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ForwardHostDTO {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ForwardHostDTO($$parsedSource as Partial<ForwardHostDTO>);
+    }
+}
+
+/**
  * GroupDTO is a host group with its member counts.
  */
 export class GroupDTO {

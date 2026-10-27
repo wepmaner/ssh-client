@@ -12,21 +12,22 @@ import (
 	"sshclient/internal/sshclient"
 )
 
-// TrustAskDTO is the payload of trust:ask: a session (SessionID) or a forward (ForwardID) met an
-// unknown server key and waits for TrustAnswer(ID, …). Fingerprint is the SHA256 one.
+// TrustAskDTO is the payload of trust:ask: a session (SessionID) or the forwards group of a host
+// (ForwardHostID), answering a login, met an unknown server key and waits for TrustAnswer(ID, …).
+// Fingerprint is the SHA256 one.
 type TrustAskDTO struct {
-	ID          string `json:"id"`
-	SessionID   string `json:"session_id"`
-	ForwardID   string `json:"forward_id"`
-	Host        string `json:"host"`
-	Port        int    `json:"port"`
-	User        string `json:"user"`
-	KeyType     string `json:"key_type"`
-	Fingerprint string `json:"fingerprint"`
+	ID            string `json:"id"`
+	SessionID     string `json:"session_id"`
+	ForwardHostID string `json:"forward_host_id"`
+	Host          string `json:"host"`
+	Port          int    `json:"port"`
+	User          string `json:"user"`
+	KeyType       string `json:"key_type"`
+	Fingerprint   string `json:"fingerprint"`
 }
 
-// TrustCancelDTO is the payload of trust:cancel: the question was withdrawn (tab closed, forward
-// stopped, a newer question of the same owner) and its dialog must close without an answer.
+// TrustCancelDTO is the payload of trust:cancel: the question was withdrawn (tab closed, the forwards
+// waiting for the login stopped, a newer question of the same owner) and its dialog must close without an answer.
 type TrustCancelDTO struct {
 	ID string `json:"id"`
 }
@@ -36,7 +37,7 @@ var errTrustNotFound = errors.New("Вопрос о доверии серверу
 
 // trustOwner is who asks: exactly one of the fields is set. forwardHostID is the forwards group of
 // a host, which answers the logins its forwards start.
-type trustOwner struct{ sessionID, forwardID, forwardHostID string }
+type trustOwner struct{ sessionID, forwardHostID string }
 
 // pendingTrust is an open question. answer is buffered so TrustAnswer never blocks; gone is
 // closed when a newer question of the same owner replaced this one.
@@ -98,7 +99,7 @@ func (a *App) dropTrustLocked(p *pendingTrust) {
 	}
 }
 
-// appTrustAsker asks through the app's trust dialog for one session or forward. Its events go
+// appTrustAsker asks through the app's trust dialog for one session or forwards group. Its events go
 // through the owner's outStream, so they follow the terminal output in order and wait, like it,
 // until the view has attached.
 type appTrustAsker struct {
@@ -108,7 +109,7 @@ type appTrustAsker struct {
 	out   *outStream
 }
 
-// trustAsker is the TrustAsker of a session or forward dial.
+// trustAsker is the TrustAsker of a session or host connection login.
 func (a *App) trustAsker(owner trustOwner, user string, out *outStream) sshclient.TrustAsker {
 	return appTrustAsker{a: a, owner: owner, user: user, out: out}
 }
@@ -125,7 +126,7 @@ func (t appTrustAsker) AskTrust(ctx context.Context, q sshclient.TrustQuestion) 
 	// One line for the history; the answer comes from the dialog, not the terminal.
 	_, _ = fmt.Fprintf(t.out, "Сервер %s неизвестен, отпечаток %s\r\n", addr, q.FingerprintSHA256) //nolint:gosec // G104: outStream never fails
 	t.out.Event("trust:ask", TrustAskDTO{
-		ID: p.id, SessionID: t.owner.sessionID, ForwardID: t.owner.forwardID,
+		ID: p.id, SessionID: t.owner.sessionID, ForwardHostID: t.owner.forwardHostID,
 		Host: q.Host, Port: q.Port, User: t.user, KeyType: q.KeyType, Fingerprint: q.FingerprintSHA256,
 	}, false)
 
