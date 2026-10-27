@@ -50,6 +50,17 @@ type App struct {
 	fwdKeepalive time.Duration        // keepalive interval of forward clients; 0 means keepaliveInterval
 	autostarted  atomic.Bool          // the autostart forwards have been started in this run
 
+	// hcMu guards the host connections (hostconn.go); it is taken before a hostConn's own lock.
+	hcMu           sync.Mutex
+	hostConns      map[string]*hostConn            // the current connection of each host
+	hcLive         map[*hostConn]struct{}          // every connection with users, stale ones included
+	hostKeyChanged map[string]bool                 // hosts whose server key changed: blocked until restart
+	hcDown         bool                            // closeAllHostConns has run
+	hcBackoff      func(attempt int) time.Duration // reconnect pauses; nil means sshclient.DefaultBackoff
+
+	fwdHostMu sync.Mutex // guards fwdHosts and each group's input; taken last
+	fwdHosts  map[string]*fwdHostGroup
+
 	version string                   // the release version, "dev" in local builds
 	putty   importers.RegistryReader // PuTTY sessions source; nil means the Windows registry
 }
@@ -176,6 +187,7 @@ func (a *App) ServiceStartup(_ context.Context, _ application.ServiceOptions) er
 func (a *App) ServiceShutdown() error {
 	a.closeAllSessions()
 	a.stopAllForwards()
+	a.closeAllHostConns()
 	return nil
 }
 

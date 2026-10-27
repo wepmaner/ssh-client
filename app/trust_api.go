@@ -34,8 +34,9 @@ type TrustCancelDTO struct {
 //nolint:staticcheck // ST1005: Russian UI text starts with a capital letter
 var errTrustNotFound = errors.New("Вопрос о доверии серверу уже снят")
 
-// trustOwner is who asks: exactly one of the fields is set.
-type trustOwner struct{ sessionID, forwardID string }
+// trustOwner is who asks: exactly one of the fields is set. forwardHostID is the forwards group of
+// a host, which answers the logins its forwards start.
+type trustOwner struct{ sessionID, forwardID, forwardHostID string }
 
 // pendingTrust is an open question. answer is buffered so TrustAnswer never blocks; gone is
 // closed when a newer question of the same owner replaced this one.

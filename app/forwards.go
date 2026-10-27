@@ -6,20 +6,11 @@ import (
 	"errors"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"golang.org/x/crypto/ssh"
 
 	"sshclient/internal/model"
 	"sshclient/internal/sshclient"
-)
-
-const (
-	// keepaliveInterval is how often a forward's client asks keepalive@openssh.com; a reply
-	// that takes longer than one interval counts as a failure.
-	keepaliveInterval = 15 * time.Second
-	// keepaliveMaxFails consecutive failures close the client, so the runner reconnects.
-	keepaliveMaxFails = 3
 )
 
 // ForwardStateDTO is the payload of fwd:state:<id>. Retryable is false when the last dial
@@ -288,50 +279,5 @@ func (a *App) forwardDial(id, hostID string, out *outStream, run *fwdRun) func(c
 		}
 		go keepalive(client, interval, keepaliveMaxFails)
 		return client, nil
-	}
-}
-
-// keepalive sends keepalive@openssh.com every interval and closes the client after maxFails
-// consecutive errors or replies slower than an interval, so a silently dead connection is
-// noticed and the runner reconnects. It ends when the client is closed.
-func keepalive(c *ssh.Client, interval time.Duration, maxFails int) {
-	dead := make(chan struct{})
-	go func() {
-		_ = c.Wait() //nolint:gosec // G104: only the end of the connection matters
-		close(dead)
-	}()
-	t := time.NewTimer(interval)
-	defer t.Stop()
-	fails := 0
-	var reply chan error // nil while no request is in flight
-	for {
-		select {
-		case <-dead:
-			return
-		case err := <-reply:
-			reply = nil
-			if err != nil {
-				fails++
-			} else {
-				fails = 0
-			}
-			continue // the next request waits for the timer
-		case <-t.C:
-		}
-		if reply != nil { // no answer within an interval
-			fails++
-		}
-		if fails >= maxFails {
-			_ = c.Close() //nolint:gosec // G104: closing ends the dead connection; its error is irrelevant
-			return
-		}
-		if reply == nil {
-			reply = make(chan error, 1)
-			go func(ch chan error) {
-				_, _, err := c.SendRequest("keepalive@openssh.com", true, nil)
-				ch <- err
-			}(reply)
-		}
-		t.Reset(interval)
 	}
 }
