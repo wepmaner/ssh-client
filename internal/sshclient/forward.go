@@ -228,7 +228,7 @@ func (r *ForwardRunner) open(ctx context.Context) (ln net.Listener, client *ssh.
 		var lc net.ListenConfig
 		ln, err = lc.Listen(ctx, "tcp", r.f.Listen)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("не удалось занять локальный порт %s: %w", r.f.Listen, err)
+			return nil, nil, nil, listenError(r.f.Listen, err)
 		}
 		client, err = r.dial(ctx)
 		if err != nil {
@@ -269,7 +269,7 @@ func (r *ForwardRunner) listenRemote(ctx context.Context, client *ssh.Client) (n
 		select {
 		case res := <-ch:
 			if res.err != nil {
-				return nil, fmt.Errorf("сервер не открыл порт %s: %w", r.f.Listen, res.err)
+				return nil, remoteListenError(r.f.Listen, res.err)
 			}
 			return res.ln, nil
 		case <-ctx.Done():
@@ -285,7 +285,7 @@ func (r *ForwardRunner) listenRemote(ctx context.Context, client *ssh.Client) (n
 	rln, err := client.Listen("tcp", r.f.Listen)
 	stop()
 	if err != nil {
-		return nil, fmt.Errorf("сервер не открыл порт %s: %w", r.f.Listen, err)
+		return nil, remoteListenError(r.f.Listen, err)
 	}
 	return rln, nil
 }
@@ -507,7 +507,8 @@ func (r *ForwardRunner) listenerFailed(err error) {
 	r.failed = true
 	ln, client, rln := r.ln, r.client, r.rln
 	r.ln, r.client, r.rln = nil, nil, nil
-	r.setLocked(ForwardState{Status: ForwardError, Error: fmt.Sprintf("локальный порт %s: %v", r.f.Listen, err), Conns: r.state.Conns})
+	broken := listenerBrokenError(r.f.Listen, err)
+	r.setLocked(ForwardState{Status: ForwardError, Error: broken.Error(), Detail: errorCauses(broken), Conns: r.state.Conns})
 	r.mu.Unlock()
 	r.closeAll(ln, rln, client)
 }

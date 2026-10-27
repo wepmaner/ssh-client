@@ -9,4 +9,7 @@ var (
 	errTimedOut        error = syscall.ETIMEDOUT
 	errHostUnreachable error = syscall.EHOSTUNREACH
 	errNetUnreachable  error = syscall.ENETUNREACH
+	errAddrInUse       error = syscall.EADDRINUSE
+	errAccess          error = syscall.EACCES
+	errAddrNotAvail    error = syscall.EADDRNOTAVAIL
 )

@@ -9,4 +9,7 @@ var (
 	errTimedOut        error = windows.WSAETIMEDOUT
 	errHostUnreachable error = windows.WSAEHOSTUNREACH
 	errNetUnreachable  error = windows.WSAENETUNREACH
+	errAddrInUse       error = windows.WSAEADDRINUSE
+	errAccess          error = windows.WSAEACCES
+	errAddrNotAvail    error = windows.WSAEADDRNOTAVAIL
 )

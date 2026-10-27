@@ -106,3 +106,32 @@ func TestForwardStateKeepsSystemText(t *testing.T) {
 		t.Fatalf("detail %q, want the system text %q", st.Detail, sys.Error())
 	}
 }
+
+func TestListenErrorTexts(t *testing.T) {
+	bind := func(errno error) error {
+		return &net.OpError{Op: "listen", Net: "tcp", Err: &os.SyscallError{Syscall: "bind", Err: errno}}
+	}
+	cases := []struct {
+		name string
+		addr string
+		err  error
+		want string
+	}{
+		{"in use", "127.0.0.1:13001", bind(errAddrInUse), "Порт 13001 уже занят другой программой: выберите другой порт или закройте программу, которая его держит"},
+		{"in use, other address", "0.0.0.0:13001", bind(errAddrInUse), "Порт 0.0.0.0:13001 уже занят другой программой: выберите другой порт или закройте программу, которая его держит"},
+		{"reserved", "127.0.0.1:13001", bind(errAccess), "Windows не даёт занять порт 13001: он зарезервирован системой (часто Hyper-V или WSL), выберите другой порт"},
+		{"foreign address", "10.0.0.5:13001", bind(errAddrNotAvail), "Адрес 10.0.0.5 не принадлежит этому компьютеру: укажите 127.0.0.1 или адрес своей сети"},
+		{"other", "127.0.0.1:13001", bind(io.ErrUnexpectedEOF), "Не удалось занять локальный порт 13001"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := listenError(c.addr, c.err)
+			if got.Error() != c.want {
+				t.Fatalf("text = %q, want %q", got, c.want)
+			}
+			if !errors.Is(got, c.err) {
+				t.Fatalf("cause lost: %v", got)
+			}
+		})
+	}
+}

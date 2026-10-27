@@ -223,6 +223,58 @@ func TestLocalForwardPortBusy(t *testing.T) {
 	}
 }
 
+func TestListenErrorAddrInUse(t *testing.T) {
+	_, dial := forwardServer(t)
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ignoreErr(busy.Close()) })
+	_, port, err := net.SplitHostPort(busy.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := NewForwardRunner(model.Forward{Kind: "L", Listen: busy.Addr().String(), Target: echoServer(t)}, dial)
+	t.Cleanup(r.Stop)
+	if err := r.Start(context.Background()); err == nil {
+		t.Fatal("Start on a busy port succeeded")
+	}
+	st := r.State()
+	want := "Порт " + port + " уже занят другой программой: выберите другой порт или закройте программу, которая его держит"
+	if st.Error != want {
+		t.Fatalf("Error = %q, want %q", st.Error, want)
+	}
+	if !strings.Contains(st.Detail, "listen tcp") {
+		t.Fatalf("Detail %q has no system text", st.Detail)
+	}
+}
+
+func TestRemoteListenRefusedText(t *testing.T) {
+	_, dial := forwardServer(t)
+	busy, err := net.Listen("tcp", "127.0.0.1:0") // тестовый сервер в том же процессе: порт занят и для него
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ignoreErr(busy.Close()) })
+	_, port, err := net.SplitHostPort(busy.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := NewForwardRunner(model.Forward{Kind: "R", Listen: busy.Addr().String(), Target: echoServer(t)}, dial)
+	t.Cleanup(r.Stop)
+	if err := r.Start(context.Background()); err == nil {
+		t.Fatal("Start on a port the server cannot open succeeded")
+	}
+	st := r.State()
+	want := "Сервер не открыл порт " + port + ": он занят на сервере или проброс запрещён его настройкой (AllowTcpForwarding, GatewayPorts)"
+	if st.Error != want {
+		t.Fatalf("Error = %q, want %q", st.Error, want)
+	}
+	if st.Detail == "" {
+		t.Fatal("Detail is empty")
+	}
+}
+
 func TestDynamicForwardSocks5(t *testing.T) {
 	_, dial := forwardServer(t)
 	echo := echoServer(t)
@@ -851,7 +903,7 @@ func TestSharedRunnerRemoteRefusedBacksOff(t *testing.T) {
 	t.Cleanup(func() { ignoreErr(ln.Close()) })
 	close(release)
 
-	waitState(t, r, "refused port", func(s ForwardState) bool { return strings.Contains(s.Error, listen) })
+	waitState(t, r, "refused port", func(s ForwardState) bool { return strings.Contains(s.Error, "Сервер не открыл порт") })
 	time.Sleep(time.Second)
 	if n := count(); n > 3 {
 		t.Fatalf("acquire called %d times within a second of the refusal, want at most 3", n)

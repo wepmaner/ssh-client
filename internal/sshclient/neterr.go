@@ -29,3 +29,44 @@ func dialError(addr string, err error) error {
 	}
 	return fmt.Errorf("подключение к %s: %w", addr, err)
 }
+
+// listenError объясняет по-русски, почему не удалось занять локальный адрес проброса; системный
+// текст остаётся причиной для подробностей карточки. Порт показывается числом, адрес — только
+// если он не 127.0.0.1.
+func listenError(addr string, err error) error {
+	host, port, splitErr := net.SplitHostPort(addr)
+	if splitErr != nil {
+		host, port = "", addr
+	}
+	switch {
+	case errors.Is(err, errAddrInUse):
+		shown := port
+		if host != "" && host != "127.0.0.1" {
+			shown = addr
+		}
+		return &userError{msg: fmt.Sprintf("Порт %s уже занят другой программой: выберите другой порт или закройте программу, которая его держит", shown), cause: err}
+	case errors.Is(err, errAccess):
+		return &userError{msg: fmt.Sprintf("Windows не даёт занять порт %s: он зарезервирован системой (часто Hyper-V или WSL), выберите другой порт", port), cause: err}
+	case errors.Is(err, errAddrNotAvail):
+		return &userError{msg: fmt.Sprintf("Адрес %s не принадлежит этому компьютеру: укажите 127.0.0.1 или адрес своей сети", host), cause: err}
+	}
+	return &userError{msg: fmt.Sprintf("Не удалось занять локальный порт %s", port), cause: err}
+}
+
+// remoteListenError объясняет отказ сервера открыть порт для проброса R.
+func remoteListenError(addr string, err error) error {
+	_, port, splitErr := net.SplitHostPort(addr)
+	if splitErr != nil {
+		port = addr
+	}
+	return &userError{msg: fmt.Sprintf("Сервер не открыл порт %s: он занят на сервере или проброс запрещён его настройкой (AllowTcpForwarding, GatewayPorts)", port), cause: err}
+}
+
+// listenerBrokenError — локальный слушатель перестал принимать соединения уже после запуска.
+func listenerBrokenError(addr string, err error) error {
+	_, port, splitErr := net.SplitHostPort(addr)
+	if splitErr != nil {
+		port = addr
+	}
+	return &userError{msg: fmt.Sprintf("Локальный порт %s перестал принимать соединения", port), cause: err}
+}
