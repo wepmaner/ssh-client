@@ -1121,3 +1121,31 @@ func TestForwardStopAllClearsHostError(t *testing.T) {
 		t.Fatalf("listed after stop all %+v", l)
 	}
 }
+
+func TestForwardStopAllAfterHostEditShowsNone(t *testing.T) {
+	s := newForwardsApp(t, sshtest.Opts{}, true)
+	if err := s.ForwardHostAttach(s.hostID); err != nil {
+		t.Fatal(err)
+	}
+	f := s.saveL(t, freePort(t), echoServer(t), false)
+	if err := s.ForwardStart(f.ID); err != nil {
+		t.Fatal(err)
+	}
+	s.ev.waitFwdState(t, f.ID, "running", 0, 5*time.Second)
+	if st := s.ev.hostStates(s.hostID); len(st) == 0 || st[len(st)-1].Status != "connected" {
+		t.Fatalf("group states %+v", st)
+	}
+	s.editHost(t, func(h *model.Host) { h.User = "bob" })
+	s.markHostStale(s.hostID) // as HostSave does after a change of a login parameter
+
+	if err := s.ForwardStopAll(s.hostID); err != nil {
+		t.Fatal(err)
+	}
+	s.checkNoConns(t, s.hostID)
+	if st := s.ev.hostStates(s.hostID); st[len(st)-1].Status != "none" {
+		t.Fatalf("group states after stop all %+v", st)
+	}
+	if l := s.ForwardHostsList(); l[0].Status != "none" {
+		t.Fatalf("listed after stop all %+v", l)
+	}
+}

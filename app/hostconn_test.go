@@ -770,3 +770,120 @@ func TestHostConnAcquireAfterLeaveOnStaleConnCancels(t *testing.T) {
 		t.Fatalf("server accepted %d connections, want 1", n)
 	}
 }
+
+func TestHostConnForwardsStopOneByOneHandsOverToConsole(t *testing.T) {
+	s := newEncryptedHostConnApp(t)
+	s.fwdHostGroup(s.hostID).out.Attach()
+	c := mustConn(t, s)
+	f1, f2, sess := &fwdRun{}, &fwdRun{}, &session{}
+	c.join(f1)
+	c.join(f2)
+	c.join(sess)
+	defer c.leave(sess)
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel1()
+	defer cancel2()
+	first := acquireAsync(ctx1, c, f1, s.forwardsAsker(s.hostID))
+	s.waitGroupData(t, passphrasePrompt, 1)
+	second := acquireAsync(ctx2, c, f2, s.forwardsAsker(s.hostID))
+	waitConnState(t, c, "the second forward waiting", func(HostConnStateDTO) bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.att != nil && len(c.att.waiting) == 2
+	})
+	ask := testAsker(s, "t1", "srv")
+	third := acquireAsync(context.Background(), c, sess, ask)
+	s.ev.waitData(t, "t1", "Идёт вход для пробросов")
+
+	// The forwards stop one by one: the forward that answers first, then the other one.
+	cancel1()
+	if r := waitAcquired(t, first); !errors.Is(r.err, context.Canceled) {
+		t.Fatalf("first forward got %v", r.err)
+	}
+	c.leave(f1)
+	cancel2()
+	if r := waitAcquired(t, second); !errors.Is(r.err, context.Canceled) {
+		t.Fatalf("second forward got %v", r.err)
+	}
+	c.leave(f2)
+
+	s.ev.waitData(t, "t1", passphrasePrompt) // the question moved to the waiting console
+	ask.in.Write([]byte(fwdPassphrase + "\r"))
+	if r := waitAcquired(t, third); r.err != nil {
+		t.Fatalf("the waiting console got %v", r.err)
+	}
+}
+
+func TestHostConnAcquireAfterLastLeaveCancels(t *testing.T) {
+	s := newHostConnApp(t, sshtest.Opts{}, true)
+	c := mustConn(t, s)
+	fw := &fwdRun{}
+	c.join(fw)
+	cl, err := c.acquire(context.Background(), fw, s.forwardsAsker(s.hostID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.leave(fw) // the last user: c is detached from the host
+	waitClosed(t, cl)
+
+	// The runner of the forward that left acquires once more, as after a failed listener.
+	if _, err := c.acquire(context.Background(), fw, s.forwardsAsker(s.hostID)); !errors.Is(err, sshclient.ErrCancelled) {
+		t.Fatalf("acquire of a user that left: %v", err)
+	}
+	if st := c.state(); st.Status != "none" {
+		t.Fatalf("a login started on a detached connection: %+v", st)
+	}
+	if n := s.srv.Accepted(); n != 1 {
+		t.Fatalf("server accepted %d connections, want 1", n)
+	}
+}
+
+func TestHostConnConsoleOnlyHostHoldsOneGroupState(t *testing.T) {
+	s := newHostConnApp(t, sshtest.Opts{}, true)
+	for i := range 3 { // the group of a host without forwards is never attached
+		c := mustConn(t, s)
+		sess := &session{}
+		c.join(sess)
+		if _, err := c.acquire(context.Background(), sess, testAsker(s, fmt.Sprint("t", i), "srv")); err != nil {
+			t.Fatal(err)
+		}
+		c.leave(sess)
+	}
+	out := s.fwdHostGroup(s.hostID).out
+	out.mu.Lock()
+	held := len(out.held)
+	out.mu.Unlock()
+	if held != 1 {
+		t.Fatalf("the unattached group holds %d events, want only the latest state", held)
+	}
+	if err := s.ForwardHostAttach(s.hostID); err != nil {
+		t.Fatal(err)
+	}
+	if st := s.ev.hostStates(s.hostID); len(st) != 1 || st[0].Status != "none" {
+		t.Fatalf("states released on attach %+v", st)
+	}
+}
+
+func TestHostDeleteDoesNotBringBackItsGroup(t *testing.T) {
+	s := newHostConnApp(t, sshtest.Opts{}, true)
+	c := mustConn(t, s)
+	sess := &session{}
+	c.join(sess)
+	cl, err := c.acquire(context.Background(), sess, testAsker(s, "t1", "srv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.HostDelete(s.hostID); err != nil {
+		t.Fatal(err)
+	}
+	waitClosed(t, cl)
+	time.Sleep(50 * time.Millisecond) // the watcher of the closed client has run by now
+	s.fwdHostMu.Lock()
+	_, ok := s.fwdHosts[s.hostID]
+	s.fwdHostMu.Unlock()
+	if ok {
+		t.Fatal("a late state of the deleted host's connection created its group again")
+	}
+}

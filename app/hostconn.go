@@ -234,6 +234,8 @@ func (c *hostConn) leave(u any) {
 // the secrets; the connection leaves a.hostConns. When the last forward leaves a reconnect, the
 // reconnect stops; sessions waiting for it get a login of their own, which may use the secrets.
 // Waiters through the forwards group do not count: they are forwards that are leaving too.
+// The last user of a stale connection, which emits nothing itself, shows the host's state in the
+// group when the host has no current connection (Stop all after a host edit).
 // It returns the client for the caller to close outside the locks; the caller holds hcMu.
 func (c *hostConn) leaveLocked(u any) *ssh.Client {
 	a := c.a
@@ -241,7 +243,19 @@ func (c *hostConn) leaveLocked(u any) *ssh.Client {
 		delete(a.hcUsers, u)
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	drop, last := c.removeLocked(u)
+	show := last && c.stale && !c.shutdown && a.hostConns[c.hostID] == nil
+	c.mu.Unlock()
+	if show { // after c.mu: hostConnStateLocked takes the mu of the host's other connections
+		a.emitHostConnState(c.hostID, a.hostConnStateLocked(c.hostID))
+	}
+	return drop
+}
+
+// removeLocked is the part of leaveLocked under mu; last reports that no user is left. The caller
+// holds hcMu and mu.
+func (c *hostConn) removeLocked(u any) (drop *ssh.Client, last bool) {
+	a := c.a
 	delete(c.users, u)
 	switch {
 	case len(c.users) == 0:
@@ -260,7 +274,7 @@ func (c *hostConn) leaveLocked(u any) *ssh.Client {
 		case !c.stale:
 			delete(a.hcLastErr, c.hostID)
 		}
-		return c.idleLocked(keepErr)
+		return c.idleLocked(keepErr), true
 	case c.att != nil && c.att.loop && !c.hasForwardsLocked():
 		att := c.att
 		if slices.ContainsFunc(att.waiting, func(w *connAsker) bool { return w.label != "" }) {
@@ -272,7 +286,7 @@ func (c *hostConn) leaveLocked(u any) *ssh.Client {
 		att.cancel()
 		c.setLocked(HostConnStateDTO{Status: hostConnNone})
 	}
-	return nil
+	return nil, false
 }
 
 // acquire returns the connection's client: at once when connected, otherwise after the login in
@@ -325,6 +339,12 @@ func (c *hostConn) acquire(ctx context.Context, u any, ask *connAsker) (*ssh.Cli
 			}
 			return next.acquire(ctx, u, ask)
 		}
+		if _, member := c.users[u]; !member {
+			// u has left (its last leave may have detached c from the host): a login for it would
+			// leave a client and secrets nobody closes or wipes.
+			c.mu.Unlock()
+			return nil, sshclient.ErrCancelled
+		}
 		att := c.att
 		if att == nil {
 			att = c.startLocked(ask, false, 0)
@@ -362,8 +382,9 @@ func (c *hostConn) acquire(ctx context.Context, u any, ask *connAsker) (*ssh.Cli
 	}
 }
 
-// stopWaiting removes ask from att's waiters. The login ends when nobody waits any more; when its
-// asker leaves and nobody else answers through the same terminal, it is restarted for the others.
+// stopWaiting removes ask from att's waiters. The login ends when nobody waits any more; when no
+// waiter is left on the terminal that answers it (its asker and the others there, such as the
+// forwards of the group, have all left), it is restarted for the others.
 func (c *hostConn) stopWaiting(att *loginAttempt, ask *connAsker) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -383,7 +404,7 @@ func (c *hostConn) stopWaiting(att *loginAttempt, ask *connAsker) {
 		return
 	}
 	sameTerminal := slices.ContainsFunc(att.waiting, func(w *connAsker) bool { return w.out == att.ask.out })
-	if ask == att.ask && !sameTerminal {
+	if !sameTerminal {
 		att.handover = true
 		att.cancel()
 	}
@@ -561,6 +582,11 @@ func (a *App) hostRetryable(hostID string) bool {
 func (a *App) hostConnState(hostID string) HostConnStateDTO {
 	a.hcMu.Lock()
 	defer a.hcMu.Unlock()
+	return a.hostConnStateLocked(hostID)
+}
+
+// hostConnStateLocked is hostConnState; the caller holds hcMu and no connection's mu.
+func (a *App) hostConnStateLocked(hostID string) HostConnStateDTO {
 	c := a.hostConns[hostID]
 	if c == nil {
 		for live := range a.hcLive {
@@ -583,9 +609,11 @@ func (a *App) hostConnState(hostID string) HostConnStateDTO {
 }
 
 // clearHostError forgets the error the host's last connection closed in, once the user has stopped
-// the host's forwards and no connection is left, and shows none in the group.
+// the host's forwards and no connection is left, and shows none in the group. It emits under hcMu,
+// so a login that a concurrent start begins (it joins under hcMu) shows after the none.
 func (a *App) clearHostError(hostID string) {
 	a.hcMu.Lock()
+	defer a.hcMu.Unlock()
 	_, had := a.hcLastErr[hostID]
 	live := a.hostConns[hostID] != nil
 	for c := range a.hcLive {
@@ -593,11 +621,7 @@ func (a *App) clearHostError(hostID string) {
 	}
 	if had && !live {
 		delete(a.hcLastErr, hostID)
-	}
-	blocked := a.hostKeyChanged[hostID]
-	a.hcMu.Unlock()
-	if had && !live {
-		a.emitHostConnState(hostID, HostConnStateDTO{Status: hostConnNone, Retryable: !blocked})
+		a.emitHostConnState(hostID, HostConnStateDTO{Status: hostConnNone, Retryable: !a.hostKeyChanged[hostID]})
 	}
 }
 
@@ -725,11 +749,13 @@ func (c *hostConn) hasForwardsLocked() bool {
 }
 
 // setLocked records and emits the state; Retryable follows the host key block. A stale connection
-// only records it: the host's group shows the current connection. The caller holds mu.
+// only records it: the host's group shows the current connection. A shut down one (app exit, host
+// deleted) only records it too, so a late state never brings back the group of a deleted host.
+// The caller holds mu.
 func (c *hostConn) setLocked(st HostConnStateDTO) {
 	st.Retryable = c.blocked == nil
 	c.st = st
-	if c.emit != nil && !c.stale {
+	if c.emit != nil && !c.stale && !c.shutdown {
 		c.emit(st)
 	}
 }
