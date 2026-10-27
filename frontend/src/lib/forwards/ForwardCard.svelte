@@ -3,14 +3,16 @@
   import { hosts } from '../stores.svelte'
   import Button from '../ui/Button.svelte'
   import Menu from '../ui/Menu.svelte'
+  import { shortListen } from './format'
   import { startForward, stopForward } from './forwards.svelte'
 
   interface Props {
     forward: app.ForwardDTO
     onedit: () => void
+    onduplicate: () => void
     ondelete: () => void
   }
-  let { forward, onedit, ondelete }: Props = $props()
+  let { forward, onedit, onduplicate, ondelete }: Props = $props()
 
   const statusText: Record<string, string> = {
     running: 'работает',
@@ -45,7 +47,7 @@
       <span class="dot {forward.status}" aria-hidden="true"></span>{statusText[forward.status] ?? forward.status}
     </span>
   </div>
-  <div class="route">{forward.listen} <span class="arrow">→</span> {forward.kind === 'D' ? 'SOCKS5' : forward.target}</div>
+  <div class="route">{shortListen(forward.listen)} <span class="arrow">→</span> {forward.kind === 'D' ? 'SOCKS5' : forward.target}</div>
   {#if forward.status === 'error' && forward.error}
     <p class="error" role="alert">{forward.error}</p>
   {:else if forward.status === 'starting' && forward.error}
@@ -97,6 +99,7 @@
           onclose={() => (menuOpen = false)}
           items={[
             { label: 'Изменить', onselect: onedit },
+            { label: 'Дублировать', onselect: onduplicate },
             { label: 'Удалить', onselect: ondelete, danger: true },
           ]}
         />

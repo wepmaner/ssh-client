@@ -8,7 +8,7 @@
   import ForwardDialog from './ForwardDialog.svelte'
   import { forwards, refreshForwards } from './forwards.svelte'
 
-  let dialog = $state<{ open: boolean; forward: app.ForwardDTO | null; hostId: string }>({ open: false, forward: null, hostId: '' })
+  let dialog = $state<{ open: boolean; forward: app.ForwardDTO | null; template: app.ForwardDTO | null; hostId: string }>({ open: false, forward: null, template: null, hostId: '' })
   let confirm = $state<app.ForwardDTO | null>(null)
 
   const name = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name)
@@ -62,13 +62,13 @@
     <div class="empty">
       <h1>Пробросов пока нет</h1>
       <p>Проброс открывает порт через SSH-сервер и работает без открытого терминала.</p>
-      <Button variant="primary" onclick={() => (dialog = { open: true, forward: null, hostId: '' })}>
+      <Button variant="primary" onclick={() => (dialog = { open: true, forward: null, template: null, hostId: '' })}>
         <span class="with-icon">{@render plus()}Новый проброс</span>
       </Button>
     </div>
   {:else}
     <div class="toolbar">
-      <Button variant="primary" onclick={() => (dialog = { open: true, forward: null, hostId: '' })}>
+      <Button variant="primary" onclick={() => (dialog = { open: true, forward: null, template: null, hostId: '' })}>
         <span class="with-icon">{@render plus()}Новый проброс</span>
       </Button>
       <span class="hint">Пробросы живут отдельно от сессий: работают без открытого терминала</span>
@@ -81,8 +81,9 @@
         <ForwardGroup
           host={g.host}
           items={g.items}
-          onadd={() => (dialog = { open: true, forward: null, hostId: g.host.host_id })}
-          onedit={(f) => (dialog = { open: true, forward: f, hostId: '' })}
+          onadd={() => (dialog = { open: true, forward: null, template: null, hostId: g.host.host_id })}
+          onedit={(f) => (dialog = { open: true, forward: f, template: null, hostId: '' })}
+          onduplicate={(f) => (dialog = { open: true, forward: null, template: f, hostId: '' })}
           ondelete={(f) => (confirm = f)}
         />
       {/each}
@@ -96,7 +97,7 @@
   {/if}
 </div>
 
-<ForwardDialog open={dialog.open} forward={dialog.forward} hostId={dialog.hostId} onclose={() => (dialog = { open: false, forward: null, hostId: '' })} />
+<ForwardDialog open={dialog.open} forward={dialog.forward} template={dialog.template} hostId={dialog.hostId} onclose={() => (dialog = { open: false, forward: null, template: null, hostId: '' })} />
 
 <Dialog open={confirm !== null} title={`Удалить проброс ${confirm?.name ?? ''}?`} onclose={() => (confirm = null)} width={420}>
   <p class="muted">Проброс остановится и будет удалён из хранилища.</p>

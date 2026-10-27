@@ -12,9 +12,10 @@
     items: app.ForwardDTO[]
     onadd: () => void
     onedit: (f: app.ForwardDTO) => void
+    onduplicate: (f: app.ForwardDTO) => void
     ondelete: (f: app.ForwardDTO) => void
   }
-  let { host, items, onadd, onedit, ondelete }: Props = $props()
+  let { host, items, onadd, onedit, onduplicate, ondelete }: Props = $props()
 
   const stateText: Record<string, string> = {
     none: 'не подключён',
@@ -69,7 +70,7 @@
   {/if}
   <div class="grid">
     {#each items as f (f.id)}
-      <ForwardCard forward={f} onedit={() => onedit(f)} ondelete={() => ondelete(f)} />
+      <ForwardCard forward={f} onedit={() => onedit(f)} onduplicate={() => onduplicate(f)} ondelete={() => ondelete(f)} />
     {/each}
   </div>
 </section>

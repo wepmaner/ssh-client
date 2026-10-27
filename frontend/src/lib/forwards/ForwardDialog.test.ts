@@ -57,13 +57,13 @@ describe('ForwardDialog', () => {
 
   it('shows the default name and hides the target for D', async () => {
     setup()
-    await fill('Слушать', '127.0.0.1:5432')
+    await fill('Слушать', '5432')
     await fill('Назначение', 'localhost:5432')
-    expect(screen.getByLabelText('Название').getAttribute('placeholder')).toBe('L 127.0.0.1:5432 → localhost:5432')
+    expect(screen.getByLabelText('Название').getAttribute('placeholder')).toBe('L 5432 → localhost:5432')
     await fireEvent.click(screen.getByRole('radio', { name: 'D' }))
     expect(screen.queryByLabelText('Назначение')).toBeNull()
     expect(screen.getByText('SOCKS5-прокси для браузера и программ')).toBeTruthy()
-    expect(screen.getByLabelText('Название').getAttribute('placeholder')).toBe('SOCKS5 127.0.0.1:5432')
+    expect(screen.getByLabelText('Название').getAttribute('placeholder')).toBe('SOCKS5 5432')
   })
 
   it('shows a Go validation message under the field', async () => {
@@ -91,6 +91,39 @@ describe('ForwardDialog', () => {
     )
   })
 
+  it('duplicate prefills fields with an empty name and saves a new forward', async () => {
+    const { onclose } = (() => {
+      const onclose = vi.fn()
+      render(ForwardDialog, { open: true, forward: null, template: { ...saved, host_id: 'h2', auto_start: true } as never, onclose })
+      return { onclose }
+    })()
+    expect(screen.getByRole('dialog', { name: 'Новый проброс' })).toBeTruthy()
+    expect((screen.getByLabelText('Название') as HTMLInputElement).value).toBe('')
+    expect((screen.getByLabelText('Хост') as HTMLSelectElement).value).toBe('h2')
+    expect((screen.getByLabelText('Слушать') as HTMLInputElement).value).toBe('5432')
+    await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
+    await vi.waitFor(() => expect(onclose).toHaveBeenCalled())
+    expect(api.ForwardSave).toHaveBeenCalledWith(
+      expect.objectContaining({ id: '', name: '', kind: 'L', host_id: 'h2', listen: '5432', target: 'localhost:5432', auto_start: true }),
+    )
+  })
+
+  it('edit shows a 127.0.0.1 listen as the bare port', () => {
+    setup(saved)
+    expect((screen.getByLabelText('Слушать') as HTMLInputElement).value).toBe('5432')
+  })
+
+  it('listen hint is the bare port and the note is shown', async () => {
+    setup()
+    expect(screen.getByLabelText('Слушать').getAttribute('placeholder')).toBe('5432')
+    expect(screen.getByText('Порт; адрес по умолчанию 127.0.0.1')).toBeTruthy()
+    api.ForwardSave.mockRejectedValue('field:listen: Порт от 1 до 65535')
+    await fill('Слушать', '70000')
+    await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
+    await vi.waitFor(() => expect(errorOf('Слушать')).toBe('Порт от 1 до 65535'))
+    expect(screen.queryByText('Порт; адрес по умолчанию 127.0.0.1')).toBeNull()
+  })
+
   it('Esc closes without saving', async () => {
     const { onclose } = setup()
     await fireEvent.keyDown(window, { key: 'Escape' })
@@ -103,7 +136,7 @@ describe('ForwardDialog', () => {
     expect(screen.getByRole('dialog', { name: 'Изменить проброс' })).toBeTruthy()
     expect(screen.getByRole('radio', { name: 'D' }).getAttribute('aria-checked')).toBe('true')
     expect((screen.getByLabelText('Хост') as HTMLSelectElement).value).toBe('h2')
-    expect((screen.getByLabelText('Слушать') as HTMLInputElement).value).toBe('127.0.0.1:5432')
+    expect((screen.getByLabelText('Слушать') as HTMLInputElement).value).toBe('5432')
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
     await vi.waitFor(() =>
       expect(api.ForwardSave).toHaveBeenCalledWith(expect.objectContaining({ id: 'f1', kind: 'D', target: '', name: 'SOCKS', auto_start: true })),

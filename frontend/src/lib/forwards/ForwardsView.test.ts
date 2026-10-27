@@ -96,11 +96,11 @@ describe('ForwardsView', () => {
     render(ForwardsView)
     const pg = card('Postgres')
     expect(within(pg).getByText('L')).toBeTruthy()
-    expect(pg.textContent).toContain('127.0.0.1:5432 → localhost:5432')
+    expect(pg.textContent).toContain('5432 → localhost:5432')
     expect(pg.textContent).toContain('prod-1')
     expect(within(pg).getByText('работает')).toBeTruthy()
     expect(pg.textContent).toContain('Соединений: 2')
-    expect(card('SOCKS').textContent).toContain('127.0.0.1:1080 → SOCKS5')
+    expect(card('SOCKS').textContent).toContain('1080 → SOCKS5')
     expect(within(card('SOCKS')).getByText('остановлен')).toBeTruthy()
     const err = card('Вебхук')
     expect(within(err).getByText('ошибка')).toBeTruthy()
@@ -150,7 +150,7 @@ describe('ForwardsView', () => {
   it('deletes through the menu after confirmation', async () => {
     render(ForwardsView)
     await fireEvent.click(within(card('Postgres')).getByRole('button', { name: 'Ещё' }))
-    expect(screen.getAllByRole('menuitem').map((e) => e.textContent)).toEqual(['Изменить', 'Удалить'])
+    expect(screen.getAllByRole('menuitem').map((e) => e.textContent)).toEqual(['Изменить', 'Дублировать', 'Удалить'])
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Удалить' }))
     const dialog = screen.getByRole('dialog')
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Удалить' }))
@@ -162,7 +162,22 @@ describe('ForwardsView', () => {
     await fireEvent.click(within(card('SOCKS')).getByRole('button', { name: 'Ещё' }))
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Изменить' }))
     expect(screen.getByRole('dialog', { name: 'Изменить проброс' })).toBeTruthy()
-    expect((screen.getByLabelText('Слушать') as HTMLInputElement).value).toBe('127.0.0.1:1080')
+    expect((screen.getByLabelText('Слушать') as HTMLInputElement).value).toBe('1080')
+  })
+
+  it('card menu has Дублировать and it opens the new forward dialog', async () => {
+    render(ForwardsView)
+    await fireEvent.click(within(card('Postgres')).getByRole('button', { name: 'Ещё' }))
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Дублировать' }))
+    expect(screen.getByRole('dialog', { name: 'Новый проброс' })).toBeTruthy()
+    expect((screen.getByLabelText('Слушать') as HTMLInputElement).value).toBe('5432')
+    expect((screen.getByLabelText('Назначение') as HTMLInputElement).value).toBe('localhost:5432')
+    expect((screen.getByLabelText('Название') as HTMLInputElement).value).toBe('')
+  })
+
+  it('card route shows the bare port', () => {
+    render(ForwardsView)
+    expect(card('Postgres').querySelector('.route')?.textContent).toBe('5432 → localhost:5432')
   })
 
   it('the sidebar dot follows running forwards', async () => {

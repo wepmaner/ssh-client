@@ -2,6 +2,7 @@
   import { untrack } from 'svelte'
   import { ForwardSave, errorText, type app } from '../api'
   import { fieldError } from '../hosts/format'
+  import { shortListen } from './format'
   import { hosts } from '../stores.svelte'
   import Button from '../ui/Button.svelte'
   import Dialog from '../ui/Dialog.svelte'
@@ -15,9 +16,11 @@
     forward: app.ForwardDTO | null
     /** Host preselected for a new forward. */
     hostId?: string
+    /** A forward to copy into a new one (forward is null): everything but the name. */
+    template?: app.ForwardDTO | null
     onclose: () => void
   }
-  let { open, forward, hostId = '', onclose }: Props = $props()
+  let { open, forward, hostId = '', template = null, onclose }: Props = $props()
 
   type Kind = 'L' | 'R' | 'D'
   const explain: Record<Kind, string> = {
@@ -26,9 +29,9 @@
     D: 'SOCKS5-прокси для браузера и программ',
   }
   const listenHint: Record<Kind, string> = {
-    L: '127.0.0.1:5432',
-    R: '127.0.0.1:9000',
-    D: '127.0.0.1:1080',
+    L: '5432',
+    R: '9000',
+    D: '1080',
   }
   const targetHint: Record<Kind, string> = { L: 'localhost:5432', R: '127.0.0.1:3000', D: '' }
 
@@ -39,14 +42,16 @@
 
   function reset() {
     const f = forward
+    const t = f ? null : template
+    const src = f ?? t
     form = {
       id: f?.id ?? '',
-      kind: (f?.kind as Kind) || 'L',
-      host_id: f?.host_id || hostId || (hosts[0]?.id ?? ''),
-      listen: f?.listen ?? '',
-      target: f?.target ?? '',
+      kind: (src?.kind as Kind) || 'L',
+      host_id: src?.host_id || hostId || (hosts[0]?.id ?? ''),
+      listen: shortListen(src?.listen ?? ''),
+      target: src?.target ?? '',
       name: f?.name ?? '',
-      auto_start: f?.auto_start ?? false,
+      auto_start: src?.auto_start ?? false,
     }
     errors = {}
     general = ''
@@ -55,12 +60,13 @@
 
   $effect(() => {
     void forward
+    void template
     if (open) untrack(reset)
   })
 
   /** The name Go gives an unnamed forward, shown as the placeholder. */
   const defaultName = $derived.by(() => {
-    const listen = form.listen.trim()
+    const listen = shortListen(form.listen.trim())
     if (!listen) return 'По умолчанию — из адресов'
     if (form.kind === 'D') return `SOCKS5 ${listen}`
     return `${form.kind} ${listen} → ${form.target.trim()}`
@@ -165,7 +171,11 @@
           aria-describedby={errors.listen ? 'fwd-listen-error' : undefined}
           oninput={() => clearError('listen')}
         />
-        {@render err('listen')}
+        {#if errors.listen}
+          {@render err('listen')}
+        {:else}
+          <span class="hint">Порт; адрес по умолчанию 127.0.0.1</span>
+        {/if}
       </div>
       {#if form.kind !== 'D'}
         <div class="field">
