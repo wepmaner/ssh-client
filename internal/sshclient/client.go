@@ -168,9 +168,9 @@ type dialState struct {
 	phrase     []byte    // фраза, которой открылся ключ; своя копия, затирается в forgetSecrets
 	keyFailed  bool      // сервер не принял ключ: publickey среди неудачных методов
 
-	remembered     []byte // пароль из Target (буфер Dial, его затирает Dial); nil после первой попытки
-	passKept       []byte // пароль, которым, вероятно, прошёл вход; своя копия, затирается в forgetSecrets
-	kiQuestion     string // текст вопроса keyboard-interactive, на который дан запомненный пароль
+	remembered []byte // пароль из Target (буфер Dial, его затирает Dial); nil после первой попытки
+	passKept   []byte // пароль, которым, вероятно, прошёл вход; своя копия, затирается в forgetSecrets
+	kiQuestion string // текст вопроса keyboard-interactive, на который дан запомненный пароль
 }
 
 // acceptedPassphrase возвращает фразу ключа, если ключ открылся ею и сервер его не отверг.

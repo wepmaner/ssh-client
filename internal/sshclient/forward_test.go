@@ -951,3 +951,30 @@ func TestSharedRunnerNoPauseAfterAcquireError(t *testing.T) {
 	}
 	dialEcho(t, listen, "after the host connection came back")
 }
+
+func TestSharedRunnerRemoteRefusedKeepsClient(t *testing.T) {
+	_, dial := forwardServer(t)
+	client := sharedClient(t, dial)
+	acquire := func(context.Context) (*ssh.Client, error) { return client, nil }
+	busy, err := net.Listen("tcp", "127.0.0.1:0") // сервер в том же процессе: порт занят и для него
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ignoreErr(busy.Close()) })
+	r := NewSharedForwardRunner(model.Forward{Kind: "R", Listen: busy.Addr().String(), Target: echoServer(t)}, acquire)
+	t.Cleanup(r.Stop)
+	if err := r.Start(context.Background()); err == nil {
+		t.Fatal("Start on a port the server cannot open succeeded")
+	}
+	if st := r.State(); !strings.Contains(st.Error, "Сервер не открыл порт") {
+		t.Fatalf("state %+v", st)
+	}
+	// Отказ сервера в порте — не обрыв подключения: общий клиент нужен другим пробросам и консолям.
+	if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+		t.Fatalf("shared client was closed after the refusal: %v", err)
+	}
+	r.Stop()
+	if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+		t.Fatalf("shared client was closed by Stop: %v", err)
+	}
+}
