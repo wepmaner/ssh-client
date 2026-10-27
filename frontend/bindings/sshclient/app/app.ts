@@ -328,8 +328,9 @@ export function SessionList(): $CancellablePromise<$models.SessionDTO[]> {
 }
 
 /**
- * SessionOpen starts connecting to a saved host and returns the session id at once. Progress
- * arrives as term:state:<id> and term:data:<id> events, released after the view's first SessionResize.
+ * SessionOpen starts a console on the host's shared connection and returns the session id at once:
+ * a live connection is used without a login, a login in progress is waited for. Progress arrives as
+ * term:state:<id> and term:data:<id> events, released after the view's first SessionResize.
  */
 export function SessionOpen(hostID: string, cols: number, rows: number): $CancellablePromise<string> {
     return $Call.ByID(1752288145, hostID, cols, rows);

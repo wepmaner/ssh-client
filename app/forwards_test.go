@@ -542,7 +542,6 @@ func newEncryptedForwardsApp(t *testing.T) sessionsApp {
 	return s
 }
 
-
 const passphrasePrompt = "Парольная фраза ключа work: " //nolint:gosec // G101: prompt text, not a credential
 
 // waitHostPrompts waits until hostID's forwards group shows the n-th passphrase question.
