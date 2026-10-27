@@ -1,6 +1,7 @@
 package appdir_test
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -27,6 +28,14 @@ func openShared(t *testing.T, path string, share uint32) {
 			t.Error(err)
 		}
 	})
+	// The tests rely on the lock stopping other readers. Some machines (the GitHub Windows
+	// runner) still let os.Open read such a file; there the premise does not hold.
+	if share&windows.FILE_SHARE_READ == 0 {
+		if f, err := os.Open(path); err == nil { //nolint:gosec // G304: a test file in t.TempDir
+			_ = f.Close() //nolint:gosec // G104: only probing the lock
+			t.Skip("this machine does not enforce the share-mode lock, so a locked file is still readable")
+		}
+	}
 }
 
 func TestMigrateCopiesWhenRenameFails(t *testing.T) {
