@@ -288,3 +288,28 @@
 - [ ] **Step 2: Run** полную проверку CI локально: `go vet ./...`, `go test ./... -race`, `golangci-lint run`, `cd frontend && npm test && npx svelte-check`, `wails3 build` — Expected: всё зелёное, `build/bin/sshclient.exe` собран.
 - [ ] **Step 3: Живая проверка** по `[[ssh-client-ui-driving]]` (память): два проброса одного хоста с зашифрованным ключом — «Запустить все», фраза один раз; открыть консоль к тому же хосту — без фразы; закрыть консоль — пробросы живы; «Дублировать», поменять порт, сохранить — новый проброс работает без фразы.
 - [ ] **Step 4: Commit** `docs: shared host connection keeps the passphrase and password in memory`
+
+---
+
+### Task 9: Понятные ошибки занятого порта (запрос владельца 2026-10-27)
+
+Владелец: вместо «не удалось занять локальный порт 127.0.0.1:13001: listen tcp 127.0.0.1:13001: bind: Only one usage of each socket address (protocol/network address/port) is normally permitted» карточка должна говорить по-человечески. Системный текст остаётся в подробностях (`ForwardState.Detail` через `errorCauses`), как у `dialError`.
+
+**Files:**
+- Modify: `internal/sshclient/neterr.go` (новая `listenError`), `neterr_windows.go`, `neterr_other.go` (коды), `internal/sshclient/forward.go` (места: `open` для L/D, `listenRemote`, `listenerFailed`)
+- Test: `internal/sshclient/neterr_test.go`, `internal/sshclient/forward_test.go`
+
+**Interfaces:**
+- Produces: `func listenError(addr string, err error) error` — `*userError` с причиной `err`. Тексты ровно (порт — только номер, адрес — только если не `127.0.0.1`):
+  - занят (`WSAEADDRINUSE` / `syscall.EADDRINUSE`): `Порт 13001 уже занят другой программой: выберите другой порт или закройте программу, которая его держит`; для адреса не 127.0.0.1 — `Порт 0.0.0.0:13001 уже занят …` с тем же хвостом;
+  - запрещён (`WSAEACCES` / `syscall.EACCES`): `Windows не даёт занять порт 13001: он зарезервирован системой (часто Hyper-V или WSL), выберите другой порт`;
+  - адрес не наш (`WSAEADDRNOTAVAIL` / `syscall.EADDRNOTAVAIL`): `Адрес 10.0.0.5 не принадлежит этому компьютеру: укажите 127.0.0.1 или адрес своей сети`;
+  - прочее: `Не удалось занять локальный порт 13001` + причина в подробностях.
+- Сервер отказал в R-порту (`client.Listen` вернул ошибку): `Сервер не открыл порт 9000: он занят на сервере или проброс запрещён его настройкой (AllowTcpForwarding, GatewayPorts)`, причина — в подробностях.
+- Поломка слушателя после запуска (`listenerFailed`): `Локальный порт 13001 перестал принимать соединения`, причина — в подробностях.
+
+- [ ] **Step 1: Write the failing tests**: `TestListenErrorAddrInUse` (занять порт `net.Listen`, второй раннер L на тот же адрес → `Error` ровно первый текст, `Detail` содержит системный текст), `TestListenErrorTexts` (табличный тест `listenError` на обёрнутых кодах для каждого случая, включая адрес не 127.0.0.1), `TestRemoteListenRefusedText` (sshtest отклоняет `tcpip-forward` → текст про сервер). Поправить ожидания существующих тестов, которые ищут старый текст (`не удалось занять локальный порт`) — в `internal/sshclient` и `app`.
+- [ ] **Step 2: Run** `go test ./internal/sshclient/ ./app/` — Expected: FAIL.
+- [ ] **Step 3: Implement** по Interfaces.
+- [ ] **Step 4: Run** `go test ./... ` и `go vet ./...` — Expected: PASS.
+- [ ] **Step 5: Commit** `feat(sshclient): busy, reserved and foreign listen addresses explained in Russian`
