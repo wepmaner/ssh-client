@@ -605,3 +605,156 @@ func testReconnectStopsOn(t *testing.T, refused error) {
 	}
 	ignoreErr(ln.Close())
 }
+
+// sharedClient подключает клиента, которым владеет тест (как подключение хоста), и закрывает его в Cleanup.
+func sharedClient(t *testing.T, dial func(ctx context.Context) (*ssh.Client, error)) *ssh.Client {
+	t.Helper()
+	c, err := dial(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ignoreErr(c.Close()) })
+	return c
+}
+
+// startSharedRunner — как startRunner, но поверх acquire и NewSharedForwardRunner.
+func startSharedRunner(t *testing.T, f model.Forward, acquire func(ctx context.Context) (*ssh.Client, error)) *ForwardRunner {
+	t.Helper()
+	r := NewSharedForwardRunner(f, acquire)
+	t.Cleanup(r.Stop)
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if st := r.State(); st.Status != "running" {
+		t.Fatalf("state after Start = %+v", st)
+	}
+	return r
+}
+
+func TestSharedRunnerDoesNotCloseClient(t *testing.T) {
+	_, dial := forwardServer(t)
+	client := sharedClient(t, dial)
+	acquire := func(context.Context) (*ssh.Client, error) { return client, nil }
+	echo := echoServer(t)
+	listen1, listen2 := freeAddr(t), freeAddr(t)
+	r1 := startSharedRunner(t, model.Forward{Kind: "L", Listen: listen1, Target: echo}, acquire)
+	startSharedRunner(t, model.Forward{Kind: "L", Listen: listen2, Target: echo}, acquire)
+	dialEcho(t, listen1, "first")
+	dialEcho(t, listen2, "second")
+
+	r1.Stop()
+
+	dialEcho(t, listen2, "after stop of the first")
+	if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+		t.Fatalf("shared client was closed: %v", err)
+	}
+	ln, err := net.Listen("tcp", listen1)
+	if err != nil {
+		t.Fatalf("port of the stopped runner still busy: %v", err)
+	}
+	ignoreErr(ln.Close())
+}
+
+func TestSharedRunnerReacquiresAfterDrop(t *testing.T) {
+	srv, dial := forwardServer(t)
+	var (
+		mu    sync.Mutex
+		calls int
+	)
+	acquire := func(ctx context.Context) (*ssh.Client, error) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		return dial(ctx)
+	}
+	listen := freeAddr(t)
+	r := startSharedRunner(t, model.Forward{Kind: "L", Listen: listen, Target: echoServer(t)}, acquire)
+	dialEcho(t, listen, "before drop")
+	waitState(t, r, "no conns", func(s ForwardState) bool { return s.Conns == 0 })
+	drainEvents(r)
+
+	srv.DropConnections()
+	waitEvent(t, r, "starting")
+	waitEvent(t, r, "running")
+	dialEcho(t, listen, "after reacquire")
+
+	mu.Lock()
+	n := calls
+	mu.Unlock()
+	if n != 2 {
+		t.Fatalf("acquire called %d times, want 2", n)
+	}
+}
+
+func TestSharedRunnerStopRemoteOnFrozenServer(t *testing.T) {
+	srv, dial := forwardServer(t)
+	client := sharedClient(t, dial)
+	waited := make(chan struct{})
+	go func() {
+		ignoreErr(client.Wait())
+		close(waited)
+	}()
+	acquire := func(context.Context) (*ssh.Client, error) { return client, nil }
+	r := startSharedRunner(t, model.Forward{Kind: "R", Listen: freeAddr(t), Target: echoServer(t)}, acquire)
+
+	srv.FreezeConnections() // cancel-tcpip-forward больше не получит ответа
+	done := make(chan struct{})
+	go func() {
+		r.Stop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(forwardDialTimeout + time.Second):
+		srv.DropConnections() // отпускаем зависший Stop, чтобы Cleanup завершился
+		<-done
+		t.Fatal("Stop takes longer than forwardDialTimeout on a frozen server")
+	}
+	if st := r.State(); st.Status != "stopped" {
+		t.Fatalf("state after Stop = %+v", st)
+	}
+	select {
+	case <-waited:
+		t.Fatal("shared client was closed by Stop")
+	default:
+	}
+}
+
+func TestSharedRunnerFinalErrorFromAcquire(t *testing.T) {
+	srv, dial := forwardServer(t)
+	var (
+		mu    sync.Mutex
+		calls int
+	)
+	acquire := func(ctx context.Context) (*ssh.Client, error) {
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		if n > 1 {
+			return nil, fmt.Errorf("%w: host example", ErrHostKeyChanged)
+		}
+		return dial(ctx)
+	}
+	listen := freeAddr(t)
+	r := startSharedRunner(t, model.Forward{Kind: "L", Listen: listen, Target: echoServer(t)}, acquire)
+	drainEvents(r)
+
+	srv.DropConnections()
+	waitEvent(t, r, "error")
+	time.Sleep(100 * time.Millisecond) // acquire с нулевой паузой успел бы вызваться ещё много раз
+	mu.Lock()
+	n := calls
+	mu.Unlock()
+	if n != 2 {
+		t.Fatalf("acquire called %d times, want 2", n)
+	}
+	if st := r.State(); st.Status != "error" {
+		t.Fatalf("state %+v", st)
+	}
+	ln, err := net.Listen("tcp", listen)
+	if err != nil {
+		t.Fatalf("local port still busy: %v", err)
+	}
+	ignoreErr(ln.Close())
+}
