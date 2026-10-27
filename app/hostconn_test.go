@@ -466,17 +466,18 @@ func TestHostConnStaleOnHostEdit(t *testing.T) {
 
 func TestHostConnCloseDuringReconnect(t *testing.T) {
 	s := newEncryptedHostConnApp(t)
-	s.hcBackoff = func(int) time.Duration { return 10 * time.Second }
+	s.hcBackoff = func(int) time.Duration { return 20 * time.Millisecond }
 	c := mustConn(t, s)
 	fw := &fwdRun{}
 	c.join(fw)
 	cl := loginWithPassphrase(t, c, fw, testAsker(s, "t1", "srv"), s, "t1")
 	pass, _ := c.secretsForTest()
 
-	// The reconnect loop runs and waits in its pause.
+	// The server goes away: its port refuses, so the reconnect loop keeps failing.
+	s.srv.StopListening()
 	s.srv.DropConnections()
 	waitClosed(t, cl)
-	waitConnState(t, c, "the reconnect", func(st HostConnStateDTO) bool { return st.Status == "connecting" && st.Asker == "forwards" })
+	waitConnState(t, c, "a failed reconnect", func(st HostConnStateDTO) bool { return st.Error != "" })
 
 	start := time.Now()
 	s.closeAllHostConns()
@@ -676,5 +677,96 @@ func TestHostConnLeaveDuringReconnectHandsOverToSession(t *testing.T) {
 	}
 	if n := s.srv.Accepted(); n != 2 {
 		t.Fatalf("server accepted %d connections, want 2", n)
+	}
+}
+
+func TestHostConnLeaveWithOnlyForwardWaiterDoesNotHandOver(t *testing.T) {
+	s := newHostConnApp(t, sshtest.Opts{Password: "s3cret"}, false)
+	s.hcBackoff = func(int) time.Duration { return 10 * time.Second }
+	s.fwdHostGroup(s.hostID).out.Attach()
+	c := mustConn(t, s)
+	fw, sess := &fwdRun{}, &session{}
+	c.join(fw)
+	c.join(sess) // a console on the connection that is not waiting for a login
+	defer c.leave(sess)
+	ch := acquireAsync(context.Background(), c, fw, s.forwardsAsker(s.hostID))
+	s.waitGroupData(t, "Пароль alice@", 1)
+	s.answerGroup(t, "s3cret")
+	r := waitAcquired(t, ch)
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	_, pw := c.secretsForTest()
+
+	s.srv.DropConnections()
+	waitClosed(t, r.client)
+	waitConnState(t, c, "the reconnect", func(st HostConnStateDTO) bool { return st.Status == "connecting" && st.Asker == "forwards" })
+	// The forward's runner waits for the reconnect; it is stopped, and leaves before its acquire
+	// has seen its own context end.
+	ch = acquireAsync(context.Background(), c, fw, s.forwardsAsker(s.hostID))
+	waitConnState(t, c, "the runner waiting", func(HostConnStateDTO) bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.att != nil && len(c.att.waiting) == 1
+	})
+	c.leave(fw)
+	if r := waitAcquired(t, ch); r.err == nil {
+		t.Fatal("the stopped forward got a client")
+	}
+	time.Sleep(200 * time.Millisecond)
+	if n := s.srv.Accepted(); n != 1 {
+		t.Fatalf("server accepted %d connections: a login ran for the stopped forward", n)
+	}
+	if p, _ := c.secretsForTest(); p != nil || !zeroBytes(pw) {
+		t.Fatalf("password kept: %q, buffer %q", p, pw)
+	}
+}
+
+func TestHostConnCancelledLoginKeepsNoSecret(t *testing.T) {
+	for _, last := range []bool{false, true} {
+		s := newHostConnApp(t, sshtest.Opts{}, true)
+		c := mustConn(t, s)
+		fw, sess := &fwdRun{}, &session{}
+		c.join(fw)
+		if !last {
+			c.join(sess)
+		}
+		// A reconnect whose dial is about to be accepted while its last forward leaves.
+		ctx, cancel := context.WithCancel(context.Background())
+		att := &loginAttempt{ask: s.forwardsAsker(s.hostID), loop: true, ctx: ctx, cancel: cancel, done: make(chan struct{}), keep: true}
+		c.mu.Lock()
+		c.att = att
+		c.mu.Unlock()
+		c.leave(fw)
+		c.remember(att, &c.password, []byte("late"), "")
+		if _, p := c.secretsForTest(); p != nil {
+			t.Fatalf("last user %v: a secret accepted after the leave was kept: %q", last, p)
+		}
+		if !last {
+			c.leave(sess)
+		}
+	}
+}
+
+func TestHostConnAcquireAfterLeaveOnStaleConnCancels(t *testing.T) {
+	s := newHostConnApp(t, sshtest.Opts{}, true)
+	old := mustConn(t, s)
+	fw := &fwdRun{}
+	old.join(fw)
+	if _, err := old.acquire(context.Background(), fw, s.forwardsAsker(s.hostID)); err != nil {
+		t.Fatal(err)
+	}
+	s.editHost(t, func(h *model.Host) { h.User = "bob" })
+	cur := mustConn(t, s) // old goes stale
+	old.leave(fw)         // the forward stops while its runner is about to acquire again
+
+	if _, err := old.acquire(context.Background(), fw, s.forwardsAsker(s.hostID)); !errors.Is(err, sshclient.ErrCancelled) {
+		t.Fatalf("acquire of a user that left: %v", err)
+	}
+	if st := cur.state(); st.Status != "none" {
+		t.Fatalf("a login started on the current connection for a non-member: %+v", st)
+	}
+	if n := s.srv.Accepted(); n != 1 {
+		t.Fatalf("server accepted %d connections, want 1", n)
 	}
 }

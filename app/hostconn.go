@@ -133,19 +133,21 @@ func (a *App) joinHostConn(hostID string, u any) (*hostConn, error) {
 	return c, nil
 }
 
-// moveToCurrent moves u from the stale connection old to the host's current one.
+// moveToCurrent moves u from the stale connection old to the host's current one. A u that is no
+// longer on old (it left meanwhile) is not moved, and its acquire ends with ErrCancelled.
 func (a *App) moveToCurrent(old *hostConn, u any) (*hostConn, error) {
 	p, err := a.hostParamsOf(old.hostID)
 	if err != nil {
 		return nil, err
 	}
 	a.hcMu.Lock()
-	c := a.currentConnLocked(old.hostID, p)
-	var drop *ssh.Client
-	if a.hcUsers[u] == old {
-		drop = old.leaveLocked(u)
-		c.joinLocked(u)
+	if a.hcUsers[u] != old {
+		a.hcMu.Unlock()
+		return nil, sshclient.ErrCancelled
 	}
+	c := a.currentConnLocked(old.hostID, p)
+	drop := old.leaveLocked(u)
+	c.joinLocked(u)
 	a.hcMu.Unlock()
 	closeClient(drop)
 	return c, nil
@@ -231,6 +233,7 @@ func (c *hostConn) leave(u any) {
 // leaveLocked removes u. The last user closes the client, stops the login or reconnect and wipes
 // the secrets; the connection leaves a.hostConns. When the last forward leaves a reconnect, the
 // reconnect stops; sessions waiting for it get a login of their own, which may use the secrets.
+// Waiters through the forwards group do not count: they are forwards that are leaving too.
 // It returns the client for the caller to close outside the locks; the caller holds hcMu.
 func (c *hostConn) leaveLocked(u any) *ssh.Client {
 	a := c.a
@@ -249,12 +252,12 @@ func (c *hostConn) leaveLocked(u any) *ssh.Client {
 		return c.idleLocked()
 	case c.att != nil && c.att.loop && !c.hasForwardsLocked():
 		att := c.att
-		c.att = nil
-		if len(att.waiting) > 0 {
+		if slices.ContainsFunc(att.waiting, func(w *connAsker) bool { return w.label != "" }) {
 			att.handover = true
 		} else {
-			c.forgetLocked()
+			c.forgetLocked() // while c.att is att: a secret its dial still accepts is not kept
 		}
+		c.att = nil
 		att.cancel()
 		c.setLocked(HostConnStateDTO{Status: hostConnNone})
 	}
@@ -567,13 +570,13 @@ func (c *hostConn) dropLocked(cl *ssh.Client) {
 // idleLocked stops the login, wipes the secrets and returns the client for the caller to close
 // outside mu. The caller holds mu.
 func (c *hostConn) idleLocked() *ssh.Client {
+	c.forgetLocked() // first, while c.att is set: a secret its dial still accepts is not kept
 	if c.att != nil {
 		c.att.cancel()
 		c.att = nil
 	}
 	drop := c.client
 	c.client, c.dead, c.retries = nil, nil, 0
-	c.forgetLocked()
 	c.setLocked(HostConnStateDTO{Status: hostConnNone})
 	return drop
 }
