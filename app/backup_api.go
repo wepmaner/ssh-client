@@ -184,7 +184,6 @@ func (a *App) VaultRestore(path, password string) error {
 	a.stopAllForwards()
 	a.closeAllHostConns()
 	defer a.reopenHostConns()
-	a.dropAllFwdHostGroups()
 
 	vaultPath := filepath.Join(dir, vaultFile)
 	install := func() error {
@@ -201,6 +200,9 @@ func (a *App) VaultRestore(path, password string) error {
 		log.Printf("vault restore: %v", err)
 		return errors.New("Не удалось восстановить хранилище, текущее не изменено") //nolint:staticcheck // ST1005: Russian UI text
 	}
+	// The forwards groups belong to the old hosts; dropped only now, so a failed restore keeps the
+	// attached groups of the vault that stays.
+	a.dropAllFwdHostGroups()
 	a.setVault(b, store.NewStore(b), nil)
 	return nil
 }

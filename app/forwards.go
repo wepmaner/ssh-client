@@ -90,20 +90,31 @@ func (a *App) fwdEntryLocked(id string) *fwdEntry {
 
 // startForward starts f unless it is already connecting or running. It returns at once: the login,
 // its questions (in the host's forwards group) and the outcome arrive as events.
-func (a *App) startForward(f model.Forward) { a.launchForward(f, false) }
+// gen is the vault generation f was read from (a.refs.Load() before the read): a forward of a
+// vault that a restore replaced meanwhile is refused with errRestoring.
+func (a *App) startForward(gen *vaultRefs, f model.Forward) error { return a.launchForward(gen, f, false) }
 
 // restartForward replaces the forward's run with a new one for f (ForwardSave changed its kind,
 // ports or host). The new run joins its connection before the old one leaves, so a forward that is
 // the only user of the connection keeps it. When it returns the old port is free.
-func (a *App) restartForward(f model.Forward) { a.launchForward(f, true) }
+func (a *App) restartForward(gen *vaultRefs, f model.Forward) error {
+	return a.launchForward(gen, f, true)
+}
 
-func (a *App) launchForward(f model.Forward, restart bool) {
+func (a *App) launchForward(gen *vaultRefs, f model.Forward, restart bool) error {
 	a.fwdMu.Lock()
+	// Checked under fwdMu: a restore sets restoring before its stopAllForwards takes fwdMu and
+	// publishes the new generation before clearing it, so a run either is stopped by the restore
+	// or sees the flag or the new generation here.
+	if a.restoring.Load() || a.refs.Load() != gen {
+		a.fwdMu.Unlock()
+		return errRestoring
+	}
 	e := a.fwdEntryLocked(f.ID)
 	prev := e.run
 	if !restart && prev != nil && prev.active() {
 		a.fwdMu.Unlock()
-		return
+		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	run := &fwdRun{cancel: cancel, done: make(chan struct{})}
@@ -139,6 +150,7 @@ func (a *App) launchForward(f model.Forward, restart bool) {
 		wg.Wait()
 		close(run.done)
 	}()
+	return nil
 }
 
 // forwardAcquire is the runner's source of the shared client: the client of the host's connection,
@@ -232,12 +244,15 @@ func (a *App) forwardActive(id string) bool {
 // autostartForwards starts every AutoStart forward that is not running yet. Those of one host share
 // its connection and its one login.
 func (a *App) autostartForwards() {
+	gen := a.refs.Load()
 	if !a.storeUnlocked() {
 		return
 	}
 	for _, f := range a.storeRef().Forwards() {
 		if f.AutoStart {
-			a.startForward(f)
+			if a.startForward(gen, f) != nil {
+				return // a restore replaced the vault
+			}
 		}
 	}
 }

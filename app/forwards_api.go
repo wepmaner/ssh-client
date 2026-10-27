@@ -152,6 +152,7 @@ func endpointChanged(x, y model.Forward) bool {
 // Kind, HostID, Listen or Target changed, on the same connection when the host stays; a forward in
 // error with a changed endpoint becomes stopped.
 func (a *App) ForwardSave(in ForwardDTO) (ForwardDTO, error) {
+	gen := a.refs.Load()
 	if !a.storeUnlocked() {
 		return ForwardDTO{}, errVaultLocked
 	}
@@ -170,7 +171,9 @@ func (a *App) ForwardSave(in ForwardDTO) (ForwardDTO, error) {
 	}
 	if existed && endpointChanged(old, saved) {
 		if a.forwardActive(saved.ID) {
-			a.restartForward(saved)
+			if err := a.restartForward(gen, saved); err != nil {
+				return ForwardDTO{}, err
+			}
 		} else {
 			a.stopForward(saved.ID)
 		}
@@ -197,6 +200,7 @@ func (a *App) ForwardDelete(id string) error {
 // connecting or running. Progress and errors (a busy port, a failed login) arrive as fwd:state:<id>
 // events; the login questions are asked in the host's forwards group (fwdhost:data:<hostID>).
 func (a *App) ForwardStart(id string) error {
+	gen := a.refs.Load()
 	if a.restoring.Load() {
 		return errRestoring
 	}
@@ -207,8 +211,7 @@ func (a *App) ForwardStart(id string) error {
 	if err != nil {
 		return err
 	}
-	a.startForward(f)
-	return nil
+	return a.startForward(gen, f)
 }
 
 // ForwardStop stops the forward; when it returns the local port is free. The host's connection and

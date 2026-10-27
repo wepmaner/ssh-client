@@ -251,3 +251,72 @@ func TestVaultCountsSeesCorruptFile(t *testing.T) {
 		t.Fatalf("counts %+v", c)
 	}
 }
+
+// TestFailedRestoreKeepsForwardsGroups: a restore that fails at the install leaves the old vault
+// live with its attached forwards groups, and forwards start on it as before.
+func TestFailedRestoreKeepsForwardsGroups(t *testing.T) {
+	s := newForwardsApp(t, sshtest.Opts{}, true)
+	backup := filepath.Join(t.TempDir(), "copy.vault")
+	if err := s.writeBackup(backup, "backup pass"); err != nil {
+		t.Fatal(err)
+	}
+	f := s.saveL(t, freePort(t), echoServer(t), false) // attaches the host's group
+	g := s.fwdHostGroup(s.hostID)
+	dir, err := appdir.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A directory in the way of the temporary file makes the install fail.
+	if err := os.Mkdir(filepath.Join(dir, vaultFile+".restore.tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before := vaultBytes(t)
+	if err := s.VaultRestore(backup, "backup pass"); err == nil {
+		t.Fatal("expected the install to fail")
+	}
+	if !bytes.Equal(vaultBytes(t), before) {
+		t.Fatal("a failed restore changed vault.json")
+	}
+	if s.fwdHostGroup(s.hostID) != g {
+		t.Fatal("a failed restore dropped the forwards group")
+	}
+	g.out.mu.Lock()
+	attached := g.out.attached
+	g.out.mu.Unlock()
+	if !attached {
+		t.Fatal("the group is no longer attached")
+	}
+	if err := s.ForwardStart(f.ID); err != nil {
+		t.Fatal(err)
+	}
+	s.ev.waitFwdState(t, f.ID, "running", 0, 5*time.Second)
+	roundTrip(t, f.Listen)
+}
+
+// TestLaunchForwardRefusesAReplacedVault: a forward read from a vault generation that a restore
+// replaced is not launched, so no orphan run outlives the old store.
+func TestLaunchForwardRefusesAReplacedVault(t *testing.T) {
+	s := newForwardsApp(t, sshtest.Opts{}, true)
+	f := s.saveL(t, freePort(t), echoServer(t), false)
+	mf, err := s.findForward(f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := s.refs.Load()
+	r := s.current()
+	s.setVault(r.vault, r.store, nil) // a new generation, as a restore publishes
+	if err := s.startForward(stale, mf); err != errRestoring {
+		t.Fatalf("stale generation: %v", err)
+	}
+	if s.currentRun(f.ID) != nil {
+		t.Fatal("a run was launched for the replaced vault")
+	}
+	s.restoring.Store(true)
+	if err := s.startForward(s.refs.Load(), mf); err != errRestoring {
+		t.Fatalf("during a restore: %v", err)
+	}
+	s.restoring.Store(false)
+	if err := s.ForwardStart(f.ID); err != nil {
+		t.Fatal(err)
+	}
+}

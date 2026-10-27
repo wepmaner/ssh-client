@@ -96,6 +96,7 @@ func (a *App) forwardsOfHost(hostID string) ([]model.Forward, error) {
 // ForwardStartAll starts the host's stopped and failed forwards and returns at once. They share the
 // host's connection: its login asks once, in the host's forwards group.
 func (a *App) ForwardStartAll(hostID string) error {
+	gen := a.refs.Load()
 	if a.restoring.Load() {
 		return errRestoring
 	}
@@ -104,7 +105,9 @@ func (a *App) ForwardStartAll(hostID string) error {
 		return err
 	}
 	for _, f := range fwds {
-		a.startForward(f)
+		if err := a.startForward(gen, f); err != nil {
+			return err
+		}
 	}
 	return nil
 }
