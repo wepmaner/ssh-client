@@ -6,6 +6,7 @@
     ImportSSHConfig,
     OpenDataFolder,
     SaveSettings,
+    VaultBackup,
     VaultRemovePassword,
     Version,
     errorText,
@@ -15,6 +16,8 @@
   import { refreshHosts, refreshSettings, refreshVault, settings, toast, vault } from '../stores.svelte'
   import { fieldError } from '../hosts/format'
   import { CANCELLED } from '../keys/format'
+  import BackupDialog from '../backup/BackupDialog.svelte'
+  import RestoreButton from '../backup/RestoreButton.svelte'
   import Button from '../ui/Button.svelte'
   import PasswordDialog from '../ui/PasswordDialog.svelte'
   import VaultDialog from './VaultDialog.svelte'
@@ -32,6 +35,8 @@
   let encrypting = $state(false)
   let decrypting = $state(false)
   let importing = $state(false)
+  let backingUp = $state(false)
+  let backupBusy = $state(false)
   let warnings = $state<string[]>([])
 
   onMount(() => {
@@ -89,6 +94,26 @@
       toast('Хосты экспортированы')
     } catch (e) {
       if (errorText(e) !== CANCELLED) toast(errorText(e))
+    }
+  }
+
+  const backupSaved = (path: string) => toast(`Резервная копия сохранена: ${path.split(/[\\/]/).pop()}`)
+
+  /** A password vault is copied under its own password at once; without one, the dialog asks a password for the copy. */
+  async function backup(): Promise<void> {
+    if (!vault.has_password) {
+      backingUp = true
+      return
+    }
+    if (backupBusy) return
+    backupBusy = true
+    try {
+      const path = await VaultBackup('')
+      if (path) backupSaved(path)
+    } catch (e) {
+      toast(errorText(e))
+    } finally {
+      backupBusy = false
     }
   }
 
@@ -158,6 +183,12 @@
         <Button variant="outline" onclick={() => (encrypting = true)}>Включить шифрование</Button>
       {/if}
     </div>
+    {#if !vault.has_password}
+      <p class="hint" role="note">
+        Без пароля хранилище открывается только этой учётной записью Windows. Чтобы не потерять ключи при
+        переустановке, включите пароль или сделайте резервную копию.
+      </p>
+    {/if}
     <div class="grid">
       <label class="field">
         <span>Блокировать после бездействия</span>
@@ -176,6 +207,10 @@
     {#if !vault.has_password}
       <p class="hint">Блокировка доступна, когда хранилище зашифровано паролем.</p>
     {/if}
+    <div class="row">
+      <Button variant="outline" disabled={backupBusy} onclick={backup}>Сделать резервную копию</Button>
+      <RestoreButton />
+    </div>
     <div class="row">
       <Button variant="outline" onclick={openFolder}>Открыть папку с данными</Button>
       <Button variant="outline" onclick={exportHosts}>Экспорт хостов в файл</Button>
@@ -200,6 +235,8 @@
 </div>
 
 <VaultDialog open={encrypting} onclose={() => (encrypting = false)} onenabled={refreshVault} />
+
+<BackupDialog open={backingUp} onclose={() => (backingUp = false)} onsaved={backupSaved} />
 
 <PasswordDialog
   open={decrypting}
@@ -280,6 +317,7 @@
   }
   .status {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 12px;
     padding: 10px 12px;
@@ -303,7 +341,7 @@
   }
   .status-text {
     display: flex;
-    flex: 1;
+    flex: 1 1 240px;
     flex-direction: column;
     gap: 2px;
     min-width: 0;

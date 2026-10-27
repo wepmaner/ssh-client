@@ -1,5 +1,6 @@
 <script lang="ts">
   import { VaultResetCorrupt, errorText } from '../api'
+  import RestoreButton from '../backup/RestoreButton.svelte'
   import Button from '../ui/Button.svelte'
 
   let { error, onreset }: { error: string; onreset: () => void } = $props()
@@ -27,7 +28,10 @@
     <p>{error}</p>
     <p class="note">Старый файл будет сохранён как vault.json.corrupt</p>
     {#if failure}<p class="fail" role="alert">{failure}</p>{/if}
-    <Button variant="primary" disabled={busy} onclick={reset}>Начать заново</Button>
+    <div class="actions">
+      <Button variant="primary" disabled={busy} onclick={reset}>Начать заново</Button>
+      <RestoreButton disabled={busy} />
+    </div>
   </div>
 </main>
 
@@ -54,6 +58,12 @@
   .note {
     margin-bottom: 20px;
     color: var(--muted);
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
   }
   .fail {
     color: var(--error);

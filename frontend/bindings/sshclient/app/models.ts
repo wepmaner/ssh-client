@@ -407,11 +407,12 @@ export class SessionDTO {
 }
 
 /**
- * VaultCountsDTO is the amount of records an encryption will cover.
+ * VaultCountsDTO is the amount of records an encryption will cover or a restore will replace.
  */
 export class VaultCountsDTO {
     "keys": number;
     "hosts": number;
+    "forwards": number;
 
     /** Creates a new VaultCountsDTO instance. */
     constructor($$source: Partial<VaultCountsDTO> = {}) {
@@ -420,6 +421,9 @@ export class VaultCountsDTO {
         }
         if (!("hosts" in $$source)) {
             this["hosts"] = 0;
+        }
+        if (!("forwards" in $$source)) {
+            this["forwards"] = 0;
         }
 
         Object.assign(this, $$source);

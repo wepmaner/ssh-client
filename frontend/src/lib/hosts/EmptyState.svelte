@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RestoreButton from '../backup/RestoreButton.svelte'
   import Button from '../ui/Button.svelte'
 
   interface Props {
@@ -27,6 +28,7 @@
     <div class="actions">
       <Button variant="primary" onclick={onadd}>Добавить хост</Button>
       <Button variant="outline" onclick={oncreatekey}>Сначала создать ключ</Button>
+      <RestoreButton variant="ghost" />
     </div>
   </div>
 </div>

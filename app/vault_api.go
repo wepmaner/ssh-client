@@ -30,10 +30,11 @@ type VaultStateDTO struct {
 	Error       string `json:"error"`
 }
 
-// VaultCountsDTO is the amount of records an encryption will cover.
+// VaultCountsDTO is the amount of records an encryption will cover or a restore will replace.
 type VaultCountsDTO struct {
-	Keys  int `json:"keys"`
-	Hosts int `json:"hosts"`
+	Keys     int `json:"keys"`
+	Hosts    int `json:"hosts"`
+	Forwards int `json:"forwards"`
 }
 
 // VaultState reports the vault state for the startup screen choice.
@@ -136,11 +137,11 @@ func (a *App) verifyPassword(password string) error {
 	return nil
 }
 
-// VaultCounts returns how many keys and hosts are stored.
+// VaultCounts returns how many keys, hosts and forwards are stored.
 func (a *App) VaultCounts() VaultCountsDTO {
 	if !a.storeUnlocked() {
 		return VaultCountsDTO{}
 	}
 	s := a.storeRef()
-	return VaultCountsDTO{Keys: len(s.KeyMetas()), Hosts: len(s.Hosts())}
+	return VaultCountsDTO{Keys: len(s.KeyMetas()), Hosts: len(s.Hosts()), Forwards: len(s.Forwards())}
 }

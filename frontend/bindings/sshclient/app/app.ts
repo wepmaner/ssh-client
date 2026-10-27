@@ -361,7 +361,17 @@ export function TrustAnswer(id: string, trust: boolean): $CancellablePromise<voi
 }
 
 /**
- * VaultCounts returns how many keys and hosts are stored.
+ * VaultBackup saves a password-encrypted copy of the vault to a file chosen in the system
+ * dialog and returns its path ("" when the dialog was cancelled). A vault with a password is
+ * copied under that password and password must be empty; a vault on DPAPI needs password, which
+ * protects only the copy.
+ */
+export function VaultBackup(password: string): $CancellablePromise<string> {
+    return $Call.ByID(3244062751, password);
+}
+
+/**
+ * VaultCounts returns how many keys, hosts and forwards are stored.
  */
 export function VaultCounts(): $CancellablePromise<$models.VaultCountsDTO> {
     return $Call.ByID(3202868421).then(($result: any) => {
@@ -392,6 +402,25 @@ export function VaultRemovePassword(password: string): $CancellablePromise<void>
  */
 export function VaultResetCorrupt(): $CancellablePromise<void> {
     return $Call.ByID(3125748029);
+}
+
+/**
+ * VaultRestore replaces the vault with the backup at path. The password is checked first and a
+ * wrong one changes nothing. Then every session, forward and host connection is closed, the
+ * current vault.json is kept as vault.before-restore-<time>.json, the backup becomes vault.json
+ * and opens unlocked; its password stays the vault password. It works on an open vault and on a
+ * corrupt one, not on a locked one.
+ */
+export function VaultRestore(path: string, password: string): $CancellablePromise<void> {
+    return $Call.ByID(3031093009, path, password);
+}
+
+/**
+ * VaultRestorePick asks for a backup file in the system dialog and returns its path ("" when
+ * cancelled). A file that is not a backup is refused before the password is asked.
+ */
+export function VaultRestorePick(): $CancellablePromise<string> {
+    return $Call.ByID(3517664756);
 }
 
 /**

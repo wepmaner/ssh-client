@@ -15,6 +15,9 @@ const api = vi.hoisted(() => ({
   VaultSetPassword: vi.fn(),
   VaultRemovePassword: vi.fn(),
   VaultState: vi.fn(),
+  VaultBackup: vi.fn(() => Promise.resolve('C:\\Users\\me\\sshclient-backup-2026-10-27.vault')),
+  VaultRestorePick: vi.fn(() => Promise.resolve('')),
+  VaultRestore: vi.fn(() => Promise.resolve()),
 }))
 vi.mock('../api', async () => {
   const model = await import('../../../bindings/sshclient/internal/model/models')
@@ -103,5 +106,41 @@ describe('SettingsView', () => {
     expect(api.HostsExport).toHaveBeenCalled()
     await fireEvent.click(screen.getByRole('button', { name: 'Открыть папку с данными' }))
     expect(api.OpenDataFolder).toHaveBeenCalled()
+  })
+  it('warns about the Windows-only protection only without a password', async () => {
+    const warning = /Без пароля хранилище открывается только этой учётной записью Windows/
+    render(SettingsView)
+    expect(screen.getByText(warning)).toBeTruthy()
+    vault.has_password = true
+    await waitFor(() => expect(screen.queryByText(warning)).toBeNull())
+  })
+
+  it('asks a password for the backup of a vault without one', async () => {
+    render(SettingsView)
+    await fireEvent.click(screen.getByRole('button', { name: 'Сделать резервную копию' }))
+    expect(api.VaultBackup).not.toHaveBeenCalled()
+    await fireEvent.input(screen.getByLabelText('Пароль копии'), { target: { value: 'backup pass' } })
+    await fireEvent.input(screen.getByLabelText('Ещё раз'), { target: { value: 'backup pass' } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Сохранить копию' }))
+    expect(api.VaultBackup).toHaveBeenCalledWith('backup pass')
+    await waitFor(() => expect(toastState.message).toBe('Резервная копия сохранена: sshclient-backup-2026-10-27.vault'))
+    await waitFor(() => expect(screen.queryByLabelText('Пароль копии')).toBeNull())
+  })
+
+  it('backs up a password vault without asking', async () => {
+    vault.has_password = true
+    render(SettingsView)
+    await fireEvent.click(screen.getByRole('button', { name: 'Сделать резервную копию' }))
+    expect(api.VaultBackup).toHaveBeenCalledWith('')
+    expect(screen.queryByLabelText('Пароль копии')).toBeNull()
+    await waitFor(() => expect(toastState.message).toBe('Резервная копия сохранена: sshclient-backup-2026-10-27.vault'))
+  })
+
+  it('refuses a file that is not a backup before asking the password', async () => {
+    api.VaultRestorePick.mockRejectedValueOnce('Это не резервная копия sshclient')
+    render(SettingsView)
+    await fireEvent.click(screen.getByRole('button', { name: 'Восстановить из копии' }))
+    await waitFor(() => expect(toastState.message).toBe('Это не резервная копия sshclient'))
+    expect(screen.queryByLabelText('Пароль копии')).toBeNull()
   })
 })
