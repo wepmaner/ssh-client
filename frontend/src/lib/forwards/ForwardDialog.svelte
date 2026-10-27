@@ -87,9 +87,15 @@
     const port = listen.slice(listen.lastIndexOf(':') + 1)
     const here = /^\d+$/.test(listen) ? `localhost:${listen}` : listen
     const target = form.target.trim() || '…'
-    if (form.kind === 'D') return { parts: [here, hostName], arrows: ['→'], note: 'SOCKS5' }
-    if (form.kind === 'R') return { parts: [target, hostName, `порт ${port} на сервере`], arrows: ['←', '←'], note: '' }
-    return { parts: [here, hostName, target], arrows: ['→', '→'], note: '' }
+    // An empty part (a host that is gone) is skipped together with its arrow.
+    const chain = (parts: string[], arrow: string, note = '') => ({
+      parts: parts.map((text, i) => ({ text, via: i === 1 })).filter((p) => p.text),
+      arrow,
+      note,
+    })
+    if (form.kind === 'D') return chain([here, hostName], '→', 'SOCKS5')
+    if (form.kind === 'R') return chain([target, hostName, `порт ${port} на сервере`], '←')
+    return chain([here, hostName, target], '→')
   })
   /** For a copy: the original is named in the subtitle. */
   const copyOf = $derived(!forward && template ? template.name : '')
@@ -225,8 +231,8 @@
     {#if preview}
       <div class="preview" data-testid="route-preview">
         {#each preview.parts as part, i (i)}
-          {#if i > 0}<span class="arrow" aria-hidden="true">{preview.arrows[i - 1]}</span>{/if}
-          <span class:via={i === 1}>{part}</span>
+          {#if i > 0}<span class="arrow" aria-hidden="true">{preview.arrow}</span>{/if}
+          <span class:via={part.via}>{part.text}</span>
         {/each}
         {#if preview.note}<span class="via">({preview.note})</span>{/if}
       </div>

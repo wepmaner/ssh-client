@@ -179,4 +179,10 @@ describe('ForwardDialog', () => {
     await fill('Порт здесь', '1080')
     expect(preview()).toBe('localhost:1080 → prod-1 (SOCKS5)')
   })
+
+  it('leaves out the host from the route when it is gone', async () => {
+    setup({ ...saved, host_id: 'gone' })
+    await fill('Куда ведёт', 'db:1')
+    expect(preview()).toBe('localhost:5432 → db:1')
+  })
 })

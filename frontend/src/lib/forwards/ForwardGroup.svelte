@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, untrack } from 'svelte'
+  import { onDestroy, tick, untrack } from 'svelte'
   import type { app } from '../api'
   import { hosts } from '../stores.svelte'
   import { hostAsksTrust } from '../trust.svelte'
@@ -58,28 +58,54 @@
   let termOpen = $state(false)
   let doneMounted = $state(false)
   let doneOpen = $state(false)
+  /** Counts logins: a new one gets a fresh mini-terminal, never the lines of the previous one. */
+  let promptKey = $state(0)
   let hadPrompt = false
+  let wasPrompting = false
   let prevStatus = untrack(() => host.status)
-  const timers = new Set<ReturnType<typeof setTimeout>>()
-  function later(fn: () => void, ms: number): void {
-    const t = setTimeout(() => {
-      timers.delete(t)
-      fn()
-    }, ms)
-    timers.add(t)
+  let termTimer: ReturnType<typeof setTimeout> | undefined
+  const doneTimers: ReturnType<typeof setTimeout>[] = []
+  let frames: number[] = []
+
+  function clearDone(): void {
+    doneTimers.splice(0).forEach(clearTimeout)
+    frames.forEach(cancelAnimationFrame)
+    frames = []
   }
-  onDestroy(() => timers.forEach(clearTimeout))
+  /** Runs fn after the closed state was painted, so that the CSS transition has something to start from. */
+  function afterPaint(fn: () => void): void {
+    void tick().then(() => {
+      const a = requestAnimationFrame(() => {
+        const b = requestAnimationFrame(fn)
+        frames.push(b)
+      })
+      frames.push(a)
+    })
+  }
+  onDestroy(() => {
+    clearTimeout(termTimer)
+    clearDone()
+  })
 
   $effect(() => {
     if (prompting) {
+      clearTimeout(termTimer)
+      if (!wasPrompting) promptKey++
+      wasPrompting = true
+      // A new login: the line of the previous one has no business here any more.
+      clearDone()
+      doneMounted = false
+      doneOpen = false
       termMounted = true
       termOpen = true
       hadPrompt = true
-    } else if (untrack(() => termMounted)) {
-      termOpen = false
-      later(() => {
-        if (!prompting) termMounted = false
-      }, COLLAPSE_MS)
+    } else {
+      wasPrompting = false
+      if (untrack(() => termMounted)) {
+        termOpen = false
+        clearTimeout(termTimer)
+        termTimer = setTimeout(() => (termMounted = false), COLLAPSE_MS)
+      }
     }
   })
 
@@ -88,10 +114,12 @@
     const prev = prevStatus
     prevStatus = status
     if (prev === 'connecting' && status === 'connected' && hadPrompt) {
+      clearDone()
+      doneOpen = false
       doneMounted = true
-      doneOpen = true
-      later(() => (doneOpen = false), DONE_MS)
-      later(() => (doneMounted = false), DONE_MS + COLLAPSE_MS)
+      afterPaint(() => (doneOpen = true))
+      doneTimers.push(setTimeout(() => (doneOpen = false), DONE_MS))
+      doneTimers.push(setTimeout(() => (doneMounted = false), DONE_MS + COLLAPSE_MS))
     }
     if (status !== 'connecting') hadPrompt = false
   })
@@ -146,7 +174,7 @@
   {/if}
   {#if termMounted}
     <div class="collapse" class:open={termOpen}>
-      <div class="inner term"><MiniTerminal hostId={host.host_id} /></div>
+      <div class="inner term">{#key promptKey}<MiniTerminal hostId={host.host_id} />{/key}</div>
     </div>
   {/if}
   {#if doneMounted}
@@ -161,7 +189,7 @@
       </div>
     </div>
   {/if}
-  <div class="list" role="list">
+  <div class="list" class:finishing={termMounted || doneMounted} role="list">
     {#each items as f, i (f.id)}
       <ForwardCard forward={f} index={i} onedit={() => onedit(f)} onduplicate={() => onduplicate(f)} ondelete={() => ondelete(f)} />
     {/each}

@@ -106,19 +106,19 @@ describe('ForwardsView', () => {
 
   it('the switch starts and stops; state events update the row', async () => {
     render(ForwardsView)
-    const sw = within(card('SOCKS')).getByRole('button', { name: 'Запустить SOCKS' })
-    expect(sw.getAttribute('aria-pressed')).toBe('false')
+    const sw = within(card('SOCKS')).getByRole('switch', { name: 'SOCKS' })
+    expect(sw.getAttribute('aria-checked')).toBe('false')
     await fireEvent.click(sw)
     expect(api.ForwardStart).toHaveBeenCalledWith('f2')
-    const on = within(card('Postgres')).getByRole('button', { name: 'Остановить Postgres' })
-    expect(on.getAttribute('aria-pressed')).toBe('true')
+    const on = within(card('Postgres')).getByRole('switch', { name: 'Postgres' })
+    expect(on.getAttribute('aria-checked')).toBe('true')
     await fireEvent.click(on)
     expect(api.ForwardStop).toHaveBeenCalledWith('f1')
     expect(api.ForwardAttach).toHaveBeenCalledWith('f2')
 
     handlers.get('fwd:state:f2')?.({ status: 'running', error: '', conns: 0, retryable: true })
     await vi.waitFor(() => expect(within(card('SOCKS')).getByText('работает')).toBeTruthy())
-    expect(within(card('SOCKS')).getByRole('button', { name: 'Остановить SOCKS' }).getAttribute('aria-pressed')).toBe('true')
+    expect(within(card('SOCKS')).getByRole('switch', { name: 'SOCKS' }).getAttribute('aria-checked')).toBe('true')
   })
 
   it('a starting forward waits for the login while its host asks, then just connects', async () => {
@@ -146,13 +146,13 @@ describe('ForwardsView', () => {
     const changed = 'Ключ сервера prod.example.test изменился'
     handlers.get('fwd:state:f2')?.({ status: 'error', error: changed, detail: '', conns: 0, retryable: false })
     await vi.waitFor(() => expect(within(card('SOCKS')).getByRole('alert').textContent).toBe(changed))
-    const start = within(card('SOCKS')).getByRole('button', { name: 'Запустить SOCKS' }) as HTMLButtonElement
+    const start = within(card('SOCKS')).getByRole('switch', { name: 'SOCKS' }) as HTMLButtonElement
     expect(start.disabled).toBe(true)
     await fireEvent.click(start)
     expect(api.ForwardStart).not.toHaveBeenCalled()
     // An ordinary failure can be started again.
     handlers.get('fwd:state:f2')?.({ status: 'error', error: 'нет сети', detail: '', conns: 0, retryable: true })
-    await vi.waitFor(() => expect((within(card('SOCKS')).getByRole('button', { name: 'Запустить SOCKS' }) as HTMLButtonElement).disabled).toBe(false))
+    await vi.waitFor(() => expect((within(card('SOCKS')).getByRole('switch', { name: 'SOCKS' }) as HTMLButtonElement).disabled).toBe(false))
   })
 
   it('deletes through the menu after confirmation', async () => {

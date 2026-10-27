@@ -77,8 +77,9 @@
     type="button"
     class="sw"
     class:on={active}
-    aria-pressed={active}
-    aria-label="{active ? 'Остановить' : 'Запустить'} {forward.name}"
+    role="switch"
+    aria-checked={active}
+    aria-label={forward.name}
     disabled={blocked}
     title={blocked ? 'Ключ сервера изменился: исправьте known_hosts и перезапустите программу' : undefined}
     onclick={toggle}
@@ -206,7 +207,9 @@
   .dot.running {
     background: var(--ok);
     border-color: var(--ok);
-    /* After a login the dots light up one after another. */
+    /* While the group finishes a login the dots light up one after another. */
+  }
+  :global(.list.finishing) .dot.running {
     transition-delay: calc(var(--i) * 70ms);
   }
   .dot.error {

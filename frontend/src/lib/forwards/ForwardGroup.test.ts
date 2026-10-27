@@ -194,7 +194,7 @@ describe('ForwardGroup', () => {
   it('the switch is disabled for a stopped forward that cannot be retried', async () => {
     await load([host('h1', 'alpha')], [{ ...fwd('f1', 'h1', 'alpha', 'Web'), retryable: false }])
     render(ForwardsView)
-    const sw = screen.getByRole('button', { name: 'Запустить Web' }) as HTMLButtonElement
+    const sw = screen.getByRole('switch', { name: 'Web' }) as HTMLButtonElement
     expect(sw.disabled).toBe(true)
     expect(sw.title).toContain('known_hosts')
     await fireEvent.click(sw)
@@ -216,7 +216,13 @@ describe('ForwardGroup', () => {
 
       state('connected')
       await vi.advanceTimersByTimeAsync(0)
-      expect(screen.getByText(/Вход выполнен. Фраза останется в памяти/)).toBeTruthy()
+      const line = screen.getByText(/Вход выполнен. Фраза останется в памяти/)
+      // It mounts closed and opens after the paint, so that the CSS transition runs.
+      expect(line.closest('.done')?.classList.contains('shown')).toBe(false)
+      await vi.advanceTimersByTimeAsync(100)
+      expect(line.closest('.done')?.classList.contains('shown')).toBe(true)
+      // The dots light up in turn while the group finishes the login.
+      expect(document.querySelector('.list')?.classList.contains('finishing')).toBe(true)
       // The prompt block collapses and is removed after the collapse.
       await vi.advanceTimersByTimeAsync(300)
       expect(screen.queryByTestId('mini-terminal')).toBeNull()
@@ -237,5 +243,32 @@ describe('ForwardGroup', () => {
     handlers.get('fwdhost:state:h1')?.({ status: 'connected', error: '', retryable: true, asker: '', session: '' })
     await vi.waitFor(() => expect(screen.getByText('подключён')).toBeTruthy())
     expect(screen.queryByText(/Вход выполнен/)).toBeNull()
+  })
+
+  it('a second login right after the first is not closed by the timers of the first', async () => {
+    await load([host('h1', 'alpha')], [fwd('f1', 'h1', 'alpha', 'Web', 'starting')])
+    render(ForwardsView)
+    vi.useFakeTimers()
+    try {
+      const state = (status: string) =>
+        handlers.get('fwdhost:state:h1')?.({ status, error: '', retryable: true, asker: 'forwards', session: '' })
+      state('connecting')
+      handlers.get('fwdhost:data:h1')?.(btoa('Password: '))
+      await vi.advanceTimersByTimeAsync(0)
+      state('connected')
+      await vi.advanceTimersByTimeAsync(500)
+      expect(screen.getByText(/Вход выполнен/)).toBeTruthy()
+      // The connection drops and asks again.
+      state('connecting')
+      handlers.get('fwdhost:data:h1')?.(btoa('Password: '))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(screen.queryByText(/Вход выполнен/)).toBeNull()
+      expect(screen.getByTestId('mini-terminal')).toBeTruthy()
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(screen.getByTestId('mini-terminal')).toBeTruthy()
+      expect(document.querySelector('.collapse.open')).not.toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
