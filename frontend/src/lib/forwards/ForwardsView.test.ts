@@ -53,7 +53,7 @@ const list = [
 ]
 
 const hostDTO = { host_id: 'h1', host_name: 'prod-1', status: 'none', error: '', detail: '', retryable: true, asker: '', session: '' }
-const card = (name: string) => screen.getByRole('article', { name })
+const card = (name: string) => screen.getByRole('listitem', { name })
 
 describe('ForwardsView', () => {
   beforeEach(async () => {
@@ -93,28 +93,40 @@ describe('ForwardsView', () => {
     const pg = card('Postgres')
     expect(within(pg).getByText('L')).toBeTruthy()
     expect(pg.textContent).toContain('5432 → localhost:5432')
-    expect(pg.textContent).toContain('prod-1')
-    expect(within(pg).getByText('работает')).toBeTruthy()
-    expect(pg.textContent).toContain('Соединений: 2')
-    expect(card('SOCKS').textContent).toContain('1080 → SOCKS5')
+    expect(within(pg).getByText('работает · 2 соед.')).toBeTruthy()
+    expect(card('SOCKS').textContent).toContain('1080 · SOCKS5')
     expect(within(card('SOCKS')).getByText('остановлен')).toBeTruthy()
+    expect(card('Вебхук').textContent).toContain('9000 ← 127.0.0.1:3000')
     const err = card('Вебхук')
     expect(within(err).getByText('ошибка')).toBeTruthy()
     expect(within(err).getByRole('alert').textContent).toBe('Порт 9000 уже занят другой программой: выберите другой порт или закройте программу, которая его держит')
-    expect(screen.getByText('1 активен · 2 остановлены')).toBeTruthy()
+    expect(screen.getByText('1 из 3 работают')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Пробросы' })).toBeTruthy()
   })
 
-  it('start and stop call the API; state events update the card', async () => {
+  it('the switch starts and stops; state events update the row', async () => {
     render(ForwardsView)
-    await fireEvent.click(within(card('SOCKS')).getByRole('button', { name: 'Запустить' }))
+    const sw = within(card('SOCKS')).getByRole('button', { name: 'Запустить SOCKS' })
+    expect(sw.getAttribute('aria-pressed')).toBe('false')
+    await fireEvent.click(sw)
     expect(api.ForwardStart).toHaveBeenCalledWith('f2')
-    await fireEvent.click(within(card('Postgres')).getByRole('button', { name: 'Остановить' }))
+    const on = within(card('Postgres')).getByRole('button', { name: 'Остановить Postgres' })
+    expect(on.getAttribute('aria-pressed')).toBe('true')
+    await fireEvent.click(on)
     expect(api.ForwardStop).toHaveBeenCalledWith('f1')
     expect(api.ForwardAttach).toHaveBeenCalledWith('f2')
 
     handlers.get('fwd:state:f2')?.({ status: 'running', error: '', conns: 0, retryable: true })
     await vi.waitFor(() => expect(within(card('SOCKS')).getByText('работает')).toBeTruthy())
-    expect(within(card('SOCKS')).getByRole('button', { name: 'Остановить' })).toBeTruthy()
+    expect(within(card('SOCKS')).getByRole('button', { name: 'Остановить SOCKS' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('a starting forward waits for the login while its host asks, then just connects', async () => {
+    render(ForwardsView)
+    handlers.get('fwd:state:f2')?.({ status: 'starting', error: '', conns: 0, retryable: true })
+    await vi.waitFor(() => expect(within(card('SOCKS')).getByText('подключение')).toBeTruthy())
+    handlers.get('fwdhost:state:h1')?.({ status: 'connecting', error: '', retryable: true, asker: 'forwards', session: '' })
+    await vi.waitFor(() => expect(within(card('SOCKS')).getByText('ждёт вход')).toBeTruthy())
   })
 
   it('shows the system text under the Russian error, starting or failed', async () => {
@@ -129,23 +141,23 @@ describe('ForwardsView', () => {
     await vi.waitFor(() => expect(within(card('SOCKS')).queryByText(sys)).toBeNull())
   })
 
-  it('a changed server key disables «Запустить» and keeps the error text', async () => {
+  it('a changed server key disables the switch and keeps the error text', async () => {
     render(ForwardsView)
     const changed = 'Ключ сервера prod.example.test изменился'
     handlers.get('fwd:state:f2')?.({ status: 'error', error: changed, detail: '', conns: 0, retryable: false })
     await vi.waitFor(() => expect(within(card('SOCKS')).getByRole('alert').textContent).toBe(changed))
-    const start = within(card('SOCKS')).getByRole('button', { name: 'Запустить' }) as HTMLButtonElement
+    const start = within(card('SOCKS')).getByRole('button', { name: 'Запустить SOCKS' }) as HTMLButtonElement
     expect(start.disabled).toBe(true)
     await fireEvent.click(start)
     expect(api.ForwardStart).not.toHaveBeenCalled()
     // An ordinary failure can be started again.
     handlers.get('fwd:state:f2')?.({ status: 'error', error: 'нет сети', detail: '', conns: 0, retryable: true })
-    await vi.waitFor(() => expect((within(card('SOCKS')).getByRole('button', { name: 'Запустить' }) as HTMLButtonElement).disabled).toBe(false))
+    await vi.waitFor(() => expect((within(card('SOCKS')).getByRole('button', { name: 'Запустить SOCKS' }) as HTMLButtonElement).disabled).toBe(false))
   })
 
   it('deletes through the menu after confirmation', async () => {
     render(ForwardsView)
-    await fireEvent.click(within(card('Postgres')).getByRole('button', { name: 'Ещё' }))
+    await fireEvent.click(within(card('Postgres')).getByRole('button', { name: /^Ещё/ }))
     expect(screen.getAllByRole('menuitem').map((e) => e.textContent)).toEqual(['Изменить', 'Дублировать', 'Удалить'])
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Удалить' }))
     const dialog = screen.getByRole('dialog')
@@ -155,25 +167,25 @@ describe('ForwardsView', () => {
 
   it('opens the dialog for Изменить with the forward values', async () => {
     render(ForwardsView)
-    await fireEvent.click(within(card('SOCKS')).getByRole('button', { name: 'Ещё' }))
+    await fireEvent.click(within(card('SOCKS')).getByRole('button', { name: /^Ещё/ }))
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Изменить' }))
     expect(screen.getByRole('dialog', { name: 'Изменить проброс' })).toBeTruthy()
-    expect((screen.getByLabelText('Слушать') as HTMLInputElement).value).toBe('1080')
+    expect((screen.getByLabelText('Порт здесь') as HTMLInputElement).value).toBe('1080')
   })
 
   it('card menu has Дублировать and it opens the new forward dialog', async () => {
     render(ForwardsView)
-    await fireEvent.click(within(card('Postgres')).getByRole('button', { name: 'Ещё' }))
+    await fireEvent.click(within(card('Postgres')).getByRole('button', { name: /^Ещё/ }))
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Дублировать' }))
     expect(screen.getByRole('dialog', { name: 'Новый проброс' })).toBeTruthy()
-    expect((screen.getByLabelText('Слушать') as HTMLInputElement).value).toBe('5432')
-    expect((screen.getByLabelText('Назначение') as HTMLInputElement).value).toBe('localhost:5432')
+    expect((screen.getByLabelText('Порт здесь') as HTMLInputElement).value).toBe('5432')
+    expect((screen.getByLabelText('Куда ведёт') as HTMLInputElement).value).toBe('localhost:5432')
     expect((screen.getByLabelText('Название') as HTMLInputElement).value).toBe('')
   })
 
   it('card route shows the bare port', () => {
     render(ForwardsView)
-    expect(card('Postgres').querySelector('.route')?.textContent).toBe('5432 → localhost:5432')
+    expect(card('Postgres').querySelector('[data-testid="route"]')?.textContent).toBe('5432 → localhost:5432')
   })
 
   it('the sidebar dot follows running forwards', async () => {

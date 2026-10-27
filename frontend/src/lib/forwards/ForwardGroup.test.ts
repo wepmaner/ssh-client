@@ -85,8 +85,8 @@ describe('ForwardGroup', () => {
     render(ForwardsView)
     const groups = screen.getAllByRole('region')
     expect(groups.map((g) => g.getAttribute('aria-label'))).toEqual(['alpha', 'beta'])
-    expect(within(groups[0]).getAllByRole('article').map((a) => a.getAttribute('aria-label'))).toEqual(['Api', 'Web'])
-    expect(within(groups[1]).getAllByRole('article').map((a) => a.getAttribute('aria-label'))).toEqual(['Zeta'])
+    expect(within(groups[0]).getAllByRole('listitem').map((a) => a.getAttribute('aria-label'))).toEqual(['Api', 'Web'])
+    expect(within(groups[1]).getAllByRole('listitem').map((a) => a.getAttribute('aria-label'))).toEqual(['Zeta'])
   })
 
   it('start all calls ForwardStartAll with the host id; stop all calls ForwardStopAll', async () => {
@@ -127,7 +127,7 @@ describe('ForwardGroup', () => {
     handlers.get('fwdhost:state:h1')?.({ status: 'connecting', error: '', retryable: true, asker: 'forwards', session: '' })
     handlers.get('fwdhost:data:h1')?.(btoa('Password: '))
     await vi.waitFor(() => expect(within(screen.getByRole('region', { name: 'alpha' })).getByTestId('mini-terminal')).toBeTruthy())
-    expect(within(screen.getByRole('article', { name: 'Web' })).queryByTestId('mini-terminal')).toBeNull()
+    expect(within(screen.getByRole('listitem', { name: 'Web' })).queryByTestId('mini-terminal')).toBeNull()
     expect(api.ForwardHostAttach).toHaveBeenCalledWith('h1')
   })
 
@@ -171,5 +171,71 @@ describe('ForwardGroup', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Новый проброс для beta' }))
     const dialog = screen.getByRole('dialog', { name: 'Новый проброс' })
     expect((within(dialog).getByLabelText('Хост') as HTMLSelectElement).value).toBe('h2')
+  })
+
+  it('shows the host address and the state pill', async () => {
+    await load([host('h1', 'alpha')], [fwd('f1', 'h1', 'alpha', 'Web')])
+    render(ForwardsView)
+    const g = screen.getByRole('region', { name: 'alpha' })
+    expect(within(g).getByText('u@a.example.test')).toBeTruthy()
+    expect(within(g).getByText('не подключён')).toBeTruthy()
+    const state = (p: object) => handlers.get('fwdhost:state:h1')?.({ error: '', retryable: true, asker: '', session: '', ...p })
+    state({ status: 'connecting', asker: 'forwards' })
+    await vi.waitFor(() => expect(within(g).getByText('ждёт фразу')).toBeTruthy())
+    state({ status: 'connecting', asker: 'session', session: 'alpha 2' })
+    await vi.waitFor(() => expect(within(g).getByText('вход в консоли')).toBeTruthy())
+    state({ status: 'connected' })
+    await vi.waitFor(() => expect(within(g).getByText('подключён')).toBeTruthy())
+    state({ status: 'error', error: 'нет сети' })
+    await vi.waitFor(() => expect(within(g).getByText('ошибка')).toBeTruthy())
+    expect(within(g).getByRole('alert').textContent).toBe('нет сети')
+  })
+
+  it('the switch is disabled for a stopped forward that cannot be retried', async () => {
+    await load([host('h1', 'alpha')], [{ ...fwd('f1', 'h1', 'alpha', 'Web'), retryable: false }])
+    render(ForwardsView)
+    const sw = screen.getByRole('button', { name: 'Запустить Web' }) as HTMLButtonElement
+    expect(sw.disabled).toBe(true)
+    expect(sw.title).toContain('known_hosts')
+    await fireEvent.click(sw)
+    expect(api.ForwardStart).not.toHaveBeenCalled()
+  })
+
+  it('the success line follows the login, then goes away', async () => {
+    await load([host('h1', 'alpha')], [fwd('f1', 'h1', 'alpha', 'Web', 'starting')])
+    render(ForwardsView)
+    vi.useFakeTimers()
+    try {
+      const state = (status: string) =>
+        handlers.get('fwdhost:state:h1')?.({ status, error: '', retryable: true, asker: 'forwards', session: '' })
+      state('connecting')
+      handlers.get('fwdhost:data:h1')?.(btoa('Password: '))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(screen.getByTestId('mini-terminal')).toBeTruthy()
+      expect(screen.queryByText(/Вход выполнен/)).toBeNull()
+
+      state('connected')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(screen.getByText(/Вход выполнен. Фраза останется в памяти/)).toBeTruthy()
+      // The prompt block collapses and is removed after the collapse.
+      await vi.advanceTimersByTimeAsync(300)
+      expect(screen.queryByTestId('mini-terminal')).toBeNull()
+      expect(screen.getByText(/Вход выполнен/)).toBeTruthy()
+
+      await vi.advanceTimersByTimeAsync(2400)
+      await vi.advanceTimersByTimeAsync(300)
+      expect(screen.queryByText(/Вход выполнен/)).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('no success line when connected without a prompt', async () => {
+    await load([host('h1', 'alpha')], [fwd('f1', 'h1', 'alpha', 'Web', 'starting')])
+    render(ForwardsView)
+    handlers.get('fwdhost:state:h1')?.({ status: 'connecting', error: '', retryable: true, asker: 'forwards', session: '' })
+    handlers.get('fwdhost:state:h1')?.({ status: 'connected', error: '', retryable: true, asker: '', session: '' })
+    await vi.waitFor(() => expect(screen.getByText('подключён')).toBeTruthy())
+    expect(screen.queryByText(/Вход выполнен/)).toBeNull()
   })
 })

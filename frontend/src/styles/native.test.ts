@@ -99,10 +99,21 @@ describe('native motion and focus', () => {
     expect(block(titlebar, /\.max/)).toMatch(/--wails-non-client-region:\s*maximize/)
   })
 
-  it('uses 80 ms hover transitions only', () => {
+  // Hover is 80 ms everywhere. The forwards screen has the approved exceptions of its design: the
+  // switch (120 ms), the dots and the status pill (160 ms), the login block that collapses (220 ms)
+  // and the line «Вход выполнен» (180 ms, 220 ms).
+  const longer: Record<string, string[]> = {
+    '../lib/forwards/ForwardCard.svelte': ['120ms', '160ms'],
+    '../lib/forwards/ForwardGroup.svelte': ['120ms', '160ms', '180ms', '220ms'],
+  }
+
+  it('uses 80 ms hover transitions only, besides the approved ones of the forwards screen', () => {
     for (const [file, src] of Object.entries(components)) {
       for (const m of src.matchAll(/transition(?:-duration)?:([^;]*);/g)) {
-        for (const d of m[1].matchAll(/\b(\d*\.?\d+)(ms|s)\b/g)) expect(`${file}: ${d[0]}`).toBe(`${file}: 80ms`)
+        for (const d of m[1].matchAll(/\b(\d*\.?\d+)(ms|s)\b/g)) {
+          const ok = d[0] === '80ms' || (longer[file] ?? []).includes(d[0])
+          expect(`${file}: ${ok ? '80ms' : d[0]}`).toBe(`${file}: 80ms`)
+        }
       }
     }
   })

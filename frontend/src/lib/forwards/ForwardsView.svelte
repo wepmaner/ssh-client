@@ -18,21 +18,8 @@
       .map((host) => ({ host, items: forwards.list.filter((f) => f.host_id === host.host_id).sort(name) })),
   )
 
-  const activeCount = $derived(forwards.list.filter((f) => f.status === 'running' || f.status === 'starting').length)
-  const idleCount = $derived(forwards.list.length - activeCount)
-
-  /** Russian plural: one (1, 21), few (2–4, 22–24), many. */
-  function plural(n: number, one: string, few: string, many: string): string {
-    const m10 = n % 10
-    const m100 = n % 100
-    if (m10 === 1 && m100 !== 11) return one
-    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few
-    return many
-  }
-  const summary = $derived(
-    `${activeCount} ${plural(activeCount, 'активен', 'активны', 'активны')} · ` +
-      `${idleCount} ${plural(idleCount, 'остановлен', 'остановлены', 'остановлены')}`,
-  )
+  const running = $derived(forwards.list.filter((f) => f.status === 'running').length)
+  const summary = $derived(`${running} из ${forwards.list.length} работают`)
 
   // Host names and states may have changed while another screen was in front.
   onMount(() => void refreshForwards().catch(() => {}))
@@ -68,12 +55,12 @@
     </div>
   {:else}
     <div class="toolbar">
+      <h1>Пробросы</h1>
+      <span class="hint">{summary}</span>
+      <span class="spacer"></span>
       <Button variant="primary" onclick={() => (dialog = { open: true, forward: null, template: null, hostId: '' })}>
         <span class="with-icon">{@render plus()}Новый проброс</span>
       </Button>
-      <span class="hint">Пробросы живут отдельно от сессий: работают без открытого терминала</span>
-      <span class="spacer"></span>
-      <span class="hint">{summary}</span>
     </div>
 
     <div class="groups">
@@ -133,9 +120,14 @@
   .spacer {
     flex: 1;
   }
+  .toolbar h1 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+  }
   .hint {
     color: var(--muted);
-    font-size: 11.5px;
+    font-size: 13px;
   }
   .groups {
     display: flex;
@@ -156,6 +148,16 @@
   }
   .legend dt {
     font-family: var(--font-mono);
+    font-weight: 500;
+  }
+  .legend div:nth-child(1) dt {
+    color: #7fb0ff;
+  }
+  .legend div:nth-child(2) dt {
+    color: #e3b341;
+  }
+  .legend div:nth-child(3) dt {
+    color: #c9a3ff;
   }
   .legend dd {
     margin: 0;

@@ -34,6 +34,13 @@
     D: '1080',
   }
   const targetHint: Record<Kind, string> = { L: 'localhost:5432', R: '127.0.0.1:3000', D: '' }
+  const listenLabel: Record<Kind, string> = { L: 'Порт здесь', R: 'Порт на сервере', D: 'Порт здесь' }
+  const listenNote: Record<Kind, string> = { L: 'на 127.0.0.1', R: 'слушает сервер', D: 'на 127.0.0.1' }
+  const targetNote: Record<Kind, string> = {
+    L: 'адрес:порт, как его видит сервер',
+    R: 'адрес:порт на этом компьютере',
+    D: '',
+  }
 
   let form = $state({ id: '', kind: 'L' as Kind, host_id: '', listen: '', target: '', name: '', auto_start: false })
   let errors = $state<Record<string, string>>({})
@@ -71,6 +78,21 @@
     if (form.kind === 'D') return `SOCKS5 ${listen}`
     return `${form.kind} ${listen} → ${form.target.trim()}`
   })
+
+  const hostName = $derived(hosts.find((h) => h.id === form.host_id)?.name ?? '')
+  /** What the forward does, as a chain: shown once the port is filled. */
+  const preview = $derived.by(() => {
+    const listen = shortListen(form.listen.trim())
+    if (!listen) return null
+    const port = listen.slice(listen.lastIndexOf(':') + 1)
+    const here = /^\d+$/.test(listen) ? `localhost:${listen}` : listen
+    const target = form.target.trim() || '…'
+    if (form.kind === 'D') return { parts: [here, hostName], arrows: ['→'], note: 'SOCKS5' }
+    if (form.kind === 'R') return { parts: [target, hostName, `порт ${port} на сервере`], arrows: ['←', '←'], note: '' }
+    return { parts: [here, hostName, target], arrows: ['→', '→'], note: '' }
+  })
+  /** For a copy: the original is named in the subtitle. */
+  const copyOf = $derived(!forward && template ? template.name : '')
 
   function clearError(field: string) {
     if (errors[field]) errors = { ...errors, [field]: '' }
@@ -129,6 +151,7 @@
 
 <Dialog {open} title={form.id ? 'Изменить проброс' : 'Новый проброс'} {onclose} width={520}>
   <div class="form" role="presentation" onkeydown={onfieldkey}>
+    {#if copyOf}<p class="sub">Копия «{copyOf}»: поменяйте порт и сохраните</p>{/if}
     <div class="field">
       <span class="label">Тип</span>
       <Segmented
@@ -159,7 +182,7 @@
     </div>
     <div class="grid" class:single={form.kind === 'D'}>
       <div class="field">
-        <label for="fwd-listen">Слушать</label>
+        <label for="fwd-listen">{listenLabel[form.kind]}</label>
         <Input
           id="fwd-listen"
           bind:value={form.listen}
@@ -174,12 +197,12 @@
         {#if errors.listen}
           {@render err('listen')}
         {:else}
-          <span class="hint">Порт; адрес по умолчанию 127.0.0.1</span>
+          <span class="hint">{listenNote[form.kind]}</span>
         {/if}
       </div>
       {#if form.kind !== 'D'}
         <div class="field">
-          <label for="fwd-target">Назначение</label>
+          <label for="fwd-target">Куда ведёт</label>
           <Input
             id="fwd-target"
             bind:value={form.target}
@@ -191,10 +214,23 @@
             aria-describedby={errors.target ? 'fwd-target-error' : undefined}
             oninput={() => clearError('target')}
           />
-          {@render err('target')}
+          {#if errors.target}
+            {@render err('target')}
+          {:else}
+            <span class="hint">{targetNote[form.kind]}</span>
+          {/if}
         </div>
       {/if}
     </div>
+    {#if preview}
+      <div class="preview" data-testid="route-preview">
+        {#each preview.parts as part, i (i)}
+          {#if i > 0}<span class="arrow" aria-hidden="true">{preview.arrows[i - 1]}</span>{/if}
+          <span class:via={i === 1}>{part}</span>
+        {/each}
+        {#if preview.note}<span class="via">({preview.note})</span>{/if}
+      </div>
+    {/if}
     <div class="field">
       <label for="fwd-name">Название</label>
       <Input
@@ -231,7 +267,7 @@
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 150px minmax(0, 1fr);
     gap: 10px;
   }
   .grid.single {
@@ -275,6 +311,32 @@
   .select:focus {
     outline: none;
     border-color: var(--accent);
+  }
+  .sub {
+    margin: -6px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .preview {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    color: #c9d1d9;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+  .preview .via {
+    color: var(--muted);
+    font-family: var(--font-ui);
+  }
+  .preview .arrow {
+    color: #6f7a87;
   }
   .hint {
     color: var(--muted);

@@ -56,11 +56,11 @@ describe('ForwardDialog', () => {
 
   it('shows the default name and hides the target for D', async () => {
     setup()
-    await fill('Слушать', '5432')
-    await fill('Назначение', 'localhost:5432')
+    await fill('Порт здесь', '5432')
+    await fill('Куда ведёт', 'localhost:5432')
     expect(screen.getByLabelText('Название').getAttribute('placeholder')).toBe('L 5432 → localhost:5432')
     await fireEvent.click(screen.getByRole('radio', { name: 'D' }))
-    expect(screen.queryByLabelText('Назначение')).toBeNull()
+    expect(screen.queryByLabelText('Куда ведёт')).toBeNull()
     expect(screen.getByText('SOCKS5-прокси для браузера и программ')).toBeTruthy()
     expect(screen.getByLabelText('Название').getAttribute('placeholder')).toBe('SOCKS5 5432')
   })
@@ -68,22 +68,22 @@ describe('ForwardDialog', () => {
   it('shows a Go validation message under the field', async () => {
     api.ForwardSave.mockRejectedValue('field:listen: Порт от 1 до 65535')
     setup()
-    await fill('Слушать', '127.0.0.1:70000')
+    await fill('Порт здесь', '127.0.0.1:70000')
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
-    await vi.waitFor(() => expect(errorOf('Слушать')).toBe('Порт от 1 до 65535'))
-    expect(errorOf('Назначение')).toBe('')
-    await fill('Слушать', '127.0.0.1:7000')
-    expect(errorOf('Слушать')).toBe('')
+    await vi.waitFor(() => expect(errorOf('Порт здесь')).toBe('Порт от 1 до 65535'))
+    expect(errorOf('Куда ведёт')).toBe('')
+    await fill('Порт здесь', '127.0.0.1:7000')
+    expect(errorOf('Порт здесь')).toBe('')
   })
 
   it('Enter saves with the form values and closes', async () => {
     const { onclose } = setup()
     await fireEvent.change(screen.getByLabelText('Хост'), { target: { value: 'h2' } })
     await fireEvent.click(screen.getByRole('radio', { name: 'R' }))
-    await fill('Слушать', '9000')
-    await fill('Назначение', '127.0.0.1:3000')
+    await fill('Порт на сервере', '9000')
+    await fill('Куда ведёт', '127.0.0.1:3000')
     await fireEvent.click(screen.getByLabelText('Запускать при старте приложения'))
-    await fireEvent.keyDown(screen.getByLabelText('Назначение'), { key: 'Enter' })
+    await fireEvent.keyDown(screen.getByLabelText('Куда ведёт'), { key: 'Enter' })
     await vi.waitFor(() => expect(onclose).toHaveBeenCalled())
     expect(api.ForwardSave).toHaveBeenCalledWith(
       expect.objectContaining({ id: '', kind: 'R', host_id: 'h2', listen: '9000', target: '127.0.0.1:3000', auto_start: true, name: '' }),
@@ -99,7 +99,7 @@ describe('ForwardDialog', () => {
     expect(screen.getByRole('dialog', { name: 'Новый проброс' })).toBeTruthy()
     expect((screen.getByLabelText('Название') as HTMLInputElement).value).toBe('')
     expect((screen.getByLabelText('Хост') as HTMLSelectElement).value).toBe('h2')
-    expect((screen.getByLabelText('Слушать') as HTMLInputElement).value).toBe('5432')
+    expect((screen.getByLabelText('Порт здесь') as HTMLInputElement).value).toBe('5432')
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
     await vi.waitFor(() => expect(onclose).toHaveBeenCalled())
     expect(api.ForwardSave).toHaveBeenCalledWith(
@@ -109,18 +109,18 @@ describe('ForwardDialog', () => {
 
   it('edit shows a 127.0.0.1 listen as the bare port', () => {
     setup(saved)
-    expect((screen.getByLabelText('Слушать') as HTMLInputElement).value).toBe('5432')
+    expect((screen.getByLabelText('Порт здесь') as HTMLInputElement).value).toBe('5432')
   })
 
   it('listen hint is the bare port and the note is shown', async () => {
     setup()
-    expect(screen.getByLabelText('Слушать').getAttribute('placeholder')).toBe('5432')
-    expect(screen.getByText('Порт; адрес по умолчанию 127.0.0.1')).toBeTruthy()
+    expect(screen.getByLabelText('Порт здесь').getAttribute('placeholder')).toBe('5432')
+    expect(screen.getByText('на 127.0.0.1')).toBeTruthy()
     api.ForwardSave.mockRejectedValue('field:listen: Порт от 1 до 65535')
-    await fill('Слушать', '70000')
+    await fill('Порт здесь', '70000')
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
-    await vi.waitFor(() => expect(errorOf('Слушать')).toBe('Порт от 1 до 65535'))
-    expect(screen.queryByText('Порт; адрес по умолчанию 127.0.0.1')).toBeNull()
+    await vi.waitFor(() => expect(errorOf('Порт здесь')).toBe('Порт от 1 до 65535'))
+    expect(screen.queryByText('на 127.0.0.1')).toBeNull()
   })
 
   it('Esc closes without saving', async () => {
@@ -135,10 +135,48 @@ describe('ForwardDialog', () => {
     expect(screen.getByRole('dialog', { name: 'Изменить проброс' })).toBeTruthy()
     expect(screen.getByRole('radio', { name: 'D' }).getAttribute('aria-checked')).toBe('true')
     expect((screen.getByLabelText('Хост') as HTMLSelectElement).value).toBe('h2')
-    expect((screen.getByLabelText('Слушать') as HTMLInputElement).value).toBe('5432')
+    expect((screen.getByLabelText('Порт здесь') as HTMLInputElement).value).toBe('5432')
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
     await vi.waitFor(() =>
       expect(api.ForwardSave).toHaveBeenCalledWith(expect.objectContaining({ id: 'f1', kind: 'D', target: '', name: 'SOCKS', auto_start: true })),
     )
+  })
+
+  it('names the original in the subtitle of a copy and not otherwise', () => {
+    const onclose = vi.fn()
+    render(ForwardDialog, { open: true, forward: null, template: { ...saved, name: 'Grafana' } as never, onclose })
+    expect(screen.getByText('Копия «Grafana»: поменяйте порт и сохраните')).toBeTruthy()
+  })
+
+  it('has no copy subtitle for a new forward', () => {
+    setup()
+    expect(screen.queryByText(/Копия/)).toBeNull()
+  })
+
+  const preview = () => [...(screen.queryByTestId('route-preview')?.children ?? [])].map((c) => c.textContent).join(' ')
+
+  it('shows the route once the port is filled: L', async () => {
+    setup()
+    expect(screen.queryByTestId('route-preview')).toBeNull()
+    expect(screen.getByText('адрес:порт, как его видит сервер')).toBeTruthy()
+    await fill('Порт здесь', '5432')
+    await fill('Куда ведёт', 'db.internal:5432')
+    expect(preview()).toBe('localhost:5432 → prod-1 → db.internal:5432')
+  })
+
+  it('shows the route: R reads from the server to this computer', async () => {
+    setup()
+    await fireEvent.click(screen.getByRole('radio', { name: 'R' }))
+    await fill('Порт на сервере', '9000')
+    await fill('Куда ведёт', '127.0.0.1:3000')
+    expect(preview()).toBe('127.0.0.1:3000 ← prod-1 ← порт 9000 на сервере')
+    expect(screen.getByText('адрес:порт на этом компьютере')).toBeTruthy()
+  })
+
+  it('shows the route: D is a SOCKS5 proxy', async () => {
+    setup()
+    await fireEvent.click(screen.getByRole('radio', { name: 'D' }))
+    await fill('Порт здесь', '1080')
+    expect(preview()).toBe('localhost:1080 → prod-1 (SOCKS5)')
   })
 })
