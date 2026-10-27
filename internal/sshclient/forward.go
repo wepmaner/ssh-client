@@ -88,8 +88,10 @@ type ForwardRunner struct {
 }
 
 // NewSharedForwardRunner создаёт раннер поверх общего клиента подключения хоста. acquire блокируется
-// до готового клиента, ошибки попытки или отмены ctx; вызывается при Start и при каждом переподключении
-// (пауза между попытками — забота подключения хоста, поэтому backoff раннера равен 0).
+// до готового клиента, ошибки попытки или отмены ctx; вызывается при Start и при каждом переподключении.
+// Первая попытка после обрыва идёт без паузы (подключение хоста само ждёт своего переподключения);
+// после неудачной попытки — ошибки acquire, отказа сервера открыть порт R или возврата того самого
+// оборвавшегося клиента — пауза backoff, как у NewForwardRunner, чтобы раннер не крутился впустую.
 // ErrHostNotTrusted и ErrHostKeyChanged из acquire — окончательная ошибка, как у NewForwardRunner.
 //
 // Клиент принадлежит вызывающему: раннер его никогда не закрывает, ни при остановке, ни при ошибках.
@@ -98,7 +100,6 @@ type ForwardRunner struct {
 func NewSharedForwardRunner(f model.Forward, acquire func(ctx context.Context) (*ssh.Client, error)) *ForwardRunner {
 	r := NewForwardRunner(f, acquire)
 	r.shared = true
-	r.backoff = func(int) time.Duration { return 0 }
 	return r
 }
 
@@ -113,7 +114,7 @@ func NewForwardRunner(f model.Forward, dial func(ctx context.Context) (*ssh.Clie
 	r := &ForwardRunner{
 		f:       f,
 		dial:    dial,
-		backoff: defaultBackoff,
+		backoff: DefaultBackoff,
 		state:   ForwardState{Status: ForwardStopped},
 		events:  make(chan ForwardState, forwardEventBuffer),
 		conns:   map[net.Conn]struct{}{},
@@ -130,8 +131,8 @@ func NewForwardRunner(f model.Forward, dial func(ctx context.Context) (*ssh.Clie
 	return r
 }
 
-// defaultBackoff: 2, 4, 8, 16, 32, затем 60 с.
-func defaultBackoff(attempt int) time.Duration {
+// DefaultBackoff — пауза перед попыткой переподключения attempt (с 1): 2, 4, 8, 16, 32, затем 60 с.
+func DefaultBackoff(attempt int) time.Duration {
 	if attempt < 1 {
 		attempt = 1
 	}
@@ -364,16 +365,21 @@ func (r *ForwardRunner) supervise(ctx context.Context, client *ssh.Client) {
 		r.mu.Unlock()
 		r.closeAll(nil, rln, client)
 
-		if client = r.reconnect(ctx); client == nil {
+		if client = r.reconnect(ctx, client); client == nil {
 			return
 		}
 	}
 }
 
-// reconnect повторяет dial с нарастающей паузой; nil — раннер останавливается.
-func (r *ForwardRunner) reconnect(ctx context.Context) *ssh.Client {
+// reconnect повторяет dial с нарастающей паузой; nil — раннер останавливается. dropped — клиент,
+// который только что оборвался: общий раннер не принимает его обратно.
+func (r *ForwardRunner) reconnect(ctx context.Context, dropped *ssh.Client) *ssh.Client {
 	for attempt := 1; ; attempt++ {
-		t := time.NewTimer(r.backoff(attempt))
+		delay := r.backoff(attempt)
+		if r.shared && attempt == 1 {
+			delay = 0
+		}
+		t := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			t.Stop()
@@ -382,6 +388,9 @@ func (r *ForwardRunner) reconnect(ctx context.Context) *ssh.Client {
 		}
 
 		client, err := r.dial(ctx)
+		if err == nil && r.shared && client == dropped {
+			client, err = nil, errReconnecting // неудачная попытка: этот клиент уже мёртв
+		}
 		var rln net.Listener
 		if err == nil && r.f.Kind == "R" {
 			if rln, err = r.listenRemote(ctx, client); err != nil {

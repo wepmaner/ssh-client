@@ -35,6 +35,7 @@ type Server struct {
 	hostKey ssh.PublicKey
 	wg      sync.WaitGroup
 	frozen  atomic.Bool
+	accepts atomic.Int64 // принятые TCP-подключения за жизнь сервера
 
 	mu     sync.Mutex
 	conns  []net.Conn
@@ -153,6 +154,7 @@ func StartServer(t testing.TB, opts Opts) *Server {
 			if err != nil {
 				return
 			}
+			s.accepts.Add(1)
 			if !s.track(c) {
 				ignoreErr(c.Close())
 				return
@@ -183,6 +185,9 @@ func (s *Server) Addr() string { return s.addr }
 
 // HostKey — публичный ключ сервера.
 func (s *Server) HostKey() ssh.PublicKey { return s.hostKey }
+
+// Accepted — число TCP-подключений, принятых сервером за всю его жизнь.
+func (s *Server) Accepted() int { return int(s.accepts.Load()) }
 
 // FreezeConnections имитирует зависшее соединение без FIN/RST: сервер перестаёт отвечать на
 // глобальные запросы (tcpip-forward, cancel-tcpip-forward и прочие), соединения остаются открытыми.

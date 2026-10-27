@@ -371,11 +371,11 @@ func TestForwardEventsDoNotBlock(t *testing.T) {
 func TestForwardBackoffSchedule(t *testing.T) {
 	want := []time.Duration{2, 4, 8, 16, 32, 60, 60}
 	for i, w := range want {
-		if got := defaultBackoff(i + 1); got != w*time.Second {
+		if got := DefaultBackoff(i + 1); got != w*time.Second {
 			t.Fatalf("backoff(%d) = %v, want %v", i+1, got, w*time.Second)
 		}
 	}
-	if got := defaultBackoff(1000); got != 60*time.Second {
+	if got := DefaultBackoff(1000); got != 60*time.Second {
 		t.Fatalf("backoff(1000) = %v", got)
 	}
 }
@@ -757,4 +757,103 @@ func TestSharedRunnerFinalErrorFromAcquire(t *testing.T) {
 		t.Fatalf("local port still busy: %v", err)
 	}
 	ignoreErr(ln.Close())
+}
+
+func TestSharedRunnerRejectsTheDroppedClient(t *testing.T) {
+	srv, dial := forwardServer(t)
+	first := sharedClient(t, dial)
+	var (
+		mu    sync.Mutex
+		calls int
+	)
+	acquire := func(ctx context.Context) (*ssh.Client, error) {
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		if n <= 2 {
+			return first, nil // the second call hands back the client that has just dropped
+		}
+		return dial(ctx)
+	}
+	count := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return calls
+	}
+	listen := freeAddr(t)
+	r := NewSharedForwardRunner(model.Forward{Kind: "L", Listen: listen, Target: echoServer(t)}, acquire)
+	r.backoff = func(int) time.Duration { return 300 * time.Millisecond }
+	t.Cleanup(r.Stop)
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	drainEvents(r)
+
+	srv.DropConnections()
+	waitState(t, r, "second acquire", func(ForwardState) bool { return count() >= 2 })
+	time.Sleep(100 * time.Millisecond) // with the zero backoff a spin would call acquire many times by now
+	if n := count(); n != 2 {
+		t.Fatalf("acquire called %d times within the pause, want 2", n)
+	}
+	waitState(t, r, "running", func(s ForwardState) bool { return s.Status == ForwardRunning })
+	if n := count(); n != 3 {
+		t.Fatalf("acquire called %d times, want 3", n)
+	}
+	dialEcho(t, listen, "after the fresh client")
+}
+
+func TestSharedRunnerRemoteRefusedBacksOff(t *testing.T) {
+	srv, dial := forwardServer(t)
+	var (
+		mu    sync.Mutex
+		calls int
+	)
+	release := make(chan struct{})
+	acquire := func(ctx context.Context) (*ssh.Client, error) {
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		if n == 2 {
+			select { // the first acquire after the drop waits until the test has taken the port
+			case <-release:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		return dial(ctx)
+	}
+	count := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return calls
+	}
+	listen := freeAddr(t)
+	r := startSharedRunner(t, model.Forward{Kind: "R", Listen: listen, Target: echoServer(t)}, acquire)
+	drainEvents(r)
+
+	srv.DropConnections()
+	waitState(t, r, "acquire after the drop", func(ForwardState) bool { return count() >= 2 })
+	// Take the port the server listened on, so it refuses the next tcpip-forward on a live client.
+	var ln net.Listener
+	deadline := time.Now().Add(forwardWait)
+	for {
+		var err error
+		if ln, err = net.Listen("tcp", listen); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("server keeps the remote port: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Cleanup(func() { ignoreErr(ln.Close()) })
+	close(release)
+
+	waitState(t, r, "refused port", func(s ForwardState) bool { return strings.Contains(s.Error, listen) })
+	time.Sleep(time.Second)
+	if n := count(); n > 3 {
+		t.Fatalf("acquire called %d times within a second of the refusal, want at most 3", n)
+	}
 }
