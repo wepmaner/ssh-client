@@ -333,14 +333,24 @@ func (c *hostConn) acquire(ctx context.Context, u any, ask *connAsker) (*ssh.Cli
 		wait := waitText(att.ask, ask)
 		c.mu.Unlock()
 		if wait != "" {
+			if ask.onWait != nil {
+				ask.onWait(true)
+			}
 			_, _ = io.WriteString(ask.out, wait) //nolint:gosec // G104: outStream never fails
 		}
 
+		var cancelled error
 		select {
 		case <-att.done:
 		case <-ctx.Done():
 			c.stopWaiting(att, ask)
-			return nil, ctx.Err()
+			cancelled = ctx.Err()
+		}
+		if wait != "" && ask.onWait != nil {
+			ask.onWait(false)
+		}
+		if cancelled != nil {
+			return nil, cancelled
 		}
 		switch {
 		case att.err == nil:

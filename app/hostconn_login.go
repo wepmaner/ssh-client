@@ -27,6 +27,9 @@ type connAsker struct {
 	// newInput (optional) gives a fresh input queue for each login this asker answers; it replaces
 	// in. The forwards group uses it, so a late answer never reaches the next login.
 	newInput func() *inputQueue
+	// onWait (optional) is told when the acquire starts (true) and stops (false) waiting for a
+	// login that another terminal answers. A session drops its input meanwhile.
+	onWait func(waiting bool)
 }
 
 // loginAttempt is one login of a host connection: a pause first when it is a reconnect, then the

@@ -49,6 +49,14 @@ func (q *inputQueue) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+// Discard wipes and drops the input nobody has read yet; the queue stays open.
+func (q *inputQueue) Discard() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	clear(q.buf)
+	q.buf = nil
+}
+
 // Close wakes a blocked Read with io.EOF and returns the input nobody has read yet.
 func (q *inputQueue) Close() []byte {
 	q.mu.Lock()

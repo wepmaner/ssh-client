@@ -61,6 +61,7 @@ type session struct {
 	cols, rows int
 	latencyMs  int
 	closing    bool
+	elsewhere  bool // waiting for a login another terminal answers: typed keys are dropped
 }
 
 func newSession(id, hostID, hostName string, cols, rows int, e emitter) *session {
@@ -85,7 +86,7 @@ func (s *session) run(p hostParams) {
 	_, _ = fmt.Fprintf(s.out, "Подключение к %s@%s:%d …\r\n", p.User, p.Address, p.Port) //nolint:gosec // G104: outStream never fails
 
 	pr := sshclient.NewPrompter(s.out, s.in)
-	ask := &connAsker{out: s.out, in: s.in, trust: trustOwner{sessionID: s.id}, label: s.hostName, prompter: pr}
+	ask := &connAsker{out: s.out, in: s.in, trust: trustOwner{sessionID: s.id}, label: s.hostName, prompter: pr, onWait: s.waitElsewhere}
 	client, err := s.conn.acquire(s.ctx, s, ask)
 	if err != nil {
 		s.fail(err)
@@ -135,13 +136,42 @@ func (s *session) run(p hostParams) {
 	switch {
 	case closed:
 		s.finish(SessionStateDTO{State: stateClosed, Retryable: true})
-	case code == nil:
-		// The channel ended without an exit status: the shared connection dropped.
+	case code == nil && s.clientEnded(client):
 		st := errorState(fmt.Errorf("%w: %w", errConnLost, waitErr))
 		st.Message = errConnLost.Error() // the system text stays in Detail
 		s.finish(st)
 	default:
 		s.finish(SessionStateDTO{State: stateClosed, ExitCode: code, Retryable: true})
+	}
+}
+
+// clientEnded reports, after a shell ended without an exit status, whether the shared client ended
+// too (the connection dropped) within deadClientGrace: the channel closes before the client does.
+func (s *session) clientEnded(c *ssh.Client) bool {
+	ended := make(chan struct{})
+	go func() { // a live client keeps this until it closes
+		_ = c.Wait() //nolint:gosec // G104: only the end of the connection matters
+		close(ended)
+	}()
+	t := time.NewTimer(deadClientGrace)
+	defer t.Stop()
+	select {
+	case <-ended:
+		return true
+	case <-t.C:
+		return false
+	}
+}
+
+// waitElsewhere is the connAsker's onWait: while the session waits for a login that another
+// terminal answers, keys typed into it are not for that login nor for the shell, and are dropped
+// (a passphrase typed there by mistake never reaches the shell).
+func (s *session) waitElsewhere(waiting bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.elsewhere = waiting
+	if waiting {
+		s.in.Discard()
 	}
 }
 
@@ -255,7 +285,7 @@ func (s *session) finish(st SessionStateDTO) {
 func (s *session) write(b []byte) error {
 	s.mu.Lock()
 	sess := s.sess
-	if sess == nil && s.state == stateConnecting {
+	if sess == nil && s.state == stateConnecting && !s.elsewhere {
 		s.in.Write(b)
 	}
 	s.mu.Unlock()

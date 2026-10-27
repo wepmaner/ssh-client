@@ -23,6 +23,7 @@ type Opts struct {
 	KBIAnswer    string        // ожидаемый ответ keyboard-interactive; "" — метод не предлагается
 	MaxAuthTries int           // ServerConfig.MaxAuthTries; 0 — значение x/crypto по умолчанию (6)
 	ExitCode     int           // != 0: shell печатает "ok\r\n", сразу завершается с этим кодом и закрывает канал
+	NoExitStatus bool          // shell печатает "ok\r\n" и закрывает канал без exit-status; соединение остаётся
 
 	OnPty          func(term string, cols, rows uint32) // вызывается на pty-req
 	OnWindowChange func(cols, rows uint32)              // вызывается на window-change
@@ -301,6 +302,9 @@ func (s *Server) handleSession(nc ssh.NewChannel) {
 			}
 			if s.opts.ExitCode != 0 {
 				sendExitStatus(ch, s.opts.ExitCode)
+				return
+			}
+			if s.opts.NoExitStatus {
 				return
 			}
 			s.wg.Add(1)

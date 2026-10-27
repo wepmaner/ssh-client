@@ -654,3 +654,35 @@ func TestSessionCloseDoesNotWaitOnFrozenServer(t *testing.T) {
 		t.Fatal("closing the console waited on the frozen server")
 	}
 }
+
+// Keys typed into a console that waits for a login answered elsewhere never reach its shell: a
+// passphrase typed there by mistake stays out of the shell.
+func TestSessionInputWhileWaitingIsDropped(t *testing.T) {
+	s := newEncryptedForwardsApp(t)
+	f := s.saveL(t, freePort(t), echoServer(t), false)
+	if err := s.ForwardStart(f.ID); err != nil {
+		t.Fatal(err)
+	}
+	s.waitHostPrompts(t, s.hostID, 1)
+	id := s.open(t)
+	s.ev.waitData(t, id, waitForwardsLogin)
+	s.write(t, id, "s3cret\r")
+	s.answer(t, s.hostID, fwdPassphrase)
+	s.ev.waitState(t, id, "connected", hcWait)
+	s.write(t, id, "after\r")
+	s.ev.waitData(t, id, "after\r")
+	if out := s.ev.data(t, id); strings.Contains(out, "s3cret") {
+		t.Fatalf("keys typed while waiting reached the shell: %q", out)
+	}
+}
+
+// A shell that ends without an exit status on a live connection is closed, not a dropped connection.
+func TestSessionEndWithoutExitStatusIsClosed(t *testing.T) {
+	s := newSessionsApp(t, sshtest.Opts{NoExitStatus: true}, true)
+	t.Cleanup(s.closeAllHostConns)
+	id := s.open(t)
+	st := s.ev.waitState(t, id, "closed", hcWait)
+	if st.ExitCode != nil || st.Kind != "" || st.Message != "" {
+		t.Fatalf("closed payload %+v", st)
+	}
+}
