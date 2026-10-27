@@ -147,10 +147,14 @@ func AsideName(t time.Time) string {
 	return "vault.before-restore-" + t.Format("2006-01-02-150405") + ".json"
 }
 
-// InstallBackup makes the unlocked backup b the vault at vaultPath. The current file, if any,
-// is renamed to AsideName(now) in the same folder (with a numeric suffix when that name is
-// taken); the backup envelope is written to a temporary file first, so a failure at any step
-// leaves vaultPath as it was. It returns the aside path ("" when there was no vault file).
+// renameFile replaces a file atomically; tests swap it to make the final step fail.
+var renameFile = os.Rename
+
+// InstallBackup makes the unlocked backup b the vault at vaultPath. vault.json is never moved:
+// its bytes are first copied to AsideName(now) in the same folder (a new file, with a numeric
+// suffix when that name is taken, never overwriting one), the backup envelope is written to a
+// temporary file, and one atomic rename replaces vault.json. A failure at any step leaves
+// vaultPath as it was. It returns the aside path ("" when there was no vault file).
 func InstallBackup(vaultPath string, b *Vault, now time.Time) (string, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -161,28 +165,22 @@ func InstallBackup(vaultPath string, b *Vault, now time.Time) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	aside := ""
+	cur, err := os.ReadFile(vaultPath) //nolint:gosec // G304: path comes from appdir.Dir() or the caller
+	switch {
+	case err == nil:
+		if aside, err = writeAside(filepath.Dir(vaultPath), now, cur); err != nil {
+			return "", fmt.Errorf("keep current vault: %w", err)
+		}
+	case !errors.Is(err, os.ErrNotExist):
+		return "", fmt.Errorf("read vault: %w", err)
+	}
 	tmp := vaultPath + ".restore.tmp"
 	if err := writeFileSync(tmp, out); err != nil {
 		_ = os.Remove(tmp) //nolint:gosec // G104: best-effort cleanup after the primary error
 		return "", fmt.Errorf("write vault: %w", err)
 	}
-	aside := ""
-	if _, err := os.Stat(vaultPath); err == nil { //nolint:gosec // G703: path comes from appdir.Dir() or the caller
-		if aside, err = freeAsidePath(filepath.Dir(vaultPath), now); err == nil {
-			err = os.Rename(vaultPath, aside) //nolint:gosec // G703: sibling of the vault path
-		}
-		if err != nil {
-			_ = os.Remove(tmp) //nolint:gosec // G104: best-effort cleanup after the primary error
-			return "", fmt.Errorf("move current vault: %w", err)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		_ = os.Remove(tmp) //nolint:gosec // G104: best-effort cleanup after the primary error
-		return "", fmt.Errorf("stat vault: %w", err)
-	}
-	if err := os.Rename(tmp, vaultPath); err != nil { //nolint:gosec // G703: sibling of the vault path
-		if aside != "" {
-			_ = os.Rename(aside, vaultPath) //nolint:gosec // G104, G703: best-effort rollback after the primary error
-		}
+	if err := renameFile(tmp, vaultPath); err != nil {
 		_ = os.Remove(tmp) //nolint:gosec // G104: best-effort cleanup after the primary error
 		return "", fmt.Errorf("replace vault: %w", err)
 	}
@@ -190,8 +188,9 @@ func InstallBackup(vaultPath string, b *Vault, now time.Time) (string, error) {
 	return aside, nil
 }
 
-// freeAsidePath returns AsideName(now) in dir, or the first free "-2", "-3"… variant of it.
-func freeAsidePath(dir string, now time.Time) (string, error) {
+// writeAside writes data to a new file AsideName(now) in dir, or to the first free "-2", "-3"…
+// variant of it, and flushes it to disk. An existing file is never opened for writing.
+func writeAside(dir string, now time.Time, data []byte) (string, error) {
 	base := AsideName(now)
 	stem := base[:len(base)-len(".json")]
 	for i := 1; i < 1000; i++ {
@@ -200,26 +199,43 @@ func freeAsidePath(dir string, now time.Time) (string, error) {
 			name = stem + "-" + strconv.Itoa(i) + ".json"
 		}
 		p := filepath.Join(dir, name)
-		if _, err := os.Stat(p); errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: sibling of the vault path
-			return p, nil
-		} else if err != nil {
+		f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // G304: sibling of the vault path
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
 			return "", err
 		}
+		_, err = f.Write(data)
+		if err == nil {
+			err = f.Sync()
+		}
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			_ = os.Remove(p) //nolint:gosec // G104: best-effort cleanup after the primary error
+			return "", err
+		}
+		return p, nil
 	}
 	return "", errors.New("no free name for the current vault")
 }
 
-// Retire takes the store out of use: swap runs while no read or write can reach the data, and
-// on success the vault key and the decrypted data are wiped, so a late write through this store
-// fails with ErrLocked instead of overwriting the file swap installed. A failed swap leaves the
-// store as it was.
+// Retire takes the store out of use: swap runs while no store read or write and no vault-level
+// writer (Save, SetPassword, RemovePassword, Lock) can run, and on success the vault key and the
+// decrypted data are wiped, so a late write through this store or its vault fails instead of
+// overwriting the file swap installed. A failed swap leaves the store as it was. swap must not
+// touch this store or its vault.
 func (s *Store) Retire(swap func() error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.v.mu.Lock()
+	defer s.v.mu.Unlock()
 	if err := swap(); err != nil {
 		return err
 	}
-	s.v.wipe()
+	s.v.wipeLocked()
 	return nil
 }
 
@@ -227,6 +243,11 @@ func (s *Store) Retire(swap func() error) error {
 func (v *Vault) wipe() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	v.wipeLocked()
+}
+
+// wipeLocked is wipe for a caller holding v.mu.
+func (v *Vault) wipeLocked() {
 	clear(v.dek)
 	if v.data != nil {
 		clearPrivate(v.data.Keys)

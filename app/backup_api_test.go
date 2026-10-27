@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,8 +42,23 @@ func TestVaultBackupNeedsAPasswordOnlyWithoutOne(t *testing.T) {
 	if _, err := a.VaultBackup(""); err != errNoWindow {
 		t.Fatalf("password vault: %v", err)
 	}
+	if _, err := a.VaultBackup("another pass"); err != errCopyHasPw {
+		t.Fatalf("password vault with a password: %v", err)
+	}
+	dir, err := appdir.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, inside := range []string{filepath.Join(dir, "b.vault"), filepath.Join(strings.ToUpper(dir), "sub", "b.vault")} {
+		if err := a.writeBackup(inside, ""); err != errCopyInDir {
+			t.Fatalf("backup in the data folder %s: %v", inside, err)
+		}
+		if _, err := os.Stat(inside); err == nil {
+			t.Fatal("a refused backup was written")
+		}
+	}
 	out := filepath.Join(t.TempDir(), "b.vault")
-	if err := a.writeBackup(out, "ignored"); err != nil {
+	if err := a.writeBackup(out, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.OpenBackup(out, []byte("correct horse")); err != nil {
@@ -75,6 +91,9 @@ func TestVaultRestore(t *testing.T) {
 	s.ev.waitState(t, id, "connected", 5*time.Second)
 	before := vaultBytes(t)
 	oldStore := s.storeRef()
+	if c := s.VaultCounts(); !c.VaultFile || c.Forwards != 1 {
+		t.Fatalf("counts %+v", c)
+	}
 
 	notBackup := filepath.Join(t.TempDir(), "x.vault")
 	if err := os.WriteFile(notBackup, []byte("{}"), 0o600); err != nil {
@@ -102,6 +121,12 @@ func TestVaultRestore(t *testing.T) {
 	if len(s.SessionList()) != 0 {
 		t.Fatal("sessions still open")
 	}
+	// The old forward's listener is closed: its port is free.
+	ln, err := net.Listen("tcp", f.Listen)
+	if err != nil {
+		t.Fatalf("old forward still listens on %s: %v", f.Listen, err)
+	}
+	ignore(ln.Close())
 	s.ev.waitState(t, id, "closed", 5*time.Second)
 	if st := s.VaultState(); st.Locked || !st.HasPassword {
 		t.Fatalf("state after restore %+v", st)
@@ -176,5 +201,53 @@ func TestVaultRestoreOnCorruptVault(t *testing.T) {
 	}
 	if st := a.VaultState(); st.Corrupt || st.Locked || len(a.HostsList()) != 1 {
 		t.Fatalf("state %+v", st)
+	}
+}
+
+func TestRestoringRefusesNewSessionsAndForwards(t *testing.T) {
+	s := newForwardsApp(t, sshtest.Opts{}, true)
+	f := s.saveL(t, freePort(t), echoServer(t), false)
+	s.restoring.Store(true)
+	if _, err := s.SessionOpen(s.hostID, 80, 24); err != errRestoring {
+		t.Fatalf("SessionOpen: %v", err)
+	}
+	if err := s.ForwardStart(f.ID); err != errRestoring {
+		t.Fatalf("ForwardStart: %v", err)
+	}
+	if err := s.ForwardStartAll(s.hostID); err != errRestoring {
+		t.Fatalf("ForwardStartAll: %v", err)
+	}
+	s.restoring.Store(false)
+}
+
+func TestReopenHostConnsRespectsShutdown(t *testing.T) {
+	a := &App{}
+	a.closeAllHostConns()
+	a.exiting.Store(true)
+	a.reopenHostConns()
+	if !a.hcDown {
+		t.Fatal("a restore reopened connections after the shutdown began")
+	}
+	a.exiting.Store(false)
+	a.reopenHostConns()
+	if a.hcDown {
+		t.Fatal("connections not reopened")
+	}
+}
+
+func TestVaultCountsSeesCorruptFile(t *testing.T) {
+	t.Setenv("APPDATA", t.TempDir())
+	dir, err := appdir.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := corruptApp().VaultCounts(); c.VaultFile {
+		t.Fatal("no vault.json yet")
+	}
+	if err := os.WriteFile(filepath.Join(dir, vaultFile), []byte("garbage"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c := corruptApp().VaultCounts(); !c.VaultFile || c.Keys+c.Hosts+c.Forwards != 0 {
+		t.Fatalf("counts %+v", c)
 	}
 }

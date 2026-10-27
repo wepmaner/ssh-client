@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -319,9 +321,82 @@ func TestFailedInstallLeavesTheVaultFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	checkAside(t, entries, filepath.Dir(cur.path), before, "vault.json.restore.tmp")
+}
+
+// checkAside: besides vault.json (and allowed) the folder holds exactly one aside copy equal to want.
+func checkAside(t *testing.T, entries []os.DirEntry, dir string, want []byte, allowed ...string) {
+	t.Helper()
+	asides := 0
 	for _, e := range entries {
-		if e.Name() != "vault.json" && e.Name() != "vault.json.restore.tmp" {
+		switch {
+		case e.Name() == "vault.json" || slices.Contains(allowed, e.Name()):
+		case strings.HasPrefix(e.Name(), "vault.before-restore-"):
+			asides++
+			if got, err := os.ReadFile(filepath.Join(dir, e.Name())); err != nil || !bytes.Equal(got, want) { //nolint:gosec // G304: test temp path
+				t.Fatalf("aside copy differs: %v", err)
+			}
+		default:
 			t.Fatalf("unexpected file %s", e.Name())
 		}
+	}
+	if asides != 1 {
+		t.Fatalf("%d aside copies, want 1", asides)
+	}
+}
+
+// TestFailedFinalRenameKeepsVaultAndAside: vault.json is never moved, so a failing replace
+// leaves it and its aside copy intact and removes the temporary file.
+func TestFailedFinalRenameKeepsVaultAndAside(t *testing.T) {
+	src, _ := filledStore(t)
+	out := backupPath(t)
+	if err := src.Backup(out, []byte("backup pass")); err != nil {
+		t.Fatal(err)
+	}
+	b, err := OpenBackup(out, []byte("backup pass"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur := NewStore(mustOpen(t, newVaultPath(t)))
+	before, err := os.ReadFile(cur.v.path) //nolint:gosec // G304: test temp path
+	if err != nil {
+		t.Fatal(err)
+	}
+	renameFile = func(string, string) error { return errors.New("locked by another process") }
+	t.Cleanup(func() { renameFile = os.Rename })
+	err = cur.Retire(func() error {
+		_, err := InstallBackup(cur.v.path, b, time.Now())
+		return err
+	})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if got, err := os.ReadFile(cur.v.path); err != nil || !bytes.Equal(got, before) { //nolint:gosec // G304: test temp path
+		t.Fatalf("vault.json changed: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(cur.v.path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkAside(t, entries, filepath.Dir(cur.v.path), before)
+	if _, err := cur.SaveHost(model.Host{Address: "still.test"}); err != nil {
+		t.Fatalf("the store must stay usable after a failed install: %v", err)
+	}
+}
+
+// TestRetireExcludesVaultWriters: a SetPassword waiting on the vault during the install runs
+// after the wipe and fails instead of writing the old data over the restored file.
+func TestRetireExcludesVaultWriters(t *testing.T) {
+	s, _ := filledStore(t)
+	done := make(chan error, 1)
+	if err := s.Retire(func() error {
+		go func() { done <- s.v.SetPassword([]byte("late pass")) }()
+		time.Sleep(50 * time.Millisecond) // the writer is blocked on the vault lock
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err == nil {
+		t.Fatal("SetPassword on the retired vault succeeded")
 	}
 }

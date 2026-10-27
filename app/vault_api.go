@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"unicode/utf8"
 
@@ -35,6 +36,8 @@ type VaultCountsDTO struct {
 	Keys     int `json:"keys"`
 	Hosts    int `json:"hosts"`
 	Forwards int `json:"forwards"`
+	// VaultFile reports that a vault.json exists (also when it is corrupt): a restore keeps it aside.
+	VaultFile bool `json:"vault_file"`
 }
 
 // VaultState reports the vault state for the startup screen choice.
@@ -137,11 +140,18 @@ func (a *App) verifyPassword(password string) error {
 	return nil
 }
 
-// VaultCounts returns how many keys, hosts and forwards are stored.
+// VaultCounts returns how many keys, hosts and forwards are stored (zero unless the vault is
+// open) and whether a vault.json exists.
 func (a *App) VaultCounts() VaultCountsDTO {
+	var c VaultCountsDTO
+	if dir, err := appdir.Dir(); err == nil {
+		_, err := os.Stat(filepath.Join(dir, vaultFile))
+		c.VaultFile = err == nil
+	}
 	if !a.storeUnlocked() {
-		return VaultCountsDTO{}
+		return c
 	}
 	s := a.storeRef()
-	return VaultCountsDTO{Keys: len(s.KeyMetas()), Hosts: len(s.Hosts()), Forwards: len(s.Forwards())}
+	c.Keys, c.Hosts, c.Forwards = len(s.KeyMetas()), len(s.Hosts()), len(s.Forwards())
+	return c
 }

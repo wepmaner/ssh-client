@@ -96,6 +96,9 @@ func (a *App) forwardsOfHost(hostID string) ([]model.Forward, error) {
 // ForwardStartAll starts the host's stopped and failed forwards and returns at once. They share the
 // host's connection: its login asks once, in the host's forwards group.
 func (a *App) ForwardStartAll(hostID string) error {
+	if a.restoring.Load() {
+		return errRestoring
+	}
 	fwds, err := a.forwardsOfHost(hostID)
 	if err != nil {
 		return err
@@ -146,6 +149,13 @@ func (a *App) ForwardHostAttach(hostID string) error {
 	}
 	a.fwdHostGroup(hostID).out.Attach()
 	return nil
+}
+
+// dropAllFwdHostGroups forgets the groups of every host (a restore replaces the hosts).
+func (a *App) dropAllFwdHostGroups() {
+	a.fwdHostMu.Lock()
+	defer a.fwdHostMu.Unlock()
+	a.fwdHosts = nil
 }
 
 // dropFwdHostGroup forgets the group of a deleted host.

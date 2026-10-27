@@ -414,6 +414,11 @@ export class VaultCountsDTO {
     "hosts": number;
     "forwards": number;
 
+    /**
+     * VaultFile reports that a vault.json exists (also when it is corrupt): a restore keeps it aside.
+     */
+    "vault_file": boolean;
+
     /** Creates a new VaultCountsDTO instance. */
     constructor($$source: Partial<VaultCountsDTO> = {}) {
         if (!("keys" in $$source)) {
@@ -424,6 +429,9 @@ export class VaultCountsDTO {
         }
         if (!("forwards" in $$source)) {
             this["forwards"] = 0;
+        }
+        if (!("vault_file" in $$source)) {
+            this["vault_file"] = false;
         }
 
         Object.assign(this, $$source);

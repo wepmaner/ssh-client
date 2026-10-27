@@ -18,6 +18,10 @@
   let error = $state('')
   let busy = $state(false)
   let replace = $state(false)
+  /** A vault.json exists (also a corrupt one): the restore keeps it aside. */
+  let hasFile = $state(false)
+  /** VaultCounts has answered: until then the warning may still be missing, so submit waits. */
+  let loaded = $state(false)
 
   const open = $derived(path !== '')
   const fileName = $derived(path.split(/[\\/]/).pop() ?? '')
@@ -29,13 +33,23 @@
     error = ''
     busy = false
     replace = false
+    hasFile = false
+    loaded = false
     VaultCounts()
-      .then((c) => (replace = c.keys + c.hosts + c.forwards > 0))
-      .catch(() => {})
+      .then((c) => {
+        replace = c.keys + c.hosts + c.forwards > 0
+        hasFile = c.vault_file
+      })
+      .catch(() => {
+        // Unknown contents: warn as if there were data.
+        replace = true
+        hasFile = true
+      })
+      .finally(() => (loaded = true))
   })
 
   async function submit() {
-    if (!pw || busy) return
+    if (!pw || busy || !loaded) return
     busy = true
     pwError = ''
     error = ''
@@ -74,10 +88,10 @@
       />
     </label>
     {#if pwError}<p class="field-error" id="restore-pw-error" role="alert">{pwError}</p>{/if}
-    {#if replace}
+    {#if replace || hasFile}
       <div class="warn" role="note">
-        Текущие ключи, хосты и пробросы будут заменены копией. Текущее хранилище сохранится рядом как
-        vault.before-restore-&lt;дата&gt;.json.
+        {#if replace}Текущие ключи, хосты и пробросы будут заменены копией.{/if}
+        Текущее хранилище сохранится рядом как vault.before-restore-&lt;дата&gt;.json.
       </div>
     {/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -86,7 +100,7 @@
     <span></span>
     <span class="actions">
       <Button variant="ghost" onclick={onclose}>Отмена</Button>
-      <Button variant="primary" type="submit" form="restore-form" disabled={!pw || busy}>
+      <Button variant="primary" type="submit" form="restore-form" disabled={!pw || busy || !loaded}>
         {replace ? 'Заменить' : 'Восстановить'}
       </Button>
     </span>

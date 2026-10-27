@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"path/filepath"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -19,6 +20,9 @@ import (
 var (
 	errNotBackup = errors.New("Это не резервная копия sshclient")
 	errReadCopy  = errors.New("Не удалось прочитать файл копии")
+	errRestoring = errors.New("Идёт восстановление хранилища")
+	errCopyInDir = errors.New("Сохраните копию вне папки программы")
+	errCopyHasPw = errors.New("Хранилище защищено паролем: копия сохраняется под ним, другой пароль не нужен")
 )
 
 const backupExt = ".vault"
@@ -33,7 +37,11 @@ func (a *App) VaultBackup(password string) (string, error) {
 	if !a.storeUnlocked() {
 		return "", errVaultLocked
 	}
-	if !a.vaultRef().HasPassword() && utf8.RuneCountInString(password) < minPasswordLen {
+	if a.vaultRef().HasPassword() {
+		if password != "" {
+			return "", errCopyHasPw
+		}
+	} else if utf8.RuneCountInString(password) < minPasswordLen {
 		return "", errPasswordShort
 	}
 	if a.wapp == nil {
@@ -54,7 +62,29 @@ func (a *App) VaultBackup(password string) (string, error) {
 	if filepath.Ext(path) == "" {
 		path += backupExt
 	}
-	return path, a.writeBackup(path, password)
+	if err := a.writeBackup(path, password); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// outsideDataDir refuses a backup inside the data folder: it would be lost with the folder and
+// could replace the program's own files.
+func outsideDataDir(path string) error {
+	dir, err := appdir.Dir()
+	if err != nil {
+		return err
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	// Windows paths compare case-insensitively.
+	d, p := strings.ToLower(filepath.Clean(dir)), strings.ToLower(abs)
+	if p == d || strings.HasPrefix(p, strings.TrimSuffix(d, string(filepath.Separator))+string(filepath.Separator)) {
+		return errCopyInDir
+	}
+	return nil
 }
 
 // writeBackup writes the backup file at path (VaultBackup after its dialog).
@@ -67,6 +97,9 @@ func (a *App) writeBackup(path, password string) error {
 	if !a.vaultRef().HasPassword() {
 		pw = []byte(password)
 		defer clear(pw)
+	}
+	if err := outsideDataDir(path); err != nil {
+		return err
 	}
 	if err := s.Backup(path, pw); err != nil {
 		log.Printf("vault backup: %v", err)
@@ -143,10 +176,15 @@ func (a *App) VaultRestore(path, password string) error {
 		b.Discard()
 		return errors.New("Хранилище изменилось, повторите восстановление") //nolint:staticcheck // ST1005: Russian UI text
 	}
+	// New sessions and forwards are refused until the new vault is in place; one that slipped in
+	// before the flag joins a shut-down connection and fails without a login.
+	a.restoring.Store(true)
+	defer a.restoring.Store(false)
 	a.closeAllSessions()
 	a.stopAllForwards()
 	a.closeAllHostConns()
 	defer a.reopenHostConns()
+	a.dropAllFwdHostGroups()
 
 	vaultPath := filepath.Join(dir, vaultFile)
 	install := func() error {
@@ -172,6 +210,9 @@ func (a *App) VaultRestore(path, password string) error {
 func (a *App) reopenHostConns() {
 	a.hcMu.Lock()
 	defer a.hcMu.Unlock()
+	if a.exiting.Load() { // ServiceShutdown ran meanwhile: connections stay closed
+		return
+	}
 	a.hcDown = false
 	a.hcLastErr = nil
 }

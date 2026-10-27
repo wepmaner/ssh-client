@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
-  VaultCounts: vi.fn(() => Promise.resolve({ keys: 0, hosts: 0, forwards: 0 })),
+  VaultCounts: vi.fn(() => Promise.resolve({ keys: 0, hosts: 0, forwards: 0, vault_file: false })),
   VaultRestore: vi.fn(() => Promise.resolve()),
 }))
 vi.mock('../api', () => ({ ...api, errorText: String }))
@@ -26,6 +26,7 @@ describe('RestoreDialog', () => {
     expect(submit.disabled).toBe(true)
     const field = screen.getByLabelText('Пароль копии')
     await fireEvent.input(field, { target: { value: 'backup pass' } })
+    await waitFor(() => expect(submit.disabled).toBe(false))
     await fireEvent.submit(field.closest('form')!) // Enter in the field
     expect(api.VaultRestore).toHaveBeenCalledWith(path, 'backup pass')
     await waitFor(() => expect(onrestored).toHaveBeenCalled())
@@ -33,11 +34,33 @@ describe('RestoreDialog', () => {
   })
 
   it('warns and offers «Заменить» when the vault has data', async () => {
-    api.VaultCounts.mockResolvedValueOnce({ keys: 0, hosts: 0, forwards: 1 })
+    api.VaultCounts.mockResolvedValueOnce({ keys: 0, hosts: 0, forwards: 1, vault_file: true })
     render(RestoreDialog, { path, onclose: () => {}, onrestored: () => {} })
     expect(await screen.findByText(warning)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Заменить' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Восстановить' })).toBeNull()
+  })
+
+  it('waits for the vault contents before it lets the restore run', async () => {
+    let answer: (c: { keys: number; hosts: number; forwards: number; vault_file: boolean }) => void = () => {}
+    api.VaultCounts.mockReturnValueOnce(new Promise((r) => (answer = r)))
+    render(RestoreDialog, { path, onclose: () => {}, onrestored: () => {} })
+    const field = screen.getByLabelText('Пароль копии')
+    await fireEvent.input(field, { target: { value: 'backup pass' } })
+    await fireEvent.submit(field.closest('form')!) // a fast Enter
+    expect(api.VaultRestore).not.toHaveBeenCalled()
+    answer({ keys: 3, hosts: 0, forwards: 0, vault_file: true })
+    expect(await screen.findByText(warning)).toBeTruthy()
+    const submit = screen.getByRole('button', { name: 'Заменить' }) as HTMLButtonElement
+    await waitFor(() => expect(submit.disabled).toBe(false))
+  })
+
+  it('names the aside file for a corrupt vault without counted data', async () => {
+    api.VaultCounts.mockResolvedValueOnce({ keys: 0, hosts: 0, forwards: 0, vault_file: true })
+    render(RestoreDialog, { path, onclose: () => {}, onrestored: () => {} })
+    expect(await screen.findByText(/Текущее хранилище сохранится рядом как vault\.before-restore-/)).toBeTruthy()
+    expect(screen.queryByText(warning)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Восстановить' })).toBeTruthy()
   })
 
   it('shows a wrong password under the field and stays open', async () => {
@@ -47,7 +70,9 @@ describe('RestoreDialog', () => {
     render(RestoreDialog, { path, onclose, onrestored })
     const field = screen.getByLabelText('Пароль копии')
     await fireEvent.input(field, { target: { value: 'wrong' } })
-    await fireEvent.click(screen.getByRole('button', { name: 'Восстановить' }))
+    const submit = screen.getByRole('button', { name: 'Восстановить' }) as HTMLButtonElement
+    await waitFor(() => expect(submit.disabled).toBe(false))
+    await fireEvent.click(submit)
     const err = await screen.findByText('Неверный пароль копии')
     expect(field.getAttribute('aria-describedby')).toBe(err.id)
     expect(onclose).not.toHaveBeenCalled()

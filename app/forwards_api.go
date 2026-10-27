@@ -197,6 +197,9 @@ func (a *App) ForwardDelete(id string) error {
 // connecting or running. Progress and errors (a busy port, a failed login) arrive as fwd:state:<id>
 // events; the login questions are asked in the host's forwards group (fwdhost:data:<hostID>).
 func (a *App) ForwardStart(id string) error {
+	if a.restoring.Load() {
+		return errRestoring
+	}
 	if !a.storeUnlocked() {
 		return errVaultLocked
 	}

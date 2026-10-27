@@ -34,6 +34,9 @@ type SessionDTO struct {
 // a live connection is used without a login, a login in progress is waited for. Progress arrives as
 // term:state:<id> and term:data:<id> events, released after the view's first SessionResize.
 func (a *App) SessionOpen(hostID string, cols, rows int) (string, error) {
+	if a.restoring.Load() {
+		return "", errRestoring
+	}
 	if !a.storeUnlocked() {
 		return "", errVaultLocked
 	}

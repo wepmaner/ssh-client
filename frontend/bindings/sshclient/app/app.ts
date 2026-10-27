@@ -371,7 +371,8 @@ export function VaultBackup(password: string): $CancellablePromise<string> {
 }
 
 /**
- * VaultCounts returns how many keys, hosts and forwards are stored.
+ * VaultCounts returns how many keys, hosts and forwards are stored (zero unless the vault is
+ * open) and whether a vault.json exists.
  */
 export function VaultCounts(): $CancellablePromise<$models.VaultCountsDTO> {
     return $Call.ByID(3202868421).then(($result: any) => {

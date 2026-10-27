@@ -49,6 +49,8 @@ type App struct {
 	fwds         map[string]*fwdEntry // forward runtimes by forward ID
 	fwdKeepalive time.Duration        // keepalive interval of host connection clients; 0 means keepaliveInterval
 	autostarted  atomic.Bool          // the autostart forwards have been started in this run
+	restoring    atomic.Bool          // VaultRestore is swapping the vault: new sessions and forwards are refused
+	exiting      atomic.Bool          // ServiceShutdown has begun: a restore must not reopen host connections
 
 	// hcMu guards the host connections (hostconn.go); it is taken before a hostConn's own lock.
 	hcMu           sync.Mutex
@@ -187,6 +189,7 @@ func (a *App) ServiceStartup(_ context.Context, _ application.ServiceOptions) er
 
 // ServiceShutdown runs after the window has closed; it ends every SSH session and forward.
 func (a *App) ServiceShutdown() error {
+	a.exiting.Store(true)
 	a.closeAllSessions()
 	a.stopAllForwards()
 	a.closeAllHostConns()
