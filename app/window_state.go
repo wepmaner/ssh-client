@@ -74,6 +74,11 @@ func mainWindowOptions(base application.WebviewWindowOptions, ws model.WindowSta
 	}
 	if ws.Maximized {
 		base.StartState = application.WindowStateMaximised
+		// Wails (beta.25) positions the window after maximising it. WindowXY would
+		// move the maximised window to the saved corner, off its place by the frame
+		// (it overhangs the work area on every side); centring it lands exactly where
+		// Windows maximises it. X and Y still place the window it restores into.
+		base.InitialPosition = application.WindowCentered
 	}
 	return base
 }

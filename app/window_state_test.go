@@ -139,6 +139,17 @@ func TestMainWindowOptionsRestoresGeometryBeforeShow(t *testing.T) {
 	}
 }
 
+// Wails positions the window after maximising it: WindowXY would move the maximised
+// window to the saved corner, off its place by the frame, while centring a maximised
+// window puts it exactly where Windows maximises it.
+func TestMainWindowOptionsMaximisedIsCentred(t *testing.T) {
+	base := application.WebviewWindowOptions{Width: 1280, Height: 800}
+	got := mainWindowOptions(base, model.WindowState{X: 100, Y: 50, W: 1000, H: 700, Maximized: true}, true, twoMonitors)
+	if got.InitialPosition != application.WindowCentered || got.X != 100 || got.Y != 50 {
+		t.Fatalf("got %+v", got)
+	}
+}
+
 func TestCaptureWindowState(t *testing.T) {
 	none := func() (model.WindowState, bool) { return model.WindowState{}, false }
 	got, ok := captureWindowState(&fakeWindow{x: 10, y: 20, w: 1100, h: 750}, none)
