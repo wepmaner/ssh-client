@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 
 	"sshclient/internal/model"
@@ -30,15 +31,18 @@ var (
 	errMCPLoginCancelled = errors.New("Вход отменён в окне клиента")
 )
 
-// MCPLoginOpenDTO is the payload of mcplogin:open: the login needs the owner's input.
+// MCPLoginOpenDTO is the payload of mcplogin:open: the login needs the owner's input. LoginID goes
+// back with every call of the dialog, so a dialog of an ended login never reaches the next one.
 type MCPLoginOpenDTO struct {
 	HostID   string `json:"host_id"`
+	LoginID  string `json:"login_id"`
 	HostName string `json:"host_name"`
 }
 
 // MCPLoginCloseDTO is the payload of mcplogin:close: the login has ended.
 type MCPLoginCloseDTO struct {
-	HostID string `json:"host_id"`
+	HostID  string `json:"host_id"`
+	LoginID string `json:"login_id"`
 }
 
 // mcpHold is the MCP's lasting user of one host's connection, so a passphrase is not asked for each
@@ -69,6 +73,7 @@ type mcpCall struct {
 // end it. The owner answers it in the login dialog, whose stream is new for each login: the dialog
 // subscribes after mcplogin:open, and the stream holds the output until MCPLoginAttach.
 type mcpLogin struct {
+	id     string
 	conn   *hostConn
 	out    *outStream
 	ctx    context.Context
@@ -90,6 +95,12 @@ type mcpLogin struct {
 // mcpLoginTime; the error errMCPLoginPending leaves that login running for the next call. No lock
 // is held while waiting.
 func (a *App) mcpBegin(ctx context.Context, hostID string) (*ssh.Client, *mcpCall, error) {
+	if a.restoring.Load() {
+		return nil, nil, errRestoring
+	}
+	if a.exiting.Load() {
+		return nil, nil, sshclient.ErrCancelled
+	}
 	if _, err := a.hostParamsOf(hostID); err != nil {
 		return nil, nil, err // before the hold: a refused call leaves nothing behind
 	}
@@ -156,8 +167,8 @@ func (a *App) mcpReleaseAll() {
 }
 
 // MCPLoginWrite sends base64-encoded keystrokes from the login dialog to the question of the host's
-// login. Input with no login waiting is dropped.
-func (a *App) MCPLoginWrite(hostID, dataB64 string) error {
+// login loginID. Input for no login waiting, or for another one, is dropped.
+func (a *App) MCPLoginWrite(hostID, loginID, dataB64 string) error {
 	b, err := base64.StdEncoding.DecodeString(dataB64)
 	if err != nil {
 		return errBadInput
@@ -165,18 +176,18 @@ func (a *App) MCPLoginWrite(hostID, dataB64 string) error {
 	defer clear(b) // the keystrokes may be a passphrase or a password; the input queue keeps its own copy
 	a.mcpMu.Lock()
 	defer a.mcpMu.Unlock()
-	if l := a.mcpLoginLocked(hostID); l != nil && l.in != nil {
+	if l := a.mcpLoginLocked(hostID, loginID); l != nil && l.in != nil {
 		l.in.Write(b)
 	}
 	return nil
 }
 
-// MCPLoginCancel ends the host's login: the owner closed its dialog. Its calls get an error; a
-// console or forwards waiting for the same login take it over.
-func (a *App) MCPLoginCancel(hostID string) error {
+// MCPLoginCancel ends the login loginID: the owner closed its dialog. Its calls get an error; a
+// console or forwards waiting for the same login take it over. Another login is left alone.
+func (a *App) MCPLoginCancel(hostID, loginID string) error {
 	a.mcpMu.Lock()
 	defer a.mcpMu.Unlock()
-	if l := a.mcpLoginLocked(hostID); l != nil {
+	if l := a.mcpLoginLocked(hostID, loginID); l != nil {
 		l.cancelled = true
 		l.cancel()
 	}
@@ -185,9 +196,9 @@ func (a *App) MCPLoginCancel(hostID string) error {
 
 // MCPLoginAttach tells Go the dialog listens to mcplogin:data:<hostID>: the output held since
 // mcplogin:open is released. A dialog late for its login does nothing.
-func (a *App) MCPLoginAttach(hostID string) error {
+func (a *App) MCPLoginAttach(hostID, loginID string) error {
 	a.mcpMu.Lock()
-	l := a.mcpLoginLocked(hostID)
+	l := a.mcpLoginLocked(hostID, loginID)
 	a.mcpMu.Unlock()
 	if l != nil {
 		l.out.Attach()
@@ -195,9 +206,9 @@ func (a *App) MCPLoginAttach(hostID string) error {
 	return nil
 }
 
-// mcpLoginLocked is the host's login in progress, nil if none; the caller holds mcpMu.
-func (a *App) mcpLoginLocked(hostID string) *mcpLogin {
-	if h := a.mcpHolds[hostID]; h != nil {
+// mcpLoginLocked is the host's login in progress if it is loginID, else nil; the caller holds mcpMu.
+func (a *App) mcpLoginLocked(hostID, loginID string) *mcpLogin {
+	if h := a.mcpHolds[hostID]; h != nil && h.login != nil && h.login.id == loginID {
 		return h.login
 	}
 	return nil
@@ -270,10 +281,19 @@ func (a *App) mcpClient(call *mcpCall) (*ssh.Client, error) {
 		if err != nil {
 			return nil, err
 		}
-		if c != held {
-			continue // the host's parameters changed between the two steps
+		client, stale, err := c.clientFor(call)
+		if err != nil {
+			return nil, err
 		}
-		if client := c.clientFor(call); client != nil {
+		if stale || c != held { // the host's parameters changed meanwhile: only the current connection serves
+			select {
+			case <-timeout.C:
+				return nil, errMCPLoginPending
+			default:
+				continue
+			}
+		}
+		if client != nil {
 			a.mcpMu.Lock()
 			a.mcpSupersedeLocked(h, c)
 			a.mcpMu.Unlock()
@@ -325,16 +345,34 @@ func (a *App) mcpLeave(u any) {
 	closeClient(drop)
 }
 
+// mcpLeaveFrom is mcpLeave for a u still on c: a u that has moved to another connection stays there.
+func (a *App) mcpLeaveFrom(c *hostConn, u any) {
+	a.hcMu.Lock()
+	var drop *ssh.Client
+	if a.hcUsers[u] == c {
+		drop = c.leaveLocked(u)
+	}
+	a.hcMu.Unlock()
+	closeClient(drop)
+}
+
 // clientFor returns the connection's live client for u, nil if none. It never starts a login: only
-// the hold does, so a call's limit or cancel cannot end one.
-func (c *hostConn) clientFor(u any) *ssh.Client {
+// the hold does, so a call's limit or cancel cannot end one. A stale connection gives no client, and
+// reports it: a new call never goes there. A shut down one is ErrCancelled: it will never have one.
+func (c *hostConn) clientFor(u any) (client *ssh.Client, stale bool, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	client := c.liveClientLocked()
+	if c.shutdown {
+		return nil, false, sshclient.ErrCancelled
+	}
+	if c.stale {
+		return nil, true, nil
+	}
+	client = c.liveClientLocked()
 	if _, member := c.users[u]; member && client != nil {
 		c.users[u] = client
 	}
-	return client
+	return client, false, nil
 }
 
 // mcpLoginOn returns the hold's login on c, starting it. It returns nil for a hold that is gone.
@@ -349,7 +387,7 @@ func (a *App) mcpLoginOn(h *mcpHold, c *hostConn) *mcpLogin {
 		return h.login
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	l := &mcpLogin{conn: c, ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	l := &mcpLogin{id: uuid.NewString(), conn: c, ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	l.out = newOutStreamFor(a.events(), "mcplogin:data:"+h.hostID)
 	l.out.onOutput = func() { a.mcpOpenDialog(h.hostID, l) }
 	h.login = l
@@ -384,20 +422,20 @@ func (a *App) mcpRunLogin(h *mcpHold, l *mcpLogin) {
 			return q
 		},
 	}
-	_, err := l.conn.acquire(l.ctx, h, ask)
+	// The hold may have left since the call's join (a failed login before this one).
+	c, err := a.mcpJoinHold(h)
+	if err == nil {
+		_, err = c.acquire(l.ctx, h, ask)
+	}
 	a.mcpFinishLogin(h, l, err)
 }
 
-// mcpFinishLogin publishes the login's result. After a failure the hold leaves before its waiters
-// wake: a call that then starts a new login rejoins, and this leave cannot undo that.
+// mcpFinishLogin publishes the login's result. After a failure the hold leaves the login's
+// connection, unless a call has moved it on, before h.login is cleared: the next login starts after
+// this leave and rejoins in its own goroutine.
 func (a *App) mcpFinishLogin(h *mcpHold, l *mcpLogin, err error) {
 	if err != nil {
-		a.mcpMu.Lock()
-		current := h.login == l
-		a.mcpMu.Unlock()
-		if current {
-			a.mcpLeave(h)
-		}
+		a.mcpLeaveFrom(l.conn, h)
 	}
 	l.cancel()
 	a.mcpMu.Lock()
@@ -426,7 +464,7 @@ func (a *App) mcpOpenDialog(hostID string, l *mcpLogin) {
 		return
 	}
 	l.opened = true
-	a.events().Emit("mcplogin:open", MCPLoginOpenDTO{HostID: hostID, HostName: name})
+	a.events().Emit("mcplogin:open", MCPLoginOpenDTO{HostID: hostID, LoginID: l.id, HostName: name})
 	a.mcpMu.Unlock()
 	if a.mainWin != nil {
 		raiseWindow(a.mainWin)
@@ -439,7 +477,7 @@ func (a *App) mcpCloseDialogLocked(l *mcpLogin) {
 	l.ended = true
 	if l.opened {
 		l.opened = false
-		a.events().Emit("mcplogin:close", MCPLoginCloseDTO{HostID: l.conn.hostID})
+		a.events().Emit("mcplogin:close", MCPLoginCloseDTO{HostID: l.conn.hostID, LoginID: l.id})
 	}
 }
 

@@ -107,10 +107,27 @@ func (s sessionsApp) loginData(t *testing.T) string {
 	return b.String()
 }
 
+// loginID is the id of the n-th mcplogin:open, from 1; 0 is the latest, "" before the first.
+func (s sessionsApp) loginID(n int) string {
+	var ids []string
+	for _, e := range s.ev.snapshot() {
+		if e.name == "mcplogin:open" {
+			ids = append(ids, e.payload.(MCPLoginOpenDTO).LoginID)
+		}
+	}
+	switch {
+	case n > 0:
+		return ids[n-1]
+	case len(ids) > 0:
+		return ids[len(ids)-1]
+	}
+	return ""
+}
+
 // typeLogin types text and Enter into the host's login dialog.
 func (s sessionsApp) typeLogin(t *testing.T, text string) {
 	t.Helper()
-	if err := s.MCPLoginWrite(s.hostID, base64.StdEncoding.EncodeToString([]byte(text+"\r"))); err != nil {
+	if err := s.MCPLoginWrite(s.hostID, s.loginID(0), base64.StdEncoding.EncodeToString([]byte(text+"\r"))); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -119,7 +136,7 @@ func (s sessionsApp) typeLogin(t *testing.T, text string) {
 func (s sessionsApp) openLogin(t *testing.T, n int) {
 	t.Helper()
 	s.waitEvent(t, "mcplogin:open", n)
-	if err := s.MCPLoginAttach(s.hostID); err != nil {
+	if err := s.MCPLoginAttach(s.hostID, s.loginID(n)); err != nil {
 		t.Fatal(err)
 	}
 	s.ev.waitFor(t, hcWait, "the login prompt", func([]fakeEvent) bool {
@@ -259,7 +276,7 @@ func TestMCPOpenCarriesHost(t *testing.T) {
 	s.openLogin(t, 1)
 	for _, e := range s.ev.snapshot() {
 		if e.name == "mcplogin:open" {
-			if p := e.payload.(MCPLoginOpenDTO); p.HostID != s.hostID || p.HostName != "srv" {
+			if p := e.payload.(MCPLoginOpenDTO); p.HostID != s.hostID || p.HostName != "srv" || p.LoginID == "" {
 				t.Fatalf("payload %+v", p)
 			}
 		}
@@ -273,7 +290,7 @@ func TestMCPOpenCarriesHost(t *testing.T) {
 	s.waitEvent(t, "mcplogin:close", 1)
 	for _, e := range s.ev.snapshot() {
 		if e.name == "mcplogin:close" {
-			if p := e.payload.(MCPLoginCloseDTO); p.HostID != s.hostID {
+			if p := e.payload.(MCPLoginCloseDTO); p.HostID != s.hostID || p.LoginID != s.loginID(1) {
 				t.Fatalf("payload %+v", p)
 			}
 		}
@@ -349,7 +366,7 @@ func TestMCPLoginCancelled(t *testing.T) {
 	first := s.beginAsync(context.Background())
 	second := s.beginAsync(context.Background())
 	s.openLogin(t, 1)
-	if err := s.MCPLoginCancel(s.hostID); err != nil {
+	if err := s.MCPLoginCancel(s.hostID, s.loginID(0)); err != nil {
 		t.Fatal(err)
 	}
 	for _, ch := range []chan begun{first, second} {
@@ -393,14 +410,14 @@ func TestMCPLoginWrongPassphrase(t *testing.T) {
 
 func TestMCPLoginWriteWithoutLoginIsDropped(t *testing.T) {
 	s := newMCPApp(t)
-	if err := s.MCPLoginWrite(s.hostID, "!!! not base64"); !errors.Is(err, errBadInput) {
+	if err := s.MCPLoginWrite(s.hostID, "", "!!! not base64"); !errors.Is(err, errBadInput) {
 		t.Fatalf("got %v", err)
 	}
 	s.typeLogin(t, "typed into nothing")
-	if err := s.MCPLoginCancel(s.hostID); err != nil {
+	if err := s.MCPLoginCancel(s.hostID, "no-such-login"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.MCPLoginAttach(s.hostID); err != nil {
+	if err := s.MCPLoginAttach(s.hostID, "no-such-login"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -410,7 +427,7 @@ func TestMCPTrustRefusedIsError(t *testing.T) {
 	untrust(t)
 	ch := s.beginAsync(context.Background())
 	s.waitEvent(t, "mcplogin:open", 1)
-	if err := s.MCPLoginAttach(s.hostID); err != nil {
+	if err := s.MCPLoginAttach(s.hostID, s.loginID(1)); err != nil {
 		t.Fatal(err)
 	}
 	q := s.ev.waitTrustAsk(t, 1)
@@ -522,7 +539,7 @@ func TestMCPDialogCancelHandsLoginToConsole(t *testing.T) {
 	s.openLogin(t, 1)
 	id := s.open(t)
 	s.ev.waitData(t, id, "Идёт вход по MCP")
-	if err := s.MCPLoginCancel(s.hostID); err != nil {
+	if err := s.MCPLoginCancel(s.hostID, s.loginID(0)); err != nil {
 		t.Fatal(err)
 	}
 	if r := waitBegun(t, ch); !errors.Is(r.err, errMCPLoginCancelled) {
@@ -823,5 +840,155 @@ func TestMCPOutStreamOnOutputOnce(t *testing.T) {
 	mustWrite(t, o, "b")
 	if n != 1 {
 		t.Fatalf("called %d times", n)
+	}
+}
+
+func TestMCPOldLoginIDReachesNothing(t *testing.T) {
+	s := newMCPApp(t)
+	first := s.beginAsync(context.Background())
+	s.openLogin(t, 1)
+	old := s.loginID(1)
+	if err := s.MCPLoginCancel(s.hostID, old); err != nil {
+		t.Fatal(err)
+	}
+	if r := waitBegun(t, first); !errors.Is(r.err, errMCPLoginCancelled) {
+		t.Fatalf("got %v", r.err)
+	}
+	s.waitEvent(t, "mcplogin:close", 1)
+
+	ch := s.beginAsync(context.Background())
+	s.waitEvent(t, "mcplogin:open", 2)
+	if s.loginID(2) == old {
+		t.Fatal("two logins with one id")
+	}
+	// Calls late from the first dialog: none of them touches the second login.
+	shown := s.ev.count("mcplogin:data:" + s.hostID)
+	if err := s.MCPLoginAttach(s.hostID, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MCPLoginCancel(s.hostID, old); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if n := s.ev.count("mcplogin:data:" + s.hostID); n != shown {
+		t.Fatalf("an old attach released output: %d data events, was %d", n, shown)
+	}
+	if n := s.ev.count("mcplogin:close"); n != 1 {
+		t.Fatalf("an old cancel ended the login: %d closes", n)
+	}
+	s.openLogin(t, 2)
+	bad := base64.StdEncoding.EncodeToString([]byte("wrong\r"))
+	if err := s.MCPLoginWrite(s.hostID, old, bad); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if n := strings.Count(s.loginData(t), passphrasePrompt); n != 2 {
+		t.Fatalf("old input reached the login: %d prompts", n)
+	}
+	s.typeLogin(t, fwdPassphrase)
+	r := waitBegun(t, ch)
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	s.mcpEnd(r.call)
+}
+
+func TestMCPClientForRefusesStaleConnection(t *testing.T) {
+	s := newPlainMCPApp(t)
+	r := s.mustBegin(t)
+	defer s.mcpEnd(r.call)
+	c := s.connOf(r.call)
+	if cl, stale, err := c.clientFor(r.call); err != nil || stale || cl != r.client {
+		t.Fatalf("current connection: %v, %v, %v", cl, stale, err)
+	}
+	s.renameUser(t, "bob")
+	if cl, stale, err := c.clientFor(r.call); err != nil || !stale || cl != nil {
+		t.Fatalf("stale connection: %v, %v, %v", cl, stale, err)
+	}
+}
+
+func TestMCPRefusedDuringRestoreAndExit(t *testing.T) {
+	s := newPlainMCPApp(t)
+	s.restoring.Store(true)
+	if _, _, err := s.mcpBegin(context.Background(), s.hostID); !errors.Is(err, errRestoring) {
+		t.Fatalf("got %v", err)
+	}
+	s.restoring.Store(false)
+	s.exiting.Store(true)
+	if _, _, err := s.mcpBegin(context.Background(), s.hostID); !errors.Is(err, sshclient.ErrCancelled) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestMCPCallAfterCloseAllReturns(t *testing.T) {
+	s := newPlainMCPApp(t)
+	s.mcpLoginLimit = 200 * time.Millisecond
+	s.closeAllHostConns()
+	if r := waitBegun(t, s.beginAsync(context.Background())); !errors.Is(r.err, sshclient.ErrCancelled) {
+		t.Fatalf("got %v", r.err)
+	}
+}
+
+// renameUser changes a login parameter of the host as HostSave does.
+func (s sessionsApp) renameUser(t *testing.T, name string) {
+	t.Helper()
+	h := s.storeRef().Hosts()[0]
+	h.User = name
+	if _, err := s.storeRef().SaveHost(h); err != nil {
+		t.Fatal(err)
+	}
+	s.markHostStale(s.hostID)
+}
+
+func (s sessionsApp) holdOf(t *testing.T) *mcpHold {
+	t.Helper()
+	s.mcpMu.Lock()
+	defer s.mcpMu.Unlock()
+	h := s.mcpHolds[s.hostID]
+	if h == nil {
+		t.Fatal("the host has no hold")
+	}
+	return h
+}
+
+func TestMCPFailedOldLoginKeepsHoldOnNewConnection(t *testing.T) {
+	s := newPlainMCPApp(t)
+	r := s.mustBegin(t)
+	s.mcpEnd(r.call)
+	h := s.holdOf(t)
+	old := s.connOf(h)
+	s.renameUser(t, "bob")
+	fresh, err := s.joinHostConn(s.hostID, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &mcpLogin{conn: old, cancel: func() {}, done: make(chan struct{})}
+	s.mcpMu.Lock()
+	h.login = l
+	s.mcpMu.Unlock()
+	s.mcpFinishLogin(h, l, errors.New("failed"))
+	if got := s.connOf(h); got != fresh {
+		t.Fatalf("the hold is on %p, want %p", got, fresh)
+	}
+}
+
+func TestMCPLoginRejoinsHold(t *testing.T) {
+	s := newPlainMCPApp(t)
+	r := s.mustBegin(t)
+	s.mcpEnd(r.call)
+	h := s.holdOf(t)
+	s.mcpLeave(h) // as a failed login's leave, between a call's join and its new login
+	c := mustConn(t, s)
+	l := s.mcpLoginOn(h, c)
+	select {
+	case <-l.done:
+	case <-time.After(hcWait):
+		t.Fatal("the login did not end")
+	}
+	if l.err != nil {
+		t.Fatal(l.err)
+	}
+	if s.connOf(h) != c {
+		t.Fatal("the hold is not on the connection")
 	}
 }
