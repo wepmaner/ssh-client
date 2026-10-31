@@ -22,7 +22,9 @@ func (a *App) GetSettings() model.Settings {
 	if !a.storeUnlocked() {
 		return model.DefaultSettings()
 	}
-	return a.storeRef().Settings()
+	set := a.storeRef().Settings()
+	set.MCPToken = "" // the token is shown only by the MCP settings screen
+	return set
 }
 
 // SaveSettings stores the user settings. The font comes from the fixed list, the size is
@@ -40,7 +42,9 @@ func (a *App) SaveSettings(s model.Settings) error {
 	case !slices.Contains(lockMinutes, s.LockAfterMin):
 		return fieldError("lock", "Блокировка через 5, 15 или 30 минут или никогда")
 	}
-	s.Window = a.storeRef().Settings().Window // the geometry is Go's: the window saves it on close
+	cur := a.storeRef().Settings()
+	s.Window = cur.Window // the geometry is Go's: the window saves it on close
+	s.MCPEnabled, s.MCPPort, s.MCPToken = cur.MCPEnabled, cur.MCPPort, cur.MCPToken // changed only by the MCP API
 	return a.storeRef().SaveSettings(s)
 }
 

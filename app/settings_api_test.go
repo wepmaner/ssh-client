@@ -35,3 +35,30 @@ func TestSaveSettingsValidates(t *testing.T) {
 		t.Fatalf("a rejected save changed the settings: %+v", got)
 	}
 }
+
+func TestSaveSettingsKeepsMCPFields(t *testing.T) {
+	a := newKeysApp(t)
+	if err := a.storeRef().SaveMCP(true, 5000, "secret"); err != nil {
+		t.Fatal(err)
+	}
+	s := model.DefaultSettings()
+	s.MCPEnabled, s.MCPPort, s.MCPToken = false, 9999, "forged"
+	if err := a.SaveSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	got := a.storeRef().Settings()
+	if !got.MCPEnabled || got.MCPPort != 5000 || got.MCPToken != "secret" {
+		t.Fatalf("MCP fields changed by SaveSettings: %+v", got)
+	}
+}
+
+func TestGetSettingsHidesToken(t *testing.T) {
+	a := newKeysApp(t)
+	if err := a.storeRef().SaveMCP(true, 5000, "secret"); err != nil {
+		t.Fatal(err)
+	}
+	got := a.GetSettings()
+	if got.MCPToken != "" || !got.MCPEnabled || got.MCPPort != 5000 {
+		t.Fatalf("settings = %+v", got)
+	}
+}

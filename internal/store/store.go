@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -55,6 +56,7 @@ func (s *Store) mutate(f func(d *model.VaultData) error) error {
 	snapshot.Groups = slices.Clone(d.Groups)
 	snapshot.Keys = cloneKeys(d.Keys)
 	snapshot.Forwards = slices.Clone(d.Forwards)
+	snapshot.MCPJournal = slices.Clone(d.MCPJournal)
 	if err := f(d); err != nil {
 		*d = snapshot
 		return err
@@ -340,13 +342,82 @@ func (s *Store) DeleteForward(id string) error {
 
 // Settings returns the user settings.
 func (s *Store) Settings() model.Settings {
-	return read(s, func(d *model.VaultData) model.Settings { return d.Settings })
+	return read(s, func(d *model.VaultData) model.Settings {
+		set := d.Settings
+		if set.MCPPort == 0 { // a vault written before MCP existed
+			set.MCPPort = model.DefaultMCPPort
+		}
+		return set
+	})
 }
 
 // SaveSettings replaces the user settings.
 func (s *Store) SaveSettings(set model.Settings) error {
 	return s.mutate(func(d *model.VaultData) error {
 		d.Settings = set
+		return nil
+	})
+}
+
+const (
+	mcpJournalMax     = 500
+	mcpJournalTextMax = 2048
+)
+
+// truncateText cuts s to at most max bytes without splitting a rune.
+func truncateText(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
+	}
+	return s[:max]
+}
+
+// MCPJournalAdd appends a record, cutting its text to 2 KB, and keeps the last 500.
+func (s *Store) MCPJournalAdd(r model.MCPRecord) error {
+	r.Text = truncateText(r.Text, mcpJournalTextMax)
+	return s.mutate(func(d *model.VaultData) error {
+		d.MCPJournal = append(d.MCPJournal, r)
+		if n := len(d.MCPJournal) - mcpJournalMax; n > 0 {
+			d.MCPJournal = slices.Clone(d.MCPJournal[n:])
+		}
+		return nil
+	})
+}
+
+// MCPJournalFinish records the exit code and duration of the record id; an unknown id (already
+// trimmed away) is not an error.
+func (s *Store) MCPJournalFinish(id string, exit *int, ms int64) error {
+	return s.mutate(func(d *model.VaultData) error {
+		if i := slices.IndexFunc(d.MCPJournal, func(r model.MCPRecord) bool { return r.ID == id }); i >= 0 {
+			d.MCPJournal[i].ExitCode = exit
+			d.MCPJournal[i].DurationMs = ms
+		}
+		return nil
+	})
+}
+
+// MCPJournal returns a copy of the journal, newest first.
+func (s *Store) MCPJournal() []model.MCPRecord {
+	out := read(s, func(d *model.VaultData) []model.MCPRecord { return slices.Clone(d.MCPJournal) })
+	slices.Reverse(out)
+	return out
+}
+
+// MCPJournalClear empties the journal.
+func (s *Store) MCPJournalClear() error {
+	return s.mutate(func(d *model.VaultData) error {
+		d.MCPJournal = nil
+		return nil
+	})
+}
+
+// SaveMCP stores the MCP server switch, port and token.
+func (s *Store) SaveMCP(enabled bool, port int, token string) error {
+	return s.mutate(func(d *model.VaultData) error {
+		d.Settings.MCPEnabled, d.Settings.MCPPort, d.Settings.MCPToken = enabled, port, token
 		return nil
 	})
 }

@@ -23,6 +23,7 @@ var ErrNotBackup = errors.New("store: not a vault backup")
 func backupPlain(d *model.VaultData) ([]byte, error) {
 	c := *d
 	c.Settings.Window = model.DefaultSettings().Window
+	c.MCPJournal = nil // the journal belongs to this machine's history
 	return json.Marshal(c)
 }
 

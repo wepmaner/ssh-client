@@ -41,6 +41,8 @@ type HostDTO struct {
 	KeyName   string `json:"key_name"`
 	OS        string `json:"os"`
 	Connected bool   `json:"connected"`
+	// MCPAccess is "" (closed), "read" or "full".
+	MCPAccess string `json:"mcp_access"`
 }
 
 // GroupDTO is a host group with its member counts.
@@ -91,7 +93,7 @@ func (a *App) HostsList() []HostDTO {
 		out = append(out, HostDTO{
 			ID: h.ID, Name: h.Name, Address: h.Address, Port: h.Port, User: h.User,
 			GroupID: h.GroupID, GroupName: groupNames[h.GroupID], KeyID: h.KeyID, KeyName: keyNames[h.KeyID],
-			OS: h.OS, Connected: connected[h.ID],
+			OS: h.OS, Connected: connected[h.ID], MCPAccess: h.MCPAccess,
 		})
 	}
 	slices.SortStableFunc(out, byName(func(h HostDTO) string { return h.Name }))
@@ -113,7 +115,7 @@ func (a *App) hostDTO(id string) (HostDTO, error) {
 func normalizeHost(in HostDTO) (model.Host, error) {
 	h := model.Host{
 		ID: in.ID, Name: strings.TrimSpace(in.Name), Address: strings.TrimSpace(in.Address), Port: in.Port,
-		User: strings.TrimSpace(in.User), GroupID: in.GroupID, KeyID: in.KeyID, OS: in.OS,
+		User: strings.TrimSpace(in.User), GroupID: in.GroupID, KeyID: in.KeyID, OS: in.OS, MCPAccess: in.MCPAccess,
 	}
 	if h.Port == 0 {
 		h.Port = defaultSSHPort
@@ -127,6 +129,8 @@ func normalizeHost(in HostDTO) (model.Host, error) {
 		return h, fieldError("port", "Порт от 1 до 65535")
 	case h.User == "":
 		return h, fieldError("user", "Укажите пользователя")
+	case h.MCPAccess != model.MCPAccessClosed && h.MCPAccess != model.MCPAccessRead && h.MCPAccess != model.MCPAccessFull:
+		return h, fieldError("mcp_access", "Выберите доступ из списка")
 	}
 	if h.Name == "" {
 		h.Name = h.Address

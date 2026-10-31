@@ -1,8 +1,12 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"sshclient/internal/model"
 )
@@ -234,5 +238,85 @@ func TestAddHostsSavesAllAtOnce(t *testing.T) {
 	}
 	if added[1].ID != all[1].ID {
 		t.Fatalf("returned %+v", added)
+	}
+}
+
+func TestMCPJournalKeepsLast500(t *testing.T) {
+	s := newTestStore(t)
+	for i := 0; i < 510; i++ {
+		if err := s.MCPJournalAdd(model.MCPRecord{ID: fmt.Sprint(i), Tool: "t"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	j := s.MCPJournal()
+	if len(j) != 500 || j[0].ID != "509" || j[499].ID != "10" {
+		t.Fatalf("len=%d first=%s last=%s", len(j), j[0].ID, j[len(j)-1].ID)
+	}
+	if err := s.MCPJournalClear(); err != nil || len(s.MCPJournal()) != 0 {
+		t.Fatalf("clear: %v %d", err, len(s.MCPJournal()))
+	}
+}
+
+func TestMCPJournalTruncatesText(t *testing.T) {
+	s := newTestStore(t)
+	// "я" is two bytes: 1025 of them are 2050 bytes, the cut at 2048 is on a rune boundary;
+	// the leading "a" shifts it so the cut would land inside a rune.
+	text := "a" + strings.Repeat("я", 1025)
+	if err := s.MCPJournalAdd(model.MCPRecord{ID: "1", Text: text}); err != nil {
+		t.Fatal(err)
+	}
+	got := s.MCPJournal()[0].Text
+	if len(got) > 2048 || !utf8.ValidString(got) || len(got) < 2046 {
+		t.Fatalf("len=%d valid=%v", len(got), utf8.ValidString(got))
+	}
+	if err := s.MCPJournalAdd(model.MCPRecord{ID: "2", Text: "short"}); err != nil || s.MCPJournal()[0].Text != "short" {
+		t.Fatal("short text changed")
+	}
+}
+
+func TestMCPJournalFinish(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.MCPJournalAdd(model.MCPRecord{ID: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	code := 3
+	if err := s.MCPJournalFinish("a", &code, 120); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MCPJournalFinish("gone", &code, 1); err != nil {
+		t.Fatalf("unknown id: %v", err)
+	}
+	r := s.MCPJournal()[0]
+	if r.ExitCode == nil || *r.ExitCode != 3 || r.DurationMs != 120 {
+		t.Fatalf("record = %+v", r)
+	}
+}
+
+func TestOldVaultHostsClosed(t *testing.T) {
+	var d model.VaultData
+	old := `{"hosts":[{"id":"h","name":"n","address":"a","port":22,"user":"u"}],"settings":{"terminal_size":13}}`
+	if err := json.Unmarshal([]byte(old), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Hosts[0].MCPAccess != model.MCPAccessClosed || d.Settings.MCPPort != 0 || d.Settings.MCPEnabled {
+		t.Fatalf("data = %+v", d)
+	}
+	s := newTestStore(t)
+	if err := s.SaveMCP(false, 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Settings().MCPPort; got != model.DefaultMCPPort {
+		t.Fatalf("zero port read as %d", got)
+	}
+}
+
+func TestSaveMCP(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.SaveMCP(true, 5000, "tok"); err != nil {
+		t.Fatal(err)
+	}
+	set := s.Settings()
+	if !set.MCPEnabled || set.MCPPort != 5000 || set.MCPToken != "tok" {
+		t.Fatalf("settings = %+v", set)
 	}
 }

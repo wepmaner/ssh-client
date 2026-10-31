@@ -167,3 +167,18 @@ func TestHostDeleteClosesItsSessions(t *testing.T) {
 		t.Fatalf("key still used: %+v", l)
 	}
 }
+
+func TestHostSaveRejectsUnknownAccess(t *testing.T) {
+	a, keyID := newHostsApp(t)
+	in := HostDTO{Address: "srv.example.test", Port: 22, User: "deploy", KeyID: keyID, MCPAccess: "root"}
+	_, err := a.HostSave(in)
+	wantField(t, err, "mcp_access")
+	for _, mode := range []string{"", "read", "full"} {
+		in.MCPAccess = mode
+		in.ID = ""
+		h, err := a.HostSave(in)
+		if err != nil || h.MCPAccess != mode {
+			t.Fatalf("mode %q: %+v %v", mode, h, err)
+		}
+	}
+}

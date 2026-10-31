@@ -400,3 +400,27 @@ func TestRetireExcludesVaultWriters(t *testing.T) {
 		t.Fatal("SetPassword on the retired vault succeeded")
 	}
 }
+
+func TestBackupHasNoJournal(t *testing.T) {
+	s, _ := filledStore(t)
+	if err := s.MCPJournalAdd(model.MCPRecord{ID: "1", Text: "ls"}); err != nil {
+		t.Fatal(err)
+	}
+	out := backupPath(t)
+	if err := s.Backup(out, []byte("pw")); err != nil {
+		t.Fatal(err)
+	}
+	v, err := OpenVault(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Unlock([]byte("pw")); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(v.Data().MCPJournal); n != 0 {
+		t.Fatalf("backup carries %d journal records", n)
+	}
+	if len(s.MCPJournal()) != 1 {
+		t.Fatal("backup cleared the live journal")
+	}
+}
