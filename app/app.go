@@ -56,7 +56,7 @@ type App struct {
 	hcMu           sync.Mutex
 	hostConns      map[string]*hostConn            // the current connection of each host
 	hcLive         map[*hostConn]struct{}          // every connection with users, stale ones included
-	hcUsers        map[any]*hostConn               // the connection each user (*fwdRun, *session) is on
+	hcUsers        map[any]*hostConn               // the connection each user (*fwdRun, *session, *mcpHold, *mcpCall) is on
 	hostKeyChanged map[string]bool                 // hosts whose server key changed: blocked until restart
 	hcLastErr      map[string]HostConnStateDTO     // the error state a host's connection closed in, shown until the next login
 	hcDown         bool                            // closeAllHostConns has run
@@ -64,6 +64,13 @@ type App struct {
 
 	fwdHostMu sync.Mutex // guards fwdHosts and each group's input; taken last
 	fwdHosts  map[string]*fwdHostGroup
+
+	// mcpMu guards the MCP holds and logins (mcp_conn.go). It is taken alone: neither hcMu nor a
+	// hostConn's lock is held with it, in either order.
+	mcpMu         sync.Mutex
+	mcpHolds      map[string]*mcpHold // the hold of each host
+	mcpHoldTTL    time.Duration       // 0 means mcpHoldTime
+	mcpLoginLimit time.Duration       // 0 means mcpLoginTime
 
 	version string                   // the release version, "dev" in local builds
 	putty   importers.RegistryReader // PuTTY sessions source; nil means the Windows registry

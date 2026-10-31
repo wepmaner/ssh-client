@@ -38,7 +38,7 @@ type HostConnStateDTO struct {
 	Error     string `json:"error"`
 	Detail    string `json:"detail"`
 	Retryable bool   `json:"retryable"` // false after ErrHostKeyChanged until restart
-	Asker     string `json:"asker"`     // ""|"forwards"|"session": who answers the current login
+	Asker     string `json:"asker"`     // ""|"forwards"|"session"|"mcp": who answers the current login
 	Session   string `json:"session"`   // the session's label when Asker is "session"
 }
 
@@ -69,7 +69,7 @@ type hostConn struct {
 	wg sync.WaitGroup // attempts, client watchers and keepalives
 
 	mu         sync.Mutex
-	users      map[any]*ssh.Client // *fwdRun and *session values, with the client each got last
+	users      map[any]*ssh.Client // *fwdRun, *session, *mcpHold and *mcpCall values, with the client each got last
 	client     *ssh.Client
 	dead       chan struct{} // closed when client.Wait has returned
 	att        *loginAttempt // the login in progress, nil if none
@@ -472,7 +472,10 @@ func (c *hostConn) startLocked(ask *connAsker, loop bool, delay time.Duration) *
 	att := &loginAttempt{ask: ask, loop: loop, delay: delay, ctx: ctx, cancel: cancel, done: make(chan struct{}), keep: true}
 	c.att = att
 	st := HostConnStateDTO{Status: hostConnConnecting, Asker: "forwards"}
-	if ask.label != "" {
+	switch {
+	case ask.mcp:
+		st.Asker = "mcp"
+	case ask.label != "":
 		st.Asker, st.Session = "session", ask.label
 	}
 	if loop { // the last failure stays visible while the reconnect waits

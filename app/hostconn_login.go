@@ -15,6 +15,7 @@ import (
 const (
 	waitForwardsLogin = "Идёт вход для пробросов: ответьте в разделе «Пробросы»\r\n"
 	waitSessionLogin  = "Идёт вход в консоли «%s»\r\n"
+	waitMCPLogin      = "Идёт вход по MCP: ответьте в окне клиента\r\n"
 )
 
 // connAsker is who answers the login questions of one acquire: a session's terminal or a host's forwards group.
@@ -23,6 +24,7 @@ type connAsker struct {
 	in       *inputQueue
 	trust    trustOwner
 	label    string              // "" for the forwards group; the host name for a session
+	mcp      bool                // the MCP login dialog: it shows no wait text, so it opens only for a question
 	prompter *sshclient.Prompter // optional: a session passes its own to read Pending after login; nil — built from out/in
 	// newInput (optional) gives a fresh input queue for each login this asker answers; it replaces
 	// in. The forwards group uses it, so a late answer never reaches the next login.
@@ -54,8 +56,10 @@ type loginAttempt struct {
 // waitText is what ask's terminal shows while the login of answering runs elsewhere; "" for its own.
 func waitText(answering, ask *connAsker) string {
 	switch {
-	case answering.out == ask.out:
+	case answering.out == ask.out, ask.mcp:
 		return ""
+	case answering.mcp:
+		return waitMCPLogin
 	case answering.label == "":
 		return waitForwardsLogin
 	default:

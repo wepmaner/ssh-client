@@ -35,6 +35,9 @@ type outStream struct {
 	// replaces the earlier ones. A forwards group that is never attached (a host with consoles only)
 	// holds one state, not every state of its connection.
 	latestEvent string
+	// onOutput (optional, set before the first Write) is called once, on the first output, outside
+	// the stream's locks. The MCP login opens its dialog with it.
+	onOutput func()
 
 	emitMu sync.Mutex // serialises emissions so data and state events keep their order
 
@@ -59,10 +62,18 @@ func newOutStreamFor(e emitter, dataEvent string) *outStream {
 
 // Write implements io.Writer for the Prompter and the shell output. It never blocks on the UI.
 func (o *outStream) Write(b []byte) (int, error) {
+	if first := o.queue(b); first != nil {
+		first()
+	}
+	return len(b), nil
+}
+
+// queue adds b to the output and returns onOutput on the first call.
+func (o *outStream) queue(b []byte) (first func()) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.closed {
-		return len(b), nil
+		return nil
 	}
 	o.buf = append(o.buf, b...)
 	if o.attached {
@@ -72,7 +83,8 @@ func (o *outStream) Write(b []byte) (int, error) {
 	} else {
 		o.trimLocked()
 	}
-	return len(b), nil
+	first, o.onOutput = o.onOutput, nil
+	return first
 }
 
 // trimLocked drops the oldest held output beyond maxHeldBytes; the caller holds mu.
