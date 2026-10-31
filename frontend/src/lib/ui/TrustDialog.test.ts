@@ -24,6 +24,7 @@ const q1 = {
   id: 'q1',
   session_id: 's1',
   forward_host_id: '',
+  mcp_host_id: '',
   host: 'example.test',
   port: 22,
   user: 'alice',
@@ -72,6 +73,14 @@ describe('TrustDialog', () => {
     // A security prompt defaults to the safe answer; trusting takes a deliberate click or Tab.
     expect(document.activeElement).toBe(cancel())
     expect(primary().className).toContain('primary')
+  })
+
+  it('shows an MCP question whatever tab is active', async () => {
+    ui.activeTab = 'home'
+    await emit('trust:ask', { ...q1, session_id: '', mcp_host_id: 'h9' })
+    expect(dialog()).toBeTruthy()
+    await fireEvent.click(cancel())
+    expect(api.TrustAnswer).toHaveBeenCalledWith('q1', false)
   })
 
   it('copies the fingerprint', async () => {

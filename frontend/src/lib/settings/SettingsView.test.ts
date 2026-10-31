@@ -18,6 +18,16 @@ const api = vi.hoisted(() => ({
   VaultBackup: vi.fn(() => Promise.resolve('C:\\Users\\me\\sshclient-backup-2026-10-27.vault')),
   VaultRestorePick: vi.fn(() => Promise.resolve('')),
   VaultRestore: vi.fn(() => Promise.resolve()),
+  EventsOn: vi.fn(() => () => {}),
+  MCPStatus: vi.fn(() => Promise.resolve({ enabled: false, port: 47821, state: 'off', error: '', detail: '' })),
+  MCPSetEnabled: vi.fn(),
+  MCPSetPort: vi.fn(),
+  MCPRotateToken: vi.fn(),
+  MCPPrompt: vi.fn(),
+  MCPAddCommand: vi.fn(),
+  MCPJournalList: vi.fn(() => Promise.resolve([])),
+  MCPJournalClear: vi.fn(),
+  ClipboardSetText: vi.fn(),
 }))
 vi.mock('../api', async () => {
   const model = await import('../../../bindings/sshclient/internal/model/models')
@@ -29,6 +39,12 @@ import { settings, toastState, vault } from '../stores.svelte'
 import SettingsView from './SettingsView.svelte'
 
 describe('SettingsView', () => {
+  it('has the MCP block after storage and security', () => {
+    render(SettingsView)
+    const heads = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
+    expect(heads.indexOf('Доступ по MCP')).toBe(heads.indexOf('Хранилище и безопасность') + 1)
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     Object.assign(settings, JSON.parse(JSON.stringify(model.Settings.createFrom({

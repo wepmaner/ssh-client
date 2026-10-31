@@ -13,6 +13,7 @@ export {
     HostDTO,
     ImportResult,
     KeyDTO,
+    MCPStatusDTO,
     SessionDTO,
     VaultCountsDTO,
     VaultStateDTO

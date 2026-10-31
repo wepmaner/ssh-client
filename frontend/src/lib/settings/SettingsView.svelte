@@ -20,6 +20,7 @@
   import RestoreButton from '../backup/RestoreButton.svelte'
   import Button from '../ui/Button.svelte'
   import PasswordDialog from '../ui/PasswordDialog.svelte'
+  import McpSection from './McpSection.svelte'
   import VaultDialog from './VaultDialog.svelte'
 
   const fonts = ['Cascadia Mono', 'JetBrains Mono', 'Consolas']
@@ -216,6 +217,8 @@
       <Button variant="outline" onclick={exportHosts}>Экспорт хостов в файл</Button>
     </div>
   </section>
+
+  <McpSection />
 
   <section class="card" aria-labelledby="set-import">
     <h2 id="set-import">Импорт</h2>

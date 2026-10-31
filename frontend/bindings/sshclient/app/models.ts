@@ -105,7 +105,7 @@ export class ForwardHostDTO {
     "retryable": boolean;
 
     /**
-     * ""|"forwards"|"session": who answers the current login
+     * ""|"forwards"|"session"|"mcp": who answers the current login
      */
     "asker": string;
 
@@ -207,6 +207,11 @@ export class HostDTO {
     "os": string;
     "connected": boolean;
 
+    /**
+     * MCPAccess is "" (closed), "read" or "full".
+     */
+    "mcp_access": string;
+
     /** Creates a new HostDTO instance. */
     constructor($$source: Partial<HostDTO> = {}) {
         if (!("id" in $$source)) {
@@ -241,6 +246,9 @@ export class HostDTO {
         }
         if (!("connected" in $$source)) {
             this["connected"] = false;
+        }
+        if (!("mcp_access" in $$source)) {
+            this["mcp_access"] = "";
         }
 
         Object.assign(this, $$source);
@@ -359,6 +367,48 @@ export class KeyDTO {
             $$parsedSource["host_ids"] = $$createField10_0($$parsedSource["host_ids"]);
         }
         return new KeyDTO($$parsedSource as Partial<KeyDTO>);
+    }
+}
+
+/**
+ * MCPStatusDTO is the state of the MCP server for the Settings screen. State is off, running or
+ * error; Error is the Russian text of a failed start, Detail its system text. It never carries the
+ * token.
+ */
+export class MCPStatusDTO {
+    "enabled": boolean;
+    "port": number;
+    "state": string;
+    "error": string;
+    "detail": string;
+
+    /** Creates a new MCPStatusDTO instance. */
+    constructor($$source: Partial<MCPStatusDTO> = {}) {
+        if (!("enabled" in $$source)) {
+            this["enabled"] = false;
+        }
+        if (!("port" in $$source)) {
+            this["port"] = 0;
+        }
+        if (!("state" in $$source)) {
+            this["state"] = "";
+        }
+        if (!("error" in $$source)) {
+            this["error"] = "";
+        }
+        if (!("detail" in $$source)) {
+            this["detail"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new MCPStatusDTO instance from a string or object.
+     */
+    static createFrom($$source: any = {}): MCPStatusDTO {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new MCPStatusDTO($$parsedSource as Partial<MCPStatusDTO>);
     }
 }
 

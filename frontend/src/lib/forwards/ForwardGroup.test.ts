@@ -165,6 +165,15 @@ describe('ForwardGroup', () => {
     expect(screen.queryByTestId('mini-terminal')).toBeNull()
   })
 
+  it('shows the MCP note while an MCP login answers', async () => {
+    await load([host('h1', 'alpha')], [fwd('f1', 'h1', 'alpha', 'Web', 'starting')])
+    render(ForwardsView)
+    handlers.get('fwdhost:data:h1')?.(btoa('Password: '))
+    handlers.get('fwdhost:state:h1')?.({ status: 'connecting', error: '', retryable: true, asker: 'mcp', session: '' })
+    await vi.waitFor(() => expect(screen.getByText('Идёт вход по MCP')).toBeTruthy())
+    expect(screen.queryByTestId('mini-terminal')).toBeNull()
+  })
+
   it('plus button opens the new forward dialog with the host preselected', async () => {
     await load([host('h2', 'beta'), host('h1', 'alpha')], [fwd('f1', 'h1', 'alpha', 'Web'), fwd('f2', 'h2', 'beta', 'Api')])
     render(ForwardsView)

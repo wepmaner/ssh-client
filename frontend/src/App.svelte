@@ -16,6 +16,7 @@
   import TerminalView from './lib/terminal/TerminalView.svelte'
   import TitleBar from './lib/titlebar/TitleBar.svelte'
   import Toast from './lib/ui/Toast.svelte'
+  import McpLoginDialog from './lib/mcp/McpLoginDialog.svelte'
   import TrustDialog from './lib/ui/TrustDialog.svelte'
 
   const titles: Record<View, string> = {
@@ -100,6 +101,7 @@
   {/if}
   <!-- Mounted before load(): trust questions of autostarted forwards arrive once ForwardAttach runs. -->
   <TrustDialog />
+  <McpLoginDialog />
   <Toast />
 </div>
 

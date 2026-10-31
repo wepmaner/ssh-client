@@ -21,7 +21,7 @@
 
   const NEW_GROUP = '__new'
 
-  let form = $state({ id: '', address: '', port: '22', user: '', name: '', group_id: '', key_id: '', os: '' })
+  let form = $state({ id: '', address: '', port: '22', user: '', name: '', group_id: '', key_id: '', os: '', mcp_access: '' })
   let newGroup = $state('')
   let keyMode = $state<'store' | 'import'>('store')
   let errors = $state<Record<string, string>>({})
@@ -41,6 +41,8 @@
       // none: then the server asks for the password in the console.
       key_id: h ? h.key_id : (keys[0]?.id ?? ''),
       os: h?.os ?? '',
+      // A copy starts closed to MCP: opening a host to MCP is a deliberate act for each host.
+      mcp_access: h?.id ? (h.mcp_access ?? '') : '',
     }
     newGroup = ''
     keyMode = keys.length > 0 || (h && !h.key_id) ? 'store' : 'import'
@@ -101,6 +103,7 @@
         key_id: form.key_id,
         key_name: '',
         os: form.os,
+        mcp_access: form.mcp_access,
         connected: false,
       })
       await Promise.all([refreshHosts(), refreshKeys()])
@@ -245,6 +248,25 @@
       </div>
     </div>
 
+    <div class="field mcp">
+      <label for="host-mcp">Доступ по MCP</label>
+      <select
+        id="host-mcp"
+        class="select"
+        bind:value={form.mcp_access}
+        aria-describedby={errors.mcp_access ? 'host-mcp_access-error' : undefined}
+        onchange={() => clearError('mcp_access')}
+      >
+        <option value="">Закрыт</option>
+        <option value="read">Только просмотр</option>
+        <option value="full">Полный</option>
+      </select>
+      {#if form.mcp_access === 'full'}
+        <span class="hint">Полный доступ — всё, что может пользователь этого хоста на сервере</span>
+      {/if}
+      {@render err('mcp_access')}
+    </div>
+
     <div class="field">
       <span class="label">Приватный ключ</span>
       <div class="key-card">
@@ -321,6 +343,9 @@
     flex-direction: column;
     gap: 5px;
     min-width: 0;
+  }
+  .mcp .select {
+    max-width: 240px;
   }
   .grow {
     flex: 1;

@@ -6,6 +6,58 @@
 import { Create as $Create } from "@wailsio/runtime";
 
 /**
+ * MCPRecord is one entry of the journal of MCP tool calls. Refused is empty for an executed
+ * call, otherwise the reason; ExitCode and DurationMs are set when a command finishes.
+ */
+export class MCPRecord {
+    "id": string;
+    "time": string;
+    "host_id": string;
+    "host_name": string;
+    "tool": string;
+    "text": string;
+    "access": string;
+    "refused"?: string;
+    "exit_code"?: number | null;
+    "duration_ms"?: number;
+
+    /** Creates a new MCPRecord instance. */
+    constructor($$source: Partial<MCPRecord> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("time" in $$source)) {
+            this["time"] = "0001-01-01T00:00:00.000Z";
+        }
+        if (!("host_id" in $$source)) {
+            this["host_id"] = "";
+        }
+        if (!("host_name" in $$source)) {
+            this["host_name"] = "";
+        }
+        if (!("tool" in $$source)) {
+            this["tool"] = "";
+        }
+        if (!("text" in $$source)) {
+            this["text"] = "";
+        }
+        if (!("access" in $$source)) {
+            this["access"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new MCPRecord instance from a string or object.
+     */
+    static createFrom($$source: any = {}): MCPRecord {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new MCPRecord($$parsedSource as Partial<MCPRecord>);
+    }
+}
+
+/**
  * Settings are user preferences.
  */
 export class Settings {
@@ -16,6 +68,14 @@ export class Settings {
     "webgl": boolean;
     "lock_after_min": number;
     "window": WindowState;
+
+    /**
+     * MCP server switch, port and bearer token. They are Go's: SaveSettings keeps the stored
+     * values and GetSettings never returns the token.
+     */
+    "mcp_enabled"?: boolean;
+    "mcp_port"?: number;
+    "mcp_token"?: string;
 
     /** Creates a new Settings instance. */
     constructor($$source: Partial<Settings> = {}) {

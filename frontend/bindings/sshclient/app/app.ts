@@ -167,7 +167,8 @@ export function HostDelete(id: string): $CancellablePromise<void> {
 /**
  * HostSave creates a host (empty ID) or updates an existing one. Port 0 means
  * 22, an empty name means the address. A change of the address, port, user or key detaches the
- * host's open connection: its users stay on it, new ones log in with the new parameters.
+ * host's open connection: its users stay on it, new ones log in with the new parameters. A host
+ * that is closed for MCP loses its MCP calls and hold.
  */
 export function HostSave($in: $models.HostDTO): $CancellablePromise<$models.HostDTO> {
     return $Call.ByID(4277690896, $in).then(($result: any) => {
@@ -296,6 +297,97 @@ export function KeysList(): $CancellablePromise<$models.KeyDTO[]> {
 }
 
 /**
+ * MCPAddCommand returns the command that registers the server in Claude Code.
+ */
+export function MCPAddCommand(): $CancellablePromise<string> {
+    return $Call.ByID(3769120401);
+}
+
+/**
+ * MCPJournalClear empties the journal.
+ */
+export function MCPJournalClear(): $CancellablePromise<void> {
+    return $Call.ByID(93387057);
+}
+
+/**
+ * MCPJournalList returns the journal, newest first; empty while the vault is locked.
+ */
+export function MCPJournalList(): $CancellablePromise<model$0.MCPRecord[]> {
+    return $Call.ByID(1040221956).then(($result: any) => {
+        return $$createType13($result);
+    });
+}
+
+/**
+ * MCPLoginAttach tells Go the dialog listens to mcplogin:data:<hostID>: the output held since
+ * mcplogin:open is released. A dialog late for its login does nothing.
+ */
+export function MCPLoginAttach(hostID: string, loginID: string): $CancellablePromise<void> {
+    return $Call.ByID(1176613903, hostID, loginID);
+}
+
+/**
+ * MCPLoginCancel ends the login loginID: the owner closed its dialog. Its calls get an error; a
+ * console or forwards waiting for the same login take it over. Another login is left alone.
+ */
+export function MCPLoginCancel(hostID: string, loginID: string): $CancellablePromise<void> {
+    return $Call.ByID(1593346028, hostID, loginID);
+}
+
+/**
+ * MCPLoginWrite sends base64-encoded keystrokes from the login dialog to the question of the host's
+ * login loginID. Input for no login waiting, or for another one, is dropped.
+ */
+export function MCPLoginWrite(hostID: string, loginID: string, dataB64: string): $CancellablePromise<void> {
+    return $Call.ByID(1704067473, hostID, loginID, dataB64);
+}
+
+/**
+ * MCPPrompt returns the text that makes an AI session register the server by itself.
+ */
+export function MCPPrompt(): $CancellablePromise<string> {
+    return $Call.ByID(120859311);
+}
+
+/**
+ * MCPRotateToken replaces the token: the old one stops working at once. The server restarts on the
+ * same port, ending the calls of its requests; a port lost meanwhile shows in the status.
+ */
+export function MCPRotateToken(): $CancellablePromise<void> {
+    return $Call.ByID(293046163);
+}
+
+/**
+ * MCPSetEnabled switches the server. The first switch-on creates the token. A port that cannot be
+ * taken is no failure: the status says why, and the rest of the app works.
+ */
+export function MCPSetEnabled(on: boolean): $CancellablePromise<$models.MCPStatusDTO> {
+    return $Call.ByID(1984838108, on).then(($result: any) => {
+        return $$createType14($result);
+    });
+}
+
+/**
+ * MCPSetPort stores the port and moves a server that is on to it. A refusal is a field error
+ * (field:port: text).
+ */
+export function MCPSetPort(port: number): $CancellablePromise<$models.MCPStatusDTO> {
+    return $Call.ByID(2176313760, port).then(($result: any) => {
+        return $$createType14($result);
+    });
+}
+
+/**
+ * MCPStatus returns the state of the server. It works on a locked vault: the server goes on then.
+ */
+export function MCPStatus(): $CancellablePromise<$models.MCPStatusDTO> {
+    return $Call.ByID(1378990627).then(($result: any) => {
+        return $$createType14($result);
+    });
+}
+
+/**
  * OpenDataFolder shows the data folder (%APPDATA%\sshclient) in Explorer.
  */
 export function OpenDataFolder(): $CancellablePromise<void> {
@@ -323,7 +415,7 @@ export function SessionClose(id: string): $CancellablePromise<void> {
  */
 export function SessionList(): $CancellablePromise<$models.SessionDTO[]> {
     return $Call.ByID(491749225).then(($result: any) => {
-        return $$createType13($result);
+        return $$createType16($result);
     });
 }
 
@@ -376,7 +468,7 @@ export function VaultBackup(password: string): $CancellablePromise<string> {
  */
 export function VaultCounts(): $CancellablePromise<$models.VaultCountsDTO> {
     return $Call.ByID(3202868421).then(($result: any) => {
-        return $$createType14($result);
+        return $$createType17($result);
     });
 }
 
@@ -436,13 +528,13 @@ export function VaultSetPassword(password: string): $CancellablePromise<void> {
  */
 export function VaultState(): $CancellablePromise<$models.VaultStateDTO> {
     return $Call.ByID(1454336566).then(($result: any) => {
-        return $$createType15($result);
+        return $$createType18($result);
     });
 }
 
 /**
  * VaultUnlock unlocks a password vault, makes the typed store available and starts the
- * autostart forwards.
+ * autostart forwards and the MCP server.
  */
 export function VaultUnlock(password: string): $CancellablePromise<void> {
     return $Call.ByID(1461079957, password);
@@ -468,7 +560,10 @@ const $$createType8 = $Create.Array($$createType7);
 const $$createType9 = $models.ImportResult.createFrom;
 const $$createType10 = $models.KeyDTO.createFrom;
 const $$createType11 = $Create.Array($$createType10);
-const $$createType12 = $models.SessionDTO.createFrom;
+const $$createType12 = model$0.MCPRecord.createFrom;
 const $$createType13 = $Create.Array($$createType12);
-const $$createType14 = $models.VaultCountsDTO.createFrom;
-const $$createType15 = $models.VaultStateDTO.createFrom;
+const $$createType14 = $models.MCPStatusDTO.createFrom;
+const $$createType15 = $models.SessionDTO.createFrom;
+const $$createType16 = $Create.Array($$createType15);
+const $$createType17 = $models.VaultCountsDTO.createFrom;
+const $$createType18 = $models.VaultStateDTO.createFrom;

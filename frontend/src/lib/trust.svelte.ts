@@ -11,6 +11,8 @@ export interface TrustAsk {
   id: string
   session_id: string
   forward_host_id: string
+  /** Set when the question belongs to the MCP login of this host; it shows whatever tab is active. */
+  mcp_host_id?: string
   host: string
   port: number
   user: string

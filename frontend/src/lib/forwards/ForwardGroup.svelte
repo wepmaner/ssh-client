@@ -29,7 +29,9 @@
     host.status === 'connecting'
       ? host.asker === 'forwards'
         ? 'ждёт фразу'
-        : 'вход в консоли'
+        : host.asker === 'mcp'
+          ? 'вход по MCP'
+          : 'вход в консоли'
       : host.status === 'connected'
         ? 'подключён'
         : host.status === 'error'
@@ -171,6 +173,9 @@
   {/if}
   {#if host.asker === 'session'}
     <p class="note">Идёт вход в консоли «{host.session}»</p>
+  {/if}
+  {#if host.asker === 'mcp'}
+    <p class="note">Идёт вход по MCP</p>
   {/if}
   {#if termMounted}
     <div class="collapse" class:open={termOpen}>

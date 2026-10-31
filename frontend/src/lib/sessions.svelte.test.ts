@@ -31,7 +31,7 @@ import { hosts, toastState, ui } from './stores.svelte'
 beforeEach(() => {
   for (const t of [...sessions.list]) closeSession(t.id)
   handlers.clear()
-  hosts.splice(0, hosts.length, { id: 'h1', name: 'prod', address: 'p', port: 22, user: 'u', group_id: '', group_name: '', key_id: '', key_name: '', os: '', connected: false })
+  hosts.splice(0, hosts.length, { id: 'h1', name: 'prod', address: 'p', port: 22, user: 'u', group_id: '', group_name: '', key_id: '', key_name: '', os: '', mcp_access: '', connected: false })
   ui.activeTab = 'home'
   let n = 0
   sessionOpen.mockImplementation(() => Promise.resolve('s' + ++n))

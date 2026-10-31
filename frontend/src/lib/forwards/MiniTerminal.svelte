@@ -9,16 +9,24 @@
   import { copyText, isAppShortcut, readClipboard, terminalAction } from '../terminal/keys'
   import { attachOutput } from './forwards.svelte'
 
-  /** A six-row terminal in a host group: the login prompts are answered here. */
-  let { hostId }: { hostId: string } = $props()
+  /**
+   * A six-row terminal for the prompts of a login. By default it answers the forwards login of
+   * hostId; write sends the input (base64) and attach feeds the output, for another asker.
+   */
+  interface Props {
+    hostId?: string
+    write?: (b64: string) => Promise<void>
+    attach?: (sink: (b: Uint8Array) => void) => () => void
+  }
+  let { hostId = '', write, attach }: Props = $props()
 
   const ROWS = 6
   let host: HTMLDivElement
   let term: Terminal | undefined
 
   const send = orderedSender(
-    (b64) => ForwardHostWrite(hostId, b64),
-    (e) => console.error('ForwardHostWrite', e),
+    (b64) => (write ? write(b64) : ForwardHostWrite(hostId, b64)),
+    (e) => console.error('login input', e),
   )
 
   function paste(): void {
@@ -48,7 +56,8 @@
       return false
     })
     const sub = t.onData((d) => send(inputBytes(d)))
-    const detach = attachOutput(hostId, (b) => t.write(b))
+    const sink = (b: Uint8Array) => t.write(b)
+    const detach = attach ? attach(sink) : attachOutput(hostId, sink)
 
     // Only the width follows the card; the height stays six rows.
     const fitWidth = () => {

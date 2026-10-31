@@ -137,6 +137,45 @@ describe('HostDialog', () => {
     expect((screen.getByLabelText('Ключ') as HTMLSelectElement).value).toBe('')
   })
 
+  it('offers three MCP access modes, closed by default', async () => {
+    setup()
+    const sel = screen.getByLabelText('Доступ по MCP') as HTMLSelectElement
+    expect([...sel.options].map((o) => o.textContent)).toEqual(['Закрыт', 'Только просмотр', 'Полный'])
+    expect(sel.value).toBe('')
+    expect(screen.queryByText(/Полный доступ — всё, что может/)).toBeNull()
+    await fill('Адрес', 'srv.example.test')
+    await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
+    await vi.waitFor(() => expect(api.HostSave).toHaveBeenCalledWith(expect.objectContaining({ mcp_access: '' })))
+  })
+
+  it('says what full MCP access means and saves the mode', async () => {
+    setup()
+    await fireEvent.change(screen.getByLabelText('Доступ по MCP'), { target: { value: 'full' } })
+    expect(screen.getByText(/Полный доступ — всё, что может/)).toBeTruthy()
+    await fill('Адрес', 'srv.example.test')
+    await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
+    await vi.waitFor(() => expect(api.HostSave).toHaveBeenCalledWith(expect.objectContaining({ mcp_access: 'full' })))
+  })
+
+  it('keeps the MCP access of an edited host', async () => {
+    setup({ ...saved, mcp_access: 'read' })
+    expect((screen.getByLabelText('Доступ по MCP') as HTMLSelectElement).value).toBe('read')
+    await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
+    await vi.waitFor(() => expect(api.HostSave).toHaveBeenCalledWith(expect.objectContaining({ id: 'h1', mcp_access: 'read' })))
+  })
+
+  it('a duplicate of a host starts with MCP closed', () => {
+    setup({ ...saved, id: '', mcp_access: 'full' })
+    expect((screen.getByLabelText('Доступ по MCP') as HTMLSelectElement).value).toBe('')
+  })
+
+  it('shows the field error of the MCP mode', async () => {
+    api.HostSave.mockRejectedValue('field:mcp_access: Выберите доступ из списка')
+    setup()
+    await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
+    await vi.waitFor(() => expect(errorOf('Доступ по MCP')).toBe('Выберите доступ из списка'))
+  })
+
   it('a new host can be saved without a key', async () => {
     setup()
     const select = screen.getByLabelText('Ключ') as HTMLSelectElement
