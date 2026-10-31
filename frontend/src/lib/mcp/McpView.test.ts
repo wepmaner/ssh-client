@@ -22,7 +22,7 @@ vi.mock('../api', async () => {
 })
 
 import { toastState } from '../stores.svelte'
-import McpSection from './McpSection.svelte'
+import McpView from './McpView.svelte'
 
 const off = { enabled: false, port: 47821, state: 'off', error: '', detail: '' }
 const on = { enabled: true, port: 47821, state: 'running', error: '', detail: '' }
@@ -30,13 +30,13 @@ const SECRET = 'tok-SECRET-123'
 
 async function mount(status = off) {
   api.MCPStatus.mockResolvedValue(status)
-  const r = render(McpSection)
+  const r = render(McpView)
   await waitFor(() => expect(api.MCPStatus).toHaveBeenCalled())
   await tick()
   return r
 }
 
-describe('McpSection', () => {
+describe('McpView', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     handlers.clear()
@@ -82,7 +82,6 @@ describe('McpSection', () => {
     await waitFor(() => expect(api.ClipboardSetText).toHaveBeenCalledWith(`claude mcp add ... Bearer ${SECRET}`))
     await fireEvent.click(screen.getByRole('button', { name: 'Скопировать промпт' }))
     await waitFor(() => expect(api.ClipboardSetText).toHaveBeenLastCalledWith(`prompt with ${SECRET}`))
-    expect(document.body.textContent).not.toContain(SECRET)
   })
 
   it('shows a start error with its system text', async () => {
@@ -117,10 +116,32 @@ describe('McpSection', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Порт от 1024 до 65535'))
   })
 
-  it('never names Claude and never renders a token', async () => {
+  it('shows the exact prompt beside its copy button', async () => {
     await mount(on)
+    await waitFor(() => expect(screen.getByLabelText('Текст промпта').textContent).toBe(`prompt with ${SECRET}`))
+  })
+
+  it('shows no prompt while the switch is off', async () => {
+    await mount()
+    expect(screen.queryByLabelText('Текст промпта')).toBeNull()
+    expect(api.MCPPrompt).not.toHaveBeenCalled()
+  })
+
+  it('shows the new prompt after the token changes', async () => {
+    await mount(on)
+    await waitFor(() => expect(screen.getByLabelText('Текст промпта').textContent).toContain(SECRET))
+    api.MCPRotateToken.mockResolvedValue(undefined)
+    api.MCPStatus.mockResolvedValue(on)
+    api.MCPPrompt.mockResolvedValue('prompt with NEW')
+    await fireEvent.click(screen.getByRole('button', { name: 'Сменить токен' }))
+    await waitFor(() => expect(screen.getByLabelText('Текст промпта').textContent).toBe('prompt with NEW'))
+  })
+
+  it('does not name Claude outside the prompt', async () => {
+    await mount(on)
+    await waitFor(() => expect(screen.getByLabelText('Текст промпта')).toBeTruthy())
+    screen.getByLabelText('Текст промпта').remove()
     expect(document.body.textContent).not.toMatch(/claude/i)
-    expect(document.body.textContent).not.toContain(SECRET)
   })
 
   it('opens the journal', async () => {

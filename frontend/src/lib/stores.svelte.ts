@@ -15,7 +15,7 @@ const plain = <T>(v: T): T => JSON.parse(JSON.stringify(v))
 
 export const settings = $state<model.Settings>(plain(model.Settings.createFrom({})))
 
-export type View = 'hosts' | 'keys' | 'forwards' | 'settings'
+export type View = 'hosts' | 'keys' | 'forwards' | 'mcp' | 'settings'
 
 /**
  * view is the section of the home tab; activeTab says whether the home tab or the selected

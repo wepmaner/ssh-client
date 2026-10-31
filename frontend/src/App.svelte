@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { refreshForwards } from './lib/forwards/forwards.svelte'
   import ForwardsView from './lib/forwards/ForwardsView.svelte'
+  import McpView from './lib/mcp/McpView.svelte'
   import HostsView from './lib/hosts/HostsView.svelte'
   import KeysView from './lib/keys/KeysView.svelte'
   import { goHome, retrySession, sessions } from './lib/sessions.svelte'
@@ -23,6 +24,7 @@
     hosts: 'Хосты',
     keys: 'Ключи',
     forwards: 'Пробросы',
+    mcp: 'MCP',
     settings: 'Настройки',
   }
   const shell = $derived(vault.ready && !vault.corrupt && !vault.locked)
@@ -70,6 +72,8 @@
             <HostsView />
           {:else if ui.view === 'forwards'}
             <ForwardsView />
+          {:else if ui.view === 'mcp'}
+            <McpView />
           {:else}
             <SettingsView />
           {/if}

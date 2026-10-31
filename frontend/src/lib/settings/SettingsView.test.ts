@@ -19,14 +19,6 @@ const api = vi.hoisted(() => ({
   VaultRestorePick: vi.fn(() => Promise.resolve('')),
   VaultRestore: vi.fn(() => Promise.resolve()),
   EventsOn: vi.fn(() => () => {}),
-  MCPStatus: vi.fn(() => Promise.resolve({ enabled: false, port: 47821, state: 'off', error: '', detail: '' })),
-  MCPSetEnabled: vi.fn(),
-  MCPSetPort: vi.fn(),
-  MCPRotateToken: vi.fn(),
-  MCPPrompt: vi.fn(),
-  MCPAddCommand: vi.fn(),
-  MCPJournalList: vi.fn(() => Promise.resolve([])),
-  MCPJournalClear: vi.fn(),
   ClipboardSetText: vi.fn(),
 }))
 vi.mock('../api', async () => {
@@ -39,10 +31,9 @@ import { settings, toastState, vault } from '../stores.svelte'
 import SettingsView from './SettingsView.svelte'
 
 describe('SettingsView', () => {
-  it('has the MCP block after storage and security', () => {
+  it('has no MCP block: it has its own section', () => {
     render(SettingsView)
-    const heads = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
-    expect(heads.indexOf('Доступ по MCP')).toBe(heads.indexOf('Хранилище и безопасность') + 1)
+    expect(screen.queryByText('Доступ по MCP')).toBeNull()
   })
 
   beforeEach(() => {

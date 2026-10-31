@@ -31,10 +31,25 @@
   let portError = $state('')
   let journal = $state(false)
   let busy = $state(false)
+  let prompt = $state('')
 
   function apply(s: Status): void {
     status = { ...s }
     port = String(s.port)
+    void loadPrompt()
+  }
+
+  /** The prompt holds the port and the token, so it follows both. */
+  async function loadPrompt(): Promise<void> {
+    if (!status.enabled) {
+      prompt = ''
+      return
+    }
+    try {
+      prompt = await MCPPrompt()
+    } catch {
+      prompt = ''
+    }
   }
 
   onMount(() => {
@@ -80,6 +95,7 @@
     try {
       await MCPRotateToken()
       toast('Токен заменён. Скопируйте команду или промпт заново')
+      void loadPrompt()
     } catch (e) {
       toast(errorText(e))
     }
@@ -99,45 +115,77 @@
   const stateText = $derived(status.state === 'running' ? 'Работает' : status.state === 'error' ? status.error || 'Ошибка' : 'Выключен')
 </script>
 
-<section class="card" aria-labelledby="set-mcp">
-  <h2 id="set-mcp">Доступ по MCP</h2>
-  <label class="check">
-    <input type="checkbox" checked={status.enabled} disabled={busy} onchange={(e) => setEnabled(e.currentTarget.checked, e.currentTarget)} />
-    Разрешить доступ к серверам по MCP
-  </label>
-  <div class="state" class:error={status.state === 'error'} class:running={status.state === 'running'}>
-    <span class="line" role="status">{stateText}</span>
-    {#if status.state === 'error' && status.detail}<span class="detail">{status.detail}</span>{/if}
-  </div>
-  <div class="grid">
-    <label class="field">
-      <span>Порт</span>
-      <Input
-        style="font-family:var(--font-mono)"
-        inputmode="numeric"
-        autocomplete="off"
-        aria-describedby={portError ? 'set-mcp-port-error' : undefined}
-        bind:value={port}
-        oninput={() => (portError = '')}
-        onchange={savePort}
-      />
-      {#if portError}<span class="field-error" id="set-mcp-port-error" role="alert">{portError}</span>{/if}
+<div class="view">
+  <section class="card" aria-labelledby="set-mcp">
+    <h2 id="set-mcp">Доступ по MCP</h2>
+    <label class="check">
+      <input type="checkbox" checked={status.enabled} disabled={busy} onchange={(e) => setEnabled(e.currentTarget.checked, e.currentTarget)} />
+      Разрешить доступ к серверам по MCP
     </label>
-  </div>
-  <p class="hint">При смене порта команду подключения нужно выполнить заново.</p>
-  <div class="row">
-    <Button variant="outline" disabled={!status.enabled} onclick={() => copy(MCPAddCommand, 'Команда скопирована')}>Скопировать команду подключения</Button>
-    <Button variant="outline" disabled={!status.enabled} onclick={() => copy(MCPPrompt, 'Промпт скопирован')}>Скопировать промпт</Button>
-  </div>
-  <div class="row">
-    <Button variant="outline" disabled={!status.enabled} onclick={rotate}>Сменить токен</Button>
-    <Button variant="outline" onclick={() => (journal = true)}>Журнал</Button>
-  </div>
-</section>
+    <div class="state" class:error={status.state === 'error'} class:running={status.state === 'running'}>
+      <span class="line" role="status">{stateText}</span>
+      {#if status.state === 'error' && status.detail}<span class="detail">{status.detail}</span>{/if}
+    </div>
+    <div class="grid">
+      <label class="field">
+        <span>Порт</span>
+        <Input
+          style="font-family:var(--font-mono)"
+          inputmode="numeric"
+          autocomplete="off"
+          aria-describedby={portError ? 'set-mcp-port-error' : undefined}
+          bind:value={port}
+          oninput={() => (portError = '')}
+          onchange={savePort}
+        />
+        {#if portError}<span class="field-error" id="set-mcp-port-error" role="alert">{portError}</span>{/if}
+      </label>
+    </div>
+    <div class="row">
+      <Button variant="outline" onclick={() => (journal = true)}>Журнал</Button>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="set-mcp-connect">
+    <h2 id="set-mcp-connect">Подключение</h2>
+    {#if prompt}
+      <pre class="prompt" aria-label="Текст промпта">{prompt}</pre>
+    {/if}
+    <div class="row">
+      <Button variant="outline" disabled={!status.enabled} onclick={() => copy(MCPPrompt, 'Промпт скопирован')}>Скопировать промпт</Button>
+      <Button variant="outline" disabled={!status.enabled} onclick={() => copy(MCPAddCommand, 'Команда скопирована')}>Скопировать команду подключения</Button>
+      <Button variant="outline" disabled={!status.enabled} onclick={rotate}>Сменить токен</Button>
+    </div>
+    <p class="hint">При смене порта или токена подключение нужно выполнить заново.</p>
+  </section>
+</div>
 
 <McpJournalDialog open={journal} onclose={() => (journal = false)} />
 
 <style>
+  .view {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-width: 820px;
+    height: 100%;
+    padding: 16px 24px 24px;
+    overflow: auto;
+  }
+  .prompt {
+    max-height: 260px;
+    margin: 0;
+    padding: 10px 12px;
+    overflow: auto;
+    background: #0f1114;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    user-select: text;
+  }
   .card {
     display: flex;
     flex-direction: column;
