@@ -24,7 +24,7 @@
     footer,
     width = 500,
     layer = 10,
-    autofocus = 'input, select, textarea',
+    autofocus = 'input, [role="combobox"], textarea',
     restoreFocus = true,
   }: Props = $props()
 

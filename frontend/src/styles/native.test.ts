@@ -42,6 +42,10 @@ describe('native motion and focus', () => {
     }
   })
 
+  it('has no native select: its open list is drawn by the system', () => {
+    for (const [file, src] of Object.entries(components)) expect(src, file).not.toMatch(/<select\b/)
+  })
+
   it('removes the ring only from fields, which show focus with the accent border, and from menu items', () => {
     for (const [file, src] of Object.entries(components)) {
       const list = rules(src)

@@ -13,10 +13,11 @@
     errorText,
     type app,
   } from '../api'
-  import { fieldError, userAtHost } from '../hosts/format'
+  import { fieldError, mcpAccessOptions, userAtHost } from '../hosts/format'
   import { hosts, refreshHosts, toast } from '../stores.svelte'
   import Button from '../ui/Button.svelte'
   import Input from '../ui/Input.svelte'
+  import Select from '../ui/Select.svelte'
   import McpJournalDialog from './McpJournalDialog.svelte'
 
   /** Mirrors app.MCPStatusDTO; state is off, running or error. It never carries the token. */
@@ -106,13 +107,12 @@
     void MCPStatus().then(apply).catch(() => {})
   }
 
-  async function setAccess(h: app.HostDTO, box: HTMLSelectElement): Promise<void> {
+  async function setAccess(h: app.HostDTO, access: string): Promise<void> {
     try {
-      await HostSave({ ...h, mcp_access: box.value })
+      await HostSave({ ...h, mcp_access: access })
       await refreshHosts()
     } catch (e) {
       toast(errorText(e))
-      box.value = h.mcp_access // the failed change must not stay on screen
     }
   }
 
@@ -172,11 +172,7 @@
               <span class="name">{h.name}</span>
               <span class="addr">{userAtHost(h)}</span>
             </span>
-            <select class="select" aria-label={`Доступ для ${h.name}`} value={h.mcp_access} onchange={(e) => setAccess(h, e.currentTarget)}>
-              <option value="">Закрыт</option>
-              <option value="read">Только просмотр</option>
-              <option value="full">Полный</option>
-            </select>
+            <Select style="flex:0 0 170px;width:170px" aria-label={`Доступ для ${h.name}`} value={h.mcp_access} options={mcpAccessOptions} onchange={(v) => setAccess(h, v)} />
           </li>
         {/each}
       </ul>
@@ -258,20 +254,6 @@
     color: var(--muted);
     font-family: var(--font-mono);
     font-size: 12px;
-  }
-  .select {
-    flex: 0 0 170px;
-    height: var(--control-height);
-    padding: 0 8px;
-    border: 1px solid #333a44;
-    border-radius: var(--radius-control);
-    background: #15181c;
-    color: var(--text);
-    font: inherit;
-  }
-  .select:focus {
-    outline: none;
-    border-color: var(--accent);
   }
   .card {
     display: flex;

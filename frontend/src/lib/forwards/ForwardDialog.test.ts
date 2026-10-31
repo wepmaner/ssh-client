@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/svelte'
+import { pick } from '../ui/select.testing'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
@@ -50,7 +51,7 @@ describe('ForwardDialog', () => {
     expect(screen.getByRole('dialog', { name: 'Новый проброс' })).toBeTruthy()
     expect(screen.getByRole('radio', { name: 'L' }).getAttribute('aria-checked')).toBe('true')
     expect(screen.getByText('Порт на этом компьютере ведёт на адрес за сервером')).toBeTruthy()
-    expect((screen.getByLabelText('Хост') as HTMLSelectElement).value).toBe('h1')
+    expect((screen.getByLabelText('Хост')).dataset.value).toBe('h1')
     expect((screen.getByLabelText('Запускать при старте приложения') as HTMLInputElement).checked).toBe(false)
   })
 
@@ -78,7 +79,7 @@ describe('ForwardDialog', () => {
 
   it('Enter saves with the form values and closes', async () => {
     const { onclose } = setup()
-    await fireEvent.change(screen.getByLabelText('Хост'), { target: { value: 'h2' } })
+    await pick(screen.getByLabelText('Хост'), 'h2')
     await fireEvent.click(screen.getByRole('radio', { name: 'R' }))
     await fill('Порт на сервере', '9000')
     await fill('Куда ведёт', '127.0.0.1:3000')
@@ -98,7 +99,7 @@ describe('ForwardDialog', () => {
     })()
     expect(screen.getByRole('dialog', { name: 'Новый проброс' })).toBeTruthy()
     expect((screen.getByLabelText('Название') as HTMLInputElement).value).toBe('')
-    expect((screen.getByLabelText('Хост') as HTMLSelectElement).value).toBe('h2')
+    expect((screen.getByLabelText('Хост')).dataset.value).toBe('h2')
     expect((screen.getByLabelText('Порт здесь') as HTMLInputElement).value).toBe('5432')
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
     await vi.waitFor(() => expect(onclose).toHaveBeenCalled())
@@ -134,7 +135,7 @@ describe('ForwardDialog', () => {
     setup({ ...saved, host_id: 'h2', kind: 'D', target: '', auto_start: true, name: 'SOCKS' })
     expect(screen.getByRole('dialog', { name: 'Изменить проброс' })).toBeTruthy()
     expect(screen.getByRole('radio', { name: 'D' }).getAttribute('aria-checked')).toBe('true')
-    expect((screen.getByLabelText('Хост') as HTMLSelectElement).value).toBe('h2')
+    expect((screen.getByLabelText('Хост')).dataset.value).toBe('h2')
     expect((screen.getByLabelText('Порт здесь') as HTMLInputElement).value).toBe('5432')
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
     await vi.waitFor(() =>

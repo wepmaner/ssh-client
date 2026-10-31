@@ -8,8 +8,9 @@
   import Button from '../ui/Button.svelte'
   import Dialog from '../ui/Dialog.svelte'
   import Input from '../ui/Input.svelte'
+  import Select from '../ui/Select.svelte'
   import Segmented from '../ui/Segmented.svelte'
-  import { fieldError } from './format'
+  import { fieldError, mcpAccessOptions } from './format'
 
   interface Props {
     open: boolean
@@ -218,17 +219,20 @@
       <div class="grid">
         <div class="field">
           <label for="host-group">Группа</label>
-          <select
+          <Select
             id="host-group"
-            class="select"
-            bind:value={form.group_id}
+            value={form.group_id}
+            options={[
+              { value: '', label: 'Без группы' },
+              ...groups.map((g) => ({ value: g.id, label: g.name })),
+              { value: NEW_GROUP, label: 'Новая группа…' },
+            ]}
             aria-describedby={errors.group && form.group_id !== NEW_GROUP ? 'host-group-error' : undefined}
-            onchange={() => clearError('group')}
-          >
-            <option value="">Без группы</option>
-            {#each groups as g (g.id)}<option value={g.id}>{g.name}</option>{/each}
-            <option value={NEW_GROUP}>Новая группа…</option>
-          </select>
+            onchange={(v) => {
+              form.group_id = v
+              clearError('group')
+            }}
+          />
           {#if form.group_id !== NEW_GROUP}{@render err('group')}{/if}
         </div>
         {#if form.group_id === NEW_GROUP}
@@ -250,17 +254,17 @@
 
     <div class="field mcp">
       <label for="host-mcp">Доступ по MCP</label>
-      <select
+      <Select
         id="host-mcp"
-        class="select"
-        bind:value={form.mcp_access}
+        style="max-width:240px"
+        value={form.mcp_access}
+        options={mcpAccessOptions}
         aria-describedby={errors.mcp_access ? 'host-mcp_access-error' : undefined}
-        onchange={() => clearError('mcp_access')}
-      >
-        <option value="">Закрыт</option>
-        <option value="read">Только просмотр</option>
-        <option value="full">Полный</option>
-      </select>
+        onchange={(v) => {
+          form.mcp_access = v
+          clearError('mcp_access')
+        }}
+      />
       {#if form.mcp_access === 'full'}
         <span class="hint">Полный доступ — всё, что может пользователь этого хоста на сервере</span>
       {/if}
@@ -283,18 +287,19 @@
         </div>
         {#if keyMode === 'store'}
           <div class="key-store">
-            <select
-              class="select key-select"
+            <Select
               aria-label="Ключ"
-              bind:value={form.key_id}
+              value={form.key_id}
+              options={[
+                { value: '', label: 'Без ключа — сервер спросит пароль' },
+                ...keys.map((k) => ({ value: k.id, label: `${k.name} · ${typeLabel(k.type)}${k.encrypted ? ' · с фразой' : ''}` })),
+              ]}
               aria-describedby={errors.key ? 'host-key-error' : undefined}
-              onchange={() => clearError('key')}
-            >
-              <option value="">Без ключа — сервер спросит пароль</option>
-              {#each keys as k (k.id)}
-                <option value={k.id}>{k.name} · {typeLabel(k.type)}{k.encrypted ? ' · с фразой' : ''}</option>
-              {/each}
-            </select>
+              onchange={(v) => {
+                form.key_id = v
+                clearError('key')
+              }}
+            />
             {#if keys.length === 0}
               <span class="hint">В хранилище нет ключей: импортируйте ключ или создайте его в разделе «Ключи»</span>
             {/if}
@@ -344,9 +349,6 @@
     gap: 5px;
     min-width: 0;
   }
-  .mcp .select {
-    max-width: 240px;
-  }
   .grow {
     flex: 1;
   }
@@ -357,19 +359,6 @@
   .label {
     color: var(--muted);
     font-size: 12px;
-  }
-  .select {
-    height: var(--control-height);
-    padding: 0 8px;
-    border: 1px solid #333a44;
-    border-radius: var(--radius-control);
-    background: #15181c;
-    color: var(--text);
-    font: inherit;
-  }
-  .select:focus {
-    outline: none;
-    border-color: var(--accent);
   }
   .key-card {
     overflow: hidden;
@@ -387,10 +376,6 @@
     align-items: center;
     gap: 10px;
     padding: 12px;
-  }
-  .key-select {
-    flex: 0 1 300px;
-    min-width: 0;
   }
   .key-import {
     display: flex;

@@ -1,5 +1,12 @@
 import type { app } from '../api'
 
+/** The modes of a host, in the host dialog and in the MCP section. */
+export const mcpAccessOptions = [
+  { value: '', label: 'Закрыт' },
+  { value: 'read', label: 'Только просмотр' },
+  { value: 'full', label: 'Полный' },
+]
+
 /** Monogram of a host tile: the OS picks the colour, other hosts show the first two letters of the name. */
 export function monogram(h: Pick<app.HostDTO, 'os' | 'name'>): { text: string; color: string } {
   if (h.os === 'ubuntu') return { text: 'Ub', color: '#b9521c' }

@@ -179,7 +179,7 @@ describe('ForwardGroup', () => {
     render(ForwardsView)
     await fireEvent.click(screen.getByRole('button', { name: 'Новый проброс для beta' }))
     const dialog = screen.getByRole('dialog', { name: 'Новый проброс' })
-    expect((within(dialog).getByLabelText('Хост') as HTMLSelectElement).value).toBe('h2')
+    expect((within(dialog).getByLabelText('Хост')).dataset.value).toBe('h2')
   })
 
   it('shows the host address and the state pill', async () => {

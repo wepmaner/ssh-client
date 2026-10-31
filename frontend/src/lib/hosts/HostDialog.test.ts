@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/svelte'
+import { optionLabels, pick } from '../ui/select.testing'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
@@ -108,7 +109,7 @@ describe('HostDialog', () => {
     setup()
     await fireEvent.click(screen.getByRole('radio', { name: 'Импортировать' }))
     await fireEvent.click(screen.getByRole('button', { name: 'Выбрать файл…' }))
-    await vi.waitFor(() => expect((screen.getByLabelText('Ключ') as HTMLSelectElement).value).toBe('k2'))
+    await vi.waitFor(() => expect((screen.getByLabelText('Ключ')).dataset.value).toBe('k2'))
     expect(screen.getByRole('radio', { name: 'Из хранилища' }).getAttribute('aria-checked')).toBe('true')
     await fill('Адрес', 'srv.example.test')
     await fill('Пользователь', 'deploy')
@@ -125,23 +126,23 @@ describe('HostDialog', () => {
 
   it('keeps an imported host without a key and saves it keyless', async () => {
     setup({ ...saved, key_id: '', group_id: '', group_name: '', key_name: '', os: '', connected: false })
-    const select = screen.getByLabelText('Ключ') as HTMLSelectElement
-    expect(select.value).toBe('')
-    expect(select.selectedOptions[0].textContent).toBe('Без ключа — сервер спросит пароль')
+    const select = screen.getByLabelText('Ключ')
+    expect(select.dataset.value).toBe('')
+    expect(select.textContent?.trim()).toBe('Без ключа — сервер спросит пароль')
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
     await vi.waitFor(() => expect(api.HostSave).toHaveBeenCalledWith(expect.objectContaining({ id: 'h1', key_id: '' })))
   })
 
   it('a duplicate of a keyless host stays keyless', () => {
     setup({ ...saved, id: '', key_id: '', group_id: '', group_name: '', key_name: '', os: '', connected: false })
-    expect((screen.getByLabelText('Ключ') as HTMLSelectElement).value).toBe('')
+    expect((screen.getByLabelText('Ключ')).dataset.value).toBe('')
   })
 
   it('offers three MCP access modes, closed by default', async () => {
     setup()
-    const sel = screen.getByLabelText('Доступ по MCP') as HTMLSelectElement
-    expect([...sel.options].map((o) => o.textContent)).toEqual(['Закрыт', 'Только просмотр', 'Полный'])
-    expect(sel.value).toBe('')
+    const sel = screen.getByLabelText('Доступ по MCP')
+    expect(await optionLabels(sel)).toEqual(['Закрыт', 'Только просмотр', 'Полный'])
+    expect(sel.dataset.value).toBe('')
     expect(screen.queryByText(/Полный доступ — всё, что может/)).toBeNull()
     await fill('Адрес', 'srv.example.test')
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
@@ -150,7 +151,7 @@ describe('HostDialog', () => {
 
   it('says what full MCP access means and saves the mode', async () => {
     setup()
-    await fireEvent.change(screen.getByLabelText('Доступ по MCP'), { target: { value: 'full' } })
+    await pick(screen.getByLabelText('Доступ по MCP'), 'full')
     expect(screen.getByText(/Полный доступ — всё, что может/)).toBeTruthy()
     await fill('Адрес', 'srv.example.test')
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
@@ -159,14 +160,14 @@ describe('HostDialog', () => {
 
   it('keeps the MCP access of an edited host', async () => {
     setup({ ...saved, mcp_access: 'read' })
-    expect((screen.getByLabelText('Доступ по MCP') as HTMLSelectElement).value).toBe('read')
+    expect((screen.getByLabelText('Доступ по MCP')).dataset.value).toBe('read')
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
     await vi.waitFor(() => expect(api.HostSave).toHaveBeenCalledWith(expect.objectContaining({ id: 'h1', mcp_access: 'read' })))
   })
 
   it('a duplicate of a host starts with MCP closed', () => {
     setup({ ...saved, id: '', mcp_access: 'full' })
-    expect((screen.getByLabelText('Доступ по MCP') as HTMLSelectElement).value).toBe('')
+    expect((screen.getByLabelText('Доступ по MCP')).dataset.value).toBe('')
   })
 
   it('shows the field error of the MCP mode', async () => {
@@ -178,9 +179,9 @@ describe('HostDialog', () => {
 
   it('a new host can be saved without a key', async () => {
     setup()
-    const select = screen.getByLabelText('Ключ') as HTMLSelectElement
-    expect(select.value).toBe('k1')
-    await fireEvent.change(select, { target: { value: '' } })
+    const select = screen.getByLabelText('Ключ')
+    expect(select.dataset.value).toBe('k1')
+    await pick(select, '')
     await fill('Адрес', 'srv.example.test')
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
     await vi.waitFor(() => expect(api.HostSave).toHaveBeenCalledWith(expect.objectContaining({ key_id: '' })))
@@ -201,7 +202,7 @@ describe('HostDialog', () => {
     setup()
     await fill('Адрес', 'srv.example.test')
     await fill('Пользователь', 'deploy')
-    await fireEvent.change(screen.getByLabelText('Группа'), { target: { value: '__new' } })
+    await pick(screen.getByLabelText('Группа'), '__new')
     await fill('Название группы', 'Lab')
     await fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
     await vi.waitFor(() => expect(api.HostSave).toHaveBeenCalledWith(expect.objectContaining({ group_id: 'g9' })))

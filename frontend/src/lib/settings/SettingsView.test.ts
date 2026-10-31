@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
+import { optionValues, pick } from '../ui/select.testing'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
@@ -46,7 +47,7 @@ describe('SettingsView', () => {
 
   it('saves a new font at once and applies it to the store', async () => {
     render(SettingsView)
-    await fireEvent.change(screen.getByLabelText('Шрифт'), { target: { value: 'JetBrains Mono' } })
+    await pick(screen.getByLabelText('Шрифт'), 'JetBrains Mono')
     expect(api.SaveSettings).toHaveBeenCalledTimes(1)
     expect(api.SaveSettings).toHaveBeenCalledWith(expect.objectContaining({ terminal_font: 'JetBrains Mono', terminal_size: 13 }))
     expect(settings.terminal_font).toBe('JetBrains Mono')
@@ -55,9 +56,9 @@ describe('SettingsView', () => {
 
   it('saves size and checkboxes', async () => {
     render(SettingsView)
-    const size = screen.getByLabelText('Размер') as HTMLSelectElement
-    expect([...size.options].map((o) => o.value)).toEqual(['10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20'])
-    await fireEvent.change(size, { target: { value: '16' } })
+    const size = screen.getByLabelText('Размер')
+    expect(await optionValues(size)).toEqual(['10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20'])
+    await pick(size, '16')
     expect(api.SaveSettings).toHaveBeenLastCalledWith(expect.objectContaining({ terminal_size: 16 }))
     await fireEvent.click(screen.getByLabelText('Ускорение отрисовки (WebGL)'))
     expect(api.SaveSettings).toHaveBeenLastCalledWith(expect.objectContaining({ webgl: false, terminal_size: 16 }))
@@ -68,21 +69,21 @@ describe('SettingsView', () => {
     api.GetSettings.mockResolvedValue({ ...JSON.parse(JSON.stringify(settings)), terminal_size: 13 })
     render(SettingsView)
     const size = screen.getByLabelText('Размер')
-    await fireEvent.change(size, { target: { value: '16' } })
+    await pick(size, '16')
     await waitFor(() => expect(document.getElementById(size.getAttribute('aria-describedby') ?? '')?.textContent).toBe('Размер от 10 до 20'))
     await waitFor(() => expect(settings.terminal_size).toBe(13))
     // The next accepted change clears it.
-    await fireEvent.change(size, { target: { value: '14' } })
+    await pick(size, '14')
     await waitFor(() => expect(size.getAttribute('aria-describedby')).toBeNull())
   })
 
   it('offers the idle lock only with a vault password', async () => {
     render(SettingsView)
-    const lock = screen.getByLabelText('Блокировать после бездействия') as HTMLSelectElement
+    const lock = screen.getByLabelText('Блокировать после бездействия') as HTMLButtonElement
     expect(lock.disabled).toBe(true)
     vault.has_password = true
     await waitFor(() => expect(lock.disabled).toBe(false))
-    await fireEvent.change(lock, { target: { value: '15' } })
+    await pick(lock, '15')
     expect(api.SaveSettings).toHaveBeenLastCalledWith(expect.objectContaining({ lock_after_min: 15 }))
   })
 

@@ -19,6 +19,7 @@
   import BackupDialog from '../backup/BackupDialog.svelte'
   import RestoreButton from '../backup/RestoreButton.svelte'
   import Button from '../ui/Button.svelte'
+  import Select from '../ui/Select.svelte'
   import PasswordDialog from '../ui/PasswordDialog.svelte'
   import VaultDialog from './VaultDialog.svelte'
 
@@ -132,16 +133,23 @@
     <div class="grid">
       <label class="field">
         <span>Шрифт</span>
-        <select class="select" aria-describedby={describedBy('font')} value={settings.terminal_font} onchange={(e) => update({ terminal_font: e.currentTarget.value })}>
-          {#each fonts as f (f)}<option value={f}>{f}</option>{/each}
-        </select>
+        <Select
+          aria-describedby={describedBy('font')}
+          value={settings.terminal_font}
+          options={fonts.map((f) => ({ value: f, label: f }))}
+          onchange={(v) => update({ terminal_font: v })}
+        />
         {@render err('font')}
       </label>
       <label class="field">
         <span>Размер</span>
-        <select class="select mono" aria-describedby={describedBy('size')} value={String(settings.terminal_size)} onchange={(e) => update({ terminal_size: Number(e.currentTarget.value) })}>
-          {#each sizes as s (s)}<option value={String(s)}>{s}</option>{/each}
-        </select>
+        <Select
+          style="font-family:var(--font-mono)"
+          aria-describedby={describedBy('size')}
+          value={String(settings.terminal_size)}
+          options={sizes.map((s) => ({ value: String(s), label: String(s) }))}
+          onchange={(v) => update({ terminal_size: Number(v) })}
+        />
         {@render err('size')}
       </label>
     </div>
@@ -192,15 +200,13 @@
     <div class="grid">
       <label class="field">
         <span>Блокировать после бездействия</span>
-        <select
-          class="select"
+        <Select
           disabled={!vault.has_password}
           aria-describedby={describedBy('lock')}
           value={String(vault.has_password ? settings.lock_after_min : 0)}
-          onchange={(e) => update({ lock_after_min: Number(e.currentTarget.value) })}
-        >
-          {#each lockOptions as o (o.value)}<option value={String(o.value)}>{o.label}</option>{/each}
-        </select>
+          options={lockOptions.map((o) => ({ value: String(o.value), label: o.label }))}
+          onchange={(v) => update({ lock_after_min: Number(v) })}
+        />
         {@render err('lock')}
       </label>
     </div>
@@ -286,25 +292,6 @@
   .field > span {
     font-size: 12px;
     color: var(--muted);
-  }
-  .select {
-    height: var(--control-height);
-    padding: 0 8px;
-    border: 1px solid #333a44;
-    border-radius: var(--radius-control);
-    background: #15181c;
-    color: var(--text);
-    font: inherit;
-  }
-  .select:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-  .select:disabled {
-    opacity: 0.45;
-  }
-  .mono {
-    font-family: var(--font-mono);
   }
   .check {
     display: flex;

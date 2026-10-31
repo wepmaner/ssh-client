@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
+import { pick } from '../ui/select.testing'
 import { tick } from 'svelte'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -158,26 +159,26 @@ describe('McpView', () => {
     api.HostsList.mockResolvedValue([host, { ...host, id: 'h2', name: 'stage', mcp_access: 'read' }])
     await mount()
     await waitFor(() => expect(screen.getByLabelText('Доступ для prod')).toBeTruthy())
-    expect((screen.getByLabelText('Доступ для prod') as HTMLSelectElement).value).toBe('')
-    expect((screen.getByLabelText('Доступ для stage') as HTMLSelectElement).value).toBe('read')
+    expect((screen.getByLabelText('Доступ для prod')).dataset.value).toBe('')
+    expect((screen.getByLabelText('Доступ для stage')).dataset.value).toBe('read')
   })
 
   it('saves a new mode with every other host field unchanged', async () => {
     await mount()
-    const select = (await screen.findByLabelText('Доступ для prod')) as HTMLSelectElement
+    const select = await screen.findByLabelText('Доступ для prod')
     api.HostsList.mockResolvedValue([{ ...host, mcp_access: 'full' }])
-    await fireEvent.change(select, { target: { value: 'full' } })
+    await pick(select, 'full')
     await waitFor(() => expect(api.HostSave).toHaveBeenCalledWith({ ...host, mcp_access: 'full' }))
     await waitFor(() => expect(screen.getByText(/всё, что может пользователь/)).toBeTruthy())
   })
 
   it('puts the mode back when the save fails', async () => {
     await mount()
-    const select = (await screen.findByLabelText('Доступ для prod')) as HTMLSelectElement
+    const select = await screen.findByLabelText('Доступ для prod')
     api.HostSave.mockRejectedValue('Хранилище заблокировано')
-    await fireEvent.change(select, { target: { value: 'full' } })
+    await pick(select, 'full')
     await waitFor(() => expect(toastState.message).toBe('Хранилище заблокировано'))
-    expect(select.value).toBe('')
+    expect(select.dataset.value).toBe('')
   })
 
   it('says where to add hosts when there are none', async () => {

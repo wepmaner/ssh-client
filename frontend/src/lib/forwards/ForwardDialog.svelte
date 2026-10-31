@@ -7,6 +7,7 @@
   import Button from '../ui/Button.svelte'
   import Dialog from '../ui/Dialog.svelte'
   import Input from '../ui/Input.svelte'
+  import Select from '../ui/Select.svelte'
   import Segmented from '../ui/Segmented.svelte'
   import { refreshForwards } from './forwards.svelte'
 
@@ -175,15 +176,16 @@
     </div>
     <div class="field">
       <label for="fwd-host">Хост</label>
-      <select
+      <Select
         id="fwd-host"
-        class="select"
-        bind:value={form.host_id}
+        value={form.host_id}
+        options={hosts.map((h) => ({ value: h.id, label: h.name }))}
         aria-describedby={errors.host ? 'fwd-host-error' : undefined}
-        onchange={() => clearError('host')}
-      >
-        {#each hosts as h (h.id)}<option value={h.id}>{h.name}</option>{/each}
-      </select>
+        onchange={(v) => {
+          form.host_id = v
+          clearError('host')
+        }}
+      />
       {@render err('host')}
     </div>
     <div class="grid" class:single={form.kind === 'D'}>
@@ -304,19 +306,6 @@
   .check input {
     margin: 0;
     accent-color: var(--accent);
-  }
-  .select {
-    height: var(--control-height);
-    padding: 0 8px;
-    border: 1px solid #333a44;
-    border-radius: var(--radius-control);
-    background: #15181c;
-    color: var(--text);
-    font: inherit;
-  }
-  .select:focus {
-    outline: none;
-    border-color: var(--accent);
   }
   .sub {
     margin: -6px 0 0;
