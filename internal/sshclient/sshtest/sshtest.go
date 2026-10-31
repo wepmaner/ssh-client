@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -24,6 +25,12 @@ type Opts struct {
 	MaxAuthTries int           // ServerConfig.MaxAuthTries; 0 — значение x/crypto по умолчанию (6)
 	ExitCode     int           // != 0: shell печатает "ok\r\n", сразу завершается с этим кодом и закрывает канал
 	NoExitStatus bool          // shell печатает "ok\r\n" и закрывает канал без exit-status; соединение остаётся
+
+	// Exec обслуживает запрос exec: пишет вывод в stdout и stderr и возвращает код выхода.
+	// В stop приходят имена сигналов из запросов signal ("TERM"). nil — запрос отклоняется.
+	Exec func(cmd string, stdout, stderr io.Writer, stop <-chan string) int
+	// SFTPRoot — рабочая папка подсистемы sftp; "" — подсистема отклоняется.
+	SFTPRoot string
 
 	OnPty          func(term string, cols, rows uint32) // вызывается на pty-req
 	OnWindowChange func(cols, rows uint32)              // вызывается на window-change
@@ -271,6 +278,7 @@ func (s *Server) handleSession(nc ssh.NewChannel) {
 		return
 	}
 	defer func() { ignoreErr(ch.Close()) }()
+	stop := make(chan string, 4) // имена сигналов для Opts.Exec
 	for req := range reqs {
 		switch req.Type {
 		case "pty-req":
@@ -313,6 +321,50 @@ func (s *Server) handleSession(nc ssh.NewChannel) {
 				_, err := io.Copy(ch, ch) // эхо до EOF от клиента
 				ignoreErr(err)
 				sendExitStatus(ch, 0)
+				ignoreErr(ch.Close())
+			}()
+		case "exec":
+			var e struct{ Command string }
+			if s.opts.Exec == nil || ssh.Unmarshal(req.Payload, &e) != nil {
+				ignoreErr(req.Reply(false, nil))
+				continue
+			}
+			ignoreErr(req.Reply(true, nil))
+			s.wg.Add(1)
+			go func() {
+				defer s.wg.Done()
+				code := s.opts.Exec(e.Command, ch, ch.Stderr(), stop)
+				sendExitStatus(ch, code)
+				ignoreErr(ch.Close())
+			}()
+		case "signal":
+			var sg struct{ Signal string }
+			if ssh.Unmarshal(req.Payload, &sg) == nil {
+				select {
+				case stop <- sg.Signal:
+				default:
+				}
+			}
+			if req.WantReply {
+				ignoreErr(req.Reply(true, nil))
+			}
+		case "subsystem":
+			var sub struct{ Name string }
+			if s.opts.SFTPRoot == "" || ssh.Unmarshal(req.Payload, &sub) != nil || sub.Name != "sftp" {
+				ignoreErr(req.Reply(false, nil))
+				continue
+			}
+			srv, err := sftp.NewServer(ch, sftp.WithServerWorkingDirectory(s.opts.SFTPRoot))
+			if err != nil {
+				ignoreErr(req.Reply(false, nil))
+				continue
+			}
+			ignoreErr(req.Reply(true, nil))
+			s.wg.Add(1)
+			go func() {
+				defer s.wg.Done()
+				ignoreErr(srv.Serve())
+				ignoreErr(srv.Close())
 				ignoreErr(ch.Close())
 			}()
 		default: // env и прочее игнорируем
