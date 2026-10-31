@@ -32,12 +32,22 @@ func TestCheckLocalPath(t *testing.T) {
 		"trailing dot":   filepath.Join(dir, "vault.json."),
 		"trailing space": filepath.Join(dir, "vault.json "),
 		"stream":         filepath.Join(dir, "vault.json:stream"),
-		"extended":       `\?\` + filepath.Join(dir, "vault.json"),
-		"device":         `\.\` + filepath.Join(dir, "vault.json"),
+		"extended":       `\\?\` + filepath.Join(dir, "vault.json"),
+		"device":         `\\.\` + filepath.Join(dir, "vault.json"),
 	}
 	for name, p := range refused {
 		if err := checkLocalPath(dir, p); err == nil {
 			t.Errorf("%s: %q must be refused", name, p)
+		}
+	}
+
+	// UNC-путь к собственной папке данных через административный ресурс.
+	if vol := filepath.VolumeName(dir); len(vol) == 2 && vol[1] == ':' {
+		unc := `\\localhost\` + vol[:1] + `$` + dir[2:]
+		if _, err := os.Stat(unc); err != nil {
+			t.Logf("admin share not reachable, UNC case skipped: %v", err)
+		} else if err := checkLocalPath(dir, filepath.Join(unc, "vault.json")); err == nil {
+			t.Errorf("UNC loopback %q must be refused", unc)
 		}
 	}
 

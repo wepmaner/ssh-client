@@ -14,8 +14,9 @@ const errDataFolder = "Этот путь указывает на папку да
 // checkLocalPath отказывает, если path ведёт в папку данных dataDir
 // или не может быть надёжно проверен. Путь может ещё не существовать
 // (цель скачивания): тогда сверяется ближайший существующий родитель.
+// Пределы: проверка идёт до открытия файла, подменённый между ними junction не ловится; жёсткая ссылка на файл папки данных снаружи не обнаруживается.
 func checkLocalPath(dataDir, path string) error {
-	if strings.HasPrefix(path, `\?\`) || strings.HasPrefix(path, `\.\`) ||
+	if strings.HasPrefix(path, `\\?\`) || strings.HasPrefix(path, `\\.\`) ||
 		strings.HasPrefix(path, `//?/`) || strings.HasPrefix(path, `//./`) {
 		return errors.New(`Пути вида \\?\ и \\.\ не поддерживаются: укажите обычный путь, например C:\Users\имя\Загрузки\файл.txt.`)
 	}
