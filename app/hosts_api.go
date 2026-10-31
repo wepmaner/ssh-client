@@ -160,7 +160,8 @@ func (a *App) validateHost(in HostDTO) (model.Host, error) {
 
 // HostSave creates a host (empty ID) or updates an existing one. Port 0 means
 // 22, an empty name means the address. A change of the address, port, user or key detaches the
-// host's open connection: its users stay on it, new ones log in with the new parameters.
+// host's open connection: its users stay on it, new ones log in with the new parameters. A host
+// that is closed for MCP loses its MCP calls and hold.
 func (a *App) HostSave(in HostDTO) (HostDTO, error) {
 	if !a.storeUnlocked() {
 		return HostDTO{}, errVaultLocked
@@ -177,6 +178,9 @@ func (a *App) HostSave(in HostDTO) (HostDTO, error) {
 	if h.ID != "" && paramsOf(saved) != before {
 		a.markHostStale(saved.ID)
 	}
+	if saved.MCPAccess == model.MCPAccessClosed {
+		a.mcpReleaseHost(saved.ID)
+	}
 	return a.hostDTO(saved.ID)
 }
 
@@ -189,6 +193,7 @@ func (a *App) HostDelete(id string) error {
 	if err := a.storeRef().DeleteHost(id); err != nil {
 		return err
 	}
+	a.mcpReleaseHost(id)
 	a.closeSessionsOfHost(id)
 	err := a.deleteForwardsOfHost(id)
 	a.closeHostConns(id)

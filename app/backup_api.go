@@ -176,10 +176,13 @@ func (a *App) VaultRestore(path, password string) error {
 		b.Discard()
 		return errors.New("Хранилище изменилось, повторите восстановление") //nolint:staticcheck // ST1005: Russian UI text
 	}
+	// Last of the deferred calls: the MCP server comes back by the settings of the vault that stays.
+	defer a.mcpStart()
 	// New sessions and forwards are refused until the new vault is in place; one that slipped in
 	// before the flag joins a shut-down connection and fails without a login.
 	a.restoring.Store(true)
 	defer a.restoring.Store(false)
+	a.mcpStop()
 	a.closeAllSessions()
 	a.stopAllForwards()
 	a.closeAllHostConns()

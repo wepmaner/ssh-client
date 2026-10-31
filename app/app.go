@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"log"
+	"net"
+	"net/http"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -71,6 +73,15 @@ type App struct {
 	mcpHolds      map[string]*mcpHold // the hold of each host
 	mcpHoldTTL    time.Duration       // 0 means mcpHoldTime
 	mcpLoginLimit time.Duration       // 0 means mcpLoginTime
+
+	// mcpLife serialises the start and stop of the MCP server and guards the fields below (mcp_api.go).
+	// It is taken before mcpMu and hcMu, which never lead to it.
+	mcpLife  sync.Mutex
+	mcpSrv   *http.Server               // nil while the port is closed
+	mcpLn    net.Listener               // the listener of mcpSrv
+	mcpToken string                     // the token while the switch is on; it outlives a vault lock
+	mcpState MCPStatusDTO               // the last published status
+	mcpLive  atomic.Pointer[mcpBackend] // the backend of mcpSrv: a request of an earlier run has another
 
 	version string                   // the release version, "dev" in local builds
 	putty   importers.RegistryReader // PuTTY sessions source; nil means the Windows registry
@@ -151,11 +162,12 @@ func (a *App) openVault() {
 	a.setVault(v, store.NewStore(v), nil)
 }
 
-// initVault opens the vault and, when it needs no password, starts the autostart forwards.
-// A password vault starts them in VaultUnlock.
+// initVault opens the vault and, when it needs no password, starts the autostart forwards and the
+// MCP server. A password vault starts them in VaultUnlock.
 func (a *App) initVault() {
 	a.openVault()
 	a.autostartOnce()
+	a.mcpStart()
 }
 
 // autostartOnce starts the autostart forwards the first time the vault is open in this run.
@@ -194,9 +206,11 @@ func (a *App) ServiceStartup(_ context.Context, _ application.ServiceOptions) er
 	return nil
 }
 
-// ServiceShutdown runs after the window has closed; it ends every SSH session and forward.
+// ServiceShutdown runs after the window has closed; it ends the MCP server and every SSH session
+// and forward.
 func (a *App) ServiceShutdown() error {
 	a.exiting.Store(true)
+	a.mcpStop()
 	a.closeAllSessions()
 	a.stopAllForwards()
 	a.closeAllHostConns()

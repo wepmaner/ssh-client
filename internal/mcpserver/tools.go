@@ -90,6 +90,15 @@ func notFoundText(name string) string {
 	return fmt.Sprintf("Сервер «%s» не найден. Список доступных серверов даёт list_hosts; если сервера там нет, его нужно открыть в клиенте: «Доступ по MCP» в настройках хоста.", name)
 }
 
+// HostNotFound is the answer about a host that is missing or closed. The Backend gives it for a
+// host closed after the tool resolved it.
+func HostNotFound(name string) error { return errors.New(notFoundText(name)) }
+
+// ReadOnlyCommand is the answer about a command refused by CheckReadOnly.
+func ReadOnlyCommand(cause error) error {
+	return errors.New("Режим хоста «Только просмотр»: команда не выполнена. " + cause.Error()) //nolint:staticcheck // ST1005: Russian text for the client
+}
+
 // resolve finds an open host by ID or exact name. The error text is ready to
 // show to the client; closed hosts are absent from Hosts and so look missing.
 func resolve(ctx context.Context, b Backend, ref string) (HostInfo, error) {
@@ -117,7 +126,7 @@ func resolve(ctx context.Context, b Backend, ref string) (HostInfo, error) {
 	}
 	switch len(found) {
 	case 0:
-		return HostInfo{}, errors.New(notFoundText(ref))
+		return HostInfo{}, HostNotFound(ref)
 	case 1:
 		return found[0], nil
 	}
@@ -125,10 +134,11 @@ func resolve(ctx context.Context, b Backend, ref string) (HostInfo, error) {
 	for i, h := range found {
 		ids[i] = h.ID
 	}
-	return HostInfo{}, fmt.Errorf("Название «%s» неоднозначно. Укажите идентификатор хоста: %s.", ref, strings.Join(ids, ", "))
+	return HostInfo{}, fmt.Errorf("Название «%s» неоднозначно. Укажите идентификатор хоста: %s.", ref, strings.Join(ids, ", ")) //nolint:staticcheck // ST1005: Russian text for the client
 }
 
-const readOnlyUpload = "Режим хоста «Только просмотр»: загрузка файлов на сервер запрещена. Скачивание и безопасные команды просмотра разрешены; режим меняет владелец в настройках хоста."
+// ReadOnlyUpload is the answer about an upload to a read-only host.
+const ReadOnlyUpload = "Режим хоста «Только просмотр»: загрузка файлов на сервер запрещена. Скачивание и безопасные команды просмотра разрешены; режим меняет владелец в настройках хоста."
 
 // withRequest ties the context of a tool call to the HTTP request, so that a
 // client disconnect or a server shutdown reaches the Backend.
@@ -169,7 +179,7 @@ func registerTools(s *mcp.Server, b Backend, reqCtx context.Context) {
 		if h.Access != model.MCPAccessFull {
 			if cerr := CheckReadOnly(in.Command); cerr != nil {
 				b.Refused(h, "run_command", in.Command, cerr.Error())
-				return errResult("Режим хоста «Только просмотр»: команда не выполнена. " + cerr.Error())
+				return errResult(ReadOnlyCommand(cerr).Error())
 			}
 		}
 		sec := in.TimeoutSec
@@ -205,7 +215,7 @@ func registerTools(s *mcp.Server, b Backend, reqCtx context.Context) {
 		}
 		if h.Access != model.MCPAccessFull {
 			b.Refused(h, "upload_file", in.LocalPath+" -> "+in.RemotePath, "загрузка файлов запрещена в режиме «Только просмотр»")
-			return errResult(readOnlyUpload)
+			return errResult(ReadOnlyUpload)
 		}
 		n, err := b.Upload(ctx, h, in.LocalPath, in.RemotePath, in.Overwrite)
 		if ctx.Err() != nil || errors.Is(err, context.Canceled) {

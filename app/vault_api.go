@@ -55,7 +55,7 @@ func (a *App) VaultState() VaultStateDTO {
 }
 
 // VaultUnlock unlocks a password vault, makes the typed store available and starts the
-// autostart forwards.
+// autostart forwards and the MCP server.
 func (a *App) VaultUnlock(password string) error {
 	v := a.vaultRef()
 	if v == nil {
@@ -70,6 +70,7 @@ func (a *App) VaultUnlock(password string) error {
 		return err
 	}
 	a.autostartOnce()
+	a.mcpStart()
 	return nil
 }
 

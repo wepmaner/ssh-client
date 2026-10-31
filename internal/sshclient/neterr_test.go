@@ -125,7 +125,7 @@ func TestListenErrorTexts(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := listenError(c.addr, c.err)
+			got := ListenError(c.addr, c.err)
 			if got.Error() != c.want {
 				t.Fatalf("text = %q, want %q", got, c.want)
 			}

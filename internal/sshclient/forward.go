@@ -228,7 +228,7 @@ func (r *ForwardRunner) open(ctx context.Context) (ln net.Listener, client *ssh.
 		var lc net.ListenConfig
 		ln, err = lc.Listen(ctx, "tcp", r.f.Listen)
 		if err != nil {
-			return nil, nil, nil, listenError(r.f.Listen, err)
+			return nil, nil, nil, ListenError(r.f.Listen, err)
 		}
 		client, err = r.dial(ctx)
 		if err != nil {

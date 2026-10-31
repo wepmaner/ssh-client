@@ -30,10 +30,10 @@ func dialError(addr string, err error) error {
 	return fmt.Errorf("подключение к %s: %w", addr, err)
 }
 
-// listenError объясняет по-русски, почему не удалось занять локальный адрес проброса; системный
+// ListenError объясняет по-русски, почему не удалось занять локальный адрес проброса; системный
 // текст остаётся причиной для подробностей карточки. Порт показывается числом, адрес — только
 // если он не 127.0.0.1.
-func listenError(addr string, err error) error {
+func ListenError(addr string, err error) error {
 	host, port, splitErr := net.SplitHostPort(addr)
 	if splitErr != nil {
 		host, port = "", addr

@@ -18,39 +18,39 @@ const errDataFolder = "Этот путь указывает на папку да
 func checkLocalPath(dataDir, path string) error {
 	if strings.HasPrefix(path, `\\?\`) || strings.HasPrefix(path, `\\.\`) ||
 		strings.HasPrefix(path, `//?/`) || strings.HasPrefix(path, `//./`) {
-		return errors.New(`Пути вида \\?\ и \\.\ не поддерживаются: укажите обычный путь, например C:\Users\имя\Загрузки\файл.txt.`)
+		return errors.New(`Пути вида \\?\ и \\.\ не поддерживаются: укажите обычный путь, например C:\Users\имя\Загрузки\файл.txt.`) //nolint:staticcheck // ST1005: Russian UI text
 	}
 	if !filepath.IsAbs(path) {
-		return errors.New(`Нужен полный путь к файлу, например C:\Users\имя\Загрузки\файл.txt: относительные пути не принимаются.`)
+		return errors.New(`Нужен полный путь к файлу, например C:\Users\имя\Загрузки\файл.txt: относительные пути не принимаются.`) //nolint:staticcheck // ST1005: Russian UI text
 	}
 	clean := filepath.Clean(path)
 	rest := strings.TrimPrefix(clean, filepath.VolumeName(clean))
 	if strings.Contains(rest, ":") {
-		return errors.New("Путь содержит двоеточие после имени диска (альтернативный поток NTFS). Укажите обычный путь к файлу.")
+		return errors.New("Путь содержит двоеточие после имени диска (альтернативный поток NTFS). Укажите обычный путь к файлу.") //nolint:staticcheck // ST1005: Russian UI text
 	}
 	for _, c := range strings.Split(rest, string(filepath.Separator)) {
 		if c != "" && (strings.HasSuffix(c, ".") || strings.HasSuffix(c, " ")) {
-			return fmt.Errorf("Имя %q оканчивается точкой или пробелом: Windows отбрасывает их, и путь может указать на другой файл. Уберите их из пути.", c)
+			return fmt.Errorf("Имя %q оканчивается точкой или пробелом: Windows отбрасывает их, и путь может указать на другой файл. Уберите их из пути.", c) //nolint:staticcheck // ST1005: Russian UI text
 		}
 	}
 
 	root, err := resolveNearest(dataDir)
 	if err != nil {
-		return fmt.Errorf("Не удалось проверить папку данных, передача файлов отклонена: %w", err)
+		return fmt.Errorf("Не удалось проверить папку данных, передача файлов отклонена: %w", err) //nolint:staticcheck // ST1005: Russian UI text
 	}
 	real, err := resolveNearest(clean)
 	if err != nil {
-		return fmt.Errorf("Не удалось проверить путь %q, передача файла отклонена: %w. Проверьте, что путь существует и доступен.", path, err)
+		return fmt.Errorf("Не удалось проверить путь %q, передача файла отклонена: %w. Проверьте, что путь существует и доступен.", path, err) //nolint:staticcheck // ST1005: Russian UI text
 	}
 	if within(root, real) {
-		return errors.New(errDataFolder)
+		return errors.New(errDataFolder) //nolint:staticcheck // ST1005: Russian UI text
 	}
 	same, err := insideByIdentity(dataDir, clean)
 	if err != nil {
-		return fmt.Errorf("Не удалось проверить путь %q, передача файла отклонена: %w. Проверьте, что путь доступен.", path, err)
+		return fmt.Errorf("Не удалось проверить путь %q, передача файла отклонена: %w. Проверьте, что путь доступен.", path, err) //nolint:staticcheck // ST1005: Russian UI text
 	}
 	if same {
-		return errors.New(errDataFolder)
+		return errors.New(errDataFolder) //nolint:staticcheck // ST1005: Russian UI text
 	}
 	return nil
 }
