@@ -11,6 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"sshclient/internal/model"
+	"sshclient/internal/sshclient"
 )
 
 const (
@@ -70,6 +71,14 @@ func textResult(parts ...string) (*mcp.CallToolResult, any, error) {
 	return r, nil, nil
 }
 
+func cancelledResult(res sshclient.ExecResult) (*mcp.CallToolResult, any, error) {
+	r, _, _ := textResult(
+		jsonText(runOut{res.Stdout, res.Stderr, res.ExitCode, res.Truncated, res.TimedOut}),
+		"Вызов отменён: команда может ещё выполняться на сервере. Проверьте это, прежде чем запускать её повторно. Показан вывод, полученный до отмены.")
+	r.IsError = true
+	return r, nil, nil
+}
+
 func jsonText(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
@@ -86,13 +95,20 @@ func resolve(ctx context.Context, b Backend, ref string) (HostInfo, error) {
 	if err != nil {
 		return HostInfo{}, err
 	}
+	// A host with an unknown access mode is treated as closed: fail shut.
+	var open []HostInfo
 	for _, h := range hosts {
+		if h.Access == model.MCPAccessRead || h.Access == model.MCPAccessFull {
+			open = append(open, h)
+		}
+	}
+	for _, h := range open {
 		if h.ID == ref {
 			return h, nil
 		}
 	}
 	var found []HostInfo
-	for _, h := range hosts {
+	for _, h := range open {
 		if h.Name == ref {
 			found = append(found, h)
 		}
@@ -112,11 +128,21 @@ func resolve(ctx context.Context, b Backend, ref string) (HostInfo, error) {
 
 const readOnlyUpload = "Режим хоста «Только просмотр»: загрузка файлов на сервер запрещена. Скачивание и безопасные команды просмотра разрешены; режим меняет владелец в настройках хоста."
 
-func registerTools(s *mcp.Server, b Backend) {
+// withRequest ties the context of a tool call to the HTTP request, so that a
+// client disconnect or a server shutdown reaches the Backend.
+func withRequest(ctx, reqCtx context.Context) (context.Context, func()) {
+	c, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(reqCtx, cancel)
+	return c, func() { stop(); cancel() }
+}
+
+func registerTools(s *mcp.Server, b Backend, reqCtx context.Context) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_hosts",
 		Description: "List the servers available through this client: id, name, group, address, port, user and access mode (read = read-only, full). Only hosts the owner opened for MCP are shown.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ listHostsIn) (*mcp.CallToolResult, any, error) {
+		ctx, done := withRequest(ctx, reqCtx)
+		defer done()
 		hosts, err := b.Hosts(ctx)
 		if err != nil {
 			return errResult(err.Error())
@@ -132,11 +158,13 @@ func registerTools(s *mcp.Server, b Backend) {
 		Name:        "run_command",
 		Description: "Run a shell command on a host over SSH (no pseudo-terminal). Returns stdout, stderr (last 200 KB each), exit_code, truncated and timed_out. On timeout the command may still be running on the server. Hosts in read-only mode accept only a fixed set of read-only commands.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in runIn) (*mcp.CallToolResult, any, error) {
+		ctx, done := withRequest(ctx, reqCtx)
+		defer done()
 		h, err := resolve(ctx, b, in.Host)
 		if err != nil {
 			return errResult(err.Error())
 		}
-		if h.Access == model.MCPAccessRead {
+		if h.Access != model.MCPAccessFull {
 			if cerr := CheckReadOnly(in.Command); cerr != nil {
 				b.Refused(h, "run_command", in.Command, cerr.Error())
 				return errResult("Режим хоста «Только просмотр»: команда не выполнена. " + cerr.Error())
@@ -150,6 +178,9 @@ func registerTools(s *mcp.Server, b Backend) {
 			sec = maxTimeoutSec
 		}
 		res, err := b.Run(ctx, h, in.Command, time.Duration(sec)*time.Second)
+		if ctx.Err() != nil {
+			return cancelledResult(res)
+		}
 		if err != nil {
 			return errResult(err.Error())
 		}
@@ -164,12 +195,14 @@ func registerTools(s *mcp.Server, b Backend) {
 		Name:        "upload_file",
 		Description: "Upload one local file to a host over SFTP. The local path must be absolute. An existing remote file is not replaced unless overwrite is true. Not allowed on read-only hosts.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in uploadIn) (*mcp.CallToolResult, any, error) {
+		ctx, done := withRequest(ctx, reqCtx)
+		defer done()
 		h, err := resolve(ctx, b, in.Host)
 		if err != nil {
 			return errResult(err.Error())
 		}
-		if h.Access == model.MCPAccessRead {
-			b.Refused(h, "upload_file", in.LocalPath+" -> "+in.RemotePath, "upload is not allowed in read-only mode")
+		if h.Access != model.MCPAccessFull {
+			b.Refused(h, "upload_file", in.LocalPath+" -> "+in.RemotePath, "загрузка файлов запрещена в режиме «Только просмотр»")
 			return errResult(readOnlyUpload)
 		}
 		n, err := b.Upload(ctx, h, in.LocalPath, in.RemotePath, in.Overwrite)
@@ -183,6 +216,8 @@ func registerTools(s *mcp.Server, b Backend) {
 		Name:        "download_file",
 		Description: "Download one file from a host over SFTP. The local path must be absolute. An existing local file is not replaced unless overwrite is true. Allowed on read-only hosts.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in downloadIn) (*mcp.CallToolResult, any, error) {
+		ctx, done := withRequest(ctx, reqCtx)
+		defer done()
 		h, err := resolve(ctx, b, in.Host)
 		if err != nil {
 			return errResult(err.Error())

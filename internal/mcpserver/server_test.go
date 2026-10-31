@@ -32,6 +32,10 @@ type fakeBackend struct {
 	uploads  int
 	downs    int
 	refused  []string
+
+	block   bool          // Run waits for ctx.Done
+	started chan struct{} // closed-ish signal: sent when Run starts blocking
+	done    chan struct{} // closed when the ctx of Run is cancelled
 }
 
 func (f *fakeBackend) Hosts(ctx context.Context) ([]HostInfo, error) {
@@ -47,6 +51,13 @@ func (f *fakeBackend) Run(ctx context.Context, h HostInfo, command string, timeo
 	f.calls++
 	f.runs = append(f.runs, command)
 	f.timeout = timeout
+	if f.block {
+		f.mu.Unlock()
+		f.started <- struct{}{}
+		<-ctx.Done()
+		close(f.done)
+		f.mu.Lock()
+	}
 	return f.result, f.runErr
 }
 
@@ -81,6 +92,11 @@ func (t tokenRT) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 func start(t *testing.T, b Backend) (string, int) {
+	u, p, _ := startSrv(t, b)
+	return u, p
+}
+
+func startSrv(t *testing.T, b Backend) (string, int, *http.Server) {
 	t.Helper()
 	l, err := Listen(0)
 	if err != nil {
@@ -89,7 +105,7 @@ func start(t *testing.T, b Backend) (string, int) {
 	srv := Serve(l, testToken, "test", b)
 	t.Cleanup(func() { srv.Close() })
 	port := l.Addr().(*net.TCPAddr).Port
-	return "http://127.0.0.1:" + strconv.Itoa(port) + "/mcp", port
+	return "http://127.0.0.1:" + strconv.Itoa(port) + "/mcp", port, srv
 }
 
 func connect(t *testing.T, url string) *mcp.ClientSession {
@@ -432,5 +448,95 @@ func TestAddCommandExact(t *testing.T) {
 	want := `claude mcp add --transport http --scope user sshclient http://127.0.0.1:47821/mcp --header "Authorization: Bearer TOK"`
 	if got := AddCommand(47821, "TOK"); got != want {
 		t.Fatal(got)
+	}
+}
+
+func blockingBackend() *fakeBackend {
+	return &fakeBackend{hosts: testHosts(), block: true, started: make(chan struct{}, 1), done: make(chan struct{})}
+}
+
+func postRun(ctx context.Context, url string) {
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run_command","arguments":{"host":"web","command":"sleep 100"}}}`
+	req, _ := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	if resp, err := http.DefaultClient.Do(req); err == nil {
+		resp.Body.Close()
+	}
+}
+
+func waitDone(t *testing.T, b *fakeBackend) {
+	t.Helper()
+	select {
+	case <-b.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("backend context was not cancelled")
+	}
+}
+
+func TestClientDisconnectCancelsBackend(t *testing.T) {
+	b := blockingBackend()
+	url, _ := start(t, b)
+	ctx, cancel := context.WithCancel(context.Background())
+	go postRun(ctx, url)
+	<-b.started
+	cancel()
+	waitDone(t, b)
+}
+
+func TestServerCloseCancelsBackend(t *testing.T) {
+	b := blockingBackend()
+	url, _, srv := startSrv(t, b)
+	go postRun(context.Background(), url)
+	<-b.started
+	srv.Close()
+	waitDone(t, b)
+}
+
+func TestCancelledReturnsPartialOutput(t *testing.T) {
+	r, _, _ := cancelledResult(sshclient.ExecResult{Stdout: "part", Stderr: "e", ExitCode: -1})
+	var sb strings.Builder
+	for _, c := range r.Content {
+		sb.WriteString(c.(*mcp.TextContent).Text)
+	}
+	text := sb.String()
+	if !r.IsError || !strings.Contains(text, "part") || !strings.Contains(text, "отменён") || !strings.Contains(text, "может ещё выполняться") {
+		t.Fatalf("%v %s", r.IsError, text)
+	}
+}
+
+func TestUnknownAccessLooksMissing(t *testing.T) {
+	b := &fakeBackend{hosts: []HostInfo{
+		{ID: "e1", Name: "empty", Access: ""},
+		{ID: "u1", Name: "upper", Access: "READ"},
+	}}
+	url, _ := start(t, b)
+	s := connect(t, url)
+	missing, _ := call(t, s, "run_command", map[string]any{"host": "nope", "command": "ls"})
+	for _, ref := range []string{"empty", "e1", "upper", "u1"} {
+		text, isErr := call(t, s, "run_command", map[string]any{"host": ref, "command": "ls"})
+		if !isErr || strings.ReplaceAll(text, ref, "X") != strings.ReplaceAll(missing, "nope", "X") {
+			t.Fatalf("%s: %q vs %q", ref, text, missing)
+		}
+		_, isErr = call(t, s, "upload_file", map[string]any{"host": ref, "local_path": "C:\a", "remote_path": "/a"})
+		if !isErr {
+			t.Fatal("upload allowed")
+		}
+	}
+	if len(b.runs) != 0 || b.uploads != 0 {
+		t.Fatal("backend ran")
+	}
+}
+
+func TestRejectsEmptyOriginHeader(t *testing.T) {
+	b := &fakeBackend{}
+	url, _ := start(t, b)
+	c := rawPost(t, url, func(r *http.Request) {
+		r.Header.Set("Authorization", "Bearer "+testToken)
+		r.Header["Origin"] = []string{""}
+	})
+	if c != 403 {
+		t.Fatalf("status %d", c)
 	}
 }

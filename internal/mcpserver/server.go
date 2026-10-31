@@ -43,9 +43,13 @@ func Listen(port int) (net.Listener, error) {
 // Serve starts serving MCP on l and returns the server; the caller closes it.
 // There is no write timeout: a command call may run for 10 minutes.
 func Serve(l net.Listener, token string, version string, b Backend) *http.Server {
-	srv := mcp.NewServer(&mcp.Implementation{Name: "sshclient", Version: version}, nil)
-	registerTools(srv, b)
-	h := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv },
+	// A server per request: tool handlers see the request context, so a
+	// client disconnect or Close cancels the Backend call.
+	h := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+		srv := mcp.NewServer(&mcp.Implementation{Name: "sshclient", Version: version}, nil)
+		registerTools(srv, b, r.Context())
+		return srv
+	},
 		&mcp.StreamableHTTPOptions{Stateless: true})
 
 	port := 0
@@ -66,7 +70,7 @@ func guard(port int, token string, next http.Handler) http.Handler {
 	okHost := map[string]bool{"127.0.0.1:" + p: true, "localhost:" + p: true}
 	want := []byte("Bearer " + token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !okHost[strings.ToLower(r.Host)] || r.Header.Get("Origin") != "" {
+		if !okHost[strings.ToLower(r.Host)] || len(r.Header.Values("Origin")) > 0 {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
