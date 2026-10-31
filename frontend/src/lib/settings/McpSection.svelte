@@ -45,13 +45,17 @@
   // The server also changes by itself (a port lost, a restore from a copy).
   onDestroy(EventsOn('mcp:status', (s: Status) => apply(s)))
 
-  async function setEnabled(on: boolean): Promise<void> {
-    if (busy) return
+  async function setEnabled(on: boolean, box: HTMLInputElement): Promise<void> {
+    if (busy) {
+      box.checked = status.enabled
+      return
+    }
     busy = true
     try {
       apply(await MCPSetEnabled(on))
     } catch (e) {
       toast(errorText(e))
+      box.checked = status.enabled // the failed change must not stay on screen
       void MCPStatus().then(apply).catch(() => {})
     } finally {
       busy = false
@@ -98,7 +102,7 @@
 <section class="card" aria-labelledby="set-mcp">
   <h2 id="set-mcp">Доступ по MCP</h2>
   <label class="check">
-    <input type="checkbox" checked={status.enabled} disabled={busy} onchange={(e) => setEnabled(e.currentTarget.checked)} />
+    <input type="checkbox" checked={status.enabled} disabled={busy} onchange={(e) => setEnabled(e.currentTarget.checked, e.currentTarget)} />
     Разрешить доступ к серверам по MCP
   </label>
   <div class="state" class:error={status.state === 'error'} class:running={status.state === 'running'}>

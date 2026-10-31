@@ -19,7 +19,11 @@ vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     cols = 80
     rows = 6
-    open() {}
+    open(el: HTMLElement) {
+      const ta = document.createElement('textarea')
+      ta.setAttribute('data-testid', 'xterm-input')
+      el.appendChild(ta)
+    }
     loadAddon() {}
     focus() {}
     dispose() {}
@@ -74,6 +78,17 @@ describe('McpLoginDialog', () => {
     await tick()
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(handlers.has('mcplogin:data:h1')).toBe(false)
+  })
+
+  it('cancels on Esc pressed inside the terminal and keeps it from the terminal', async () => {
+    await open('h1', 'l1', 'srv')
+    const ta = screen.getByTestId('xterm-input')
+    const seen = vi.fn()
+    ta.addEventListener('keydown', seen)
+    await fireEvent.keyDown(ta, { key: 'Escape' })
+    expect(api.MCPLoginCancel).toHaveBeenCalledTimes(1)
+    expect(api.MCPLoginCancel).toHaveBeenCalledWith('h1', 'l1')
+    expect(seen).not.toHaveBeenCalled()
   })
 
   it('queues two hosts and shows the second after the first closes', async () => {

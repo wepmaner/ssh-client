@@ -60,6 +60,15 @@ describe('McpSection', () => {
     await waitFor(() => expect(screen.getByText('Работает')).toBeTruthy())
   })
 
+  it('puts the checkbox back when the switch fails', async () => {
+    await mount()
+    api.MCPSetEnabled.mockRejectedValue('Хранилище заблокировано')
+    const box = screen.getByLabelText('Разрешить доступ к серверам по MCP') as HTMLInputElement
+    await fireEvent.click(box)
+    await waitFor(() => expect(api.MCPSetEnabled).toHaveBeenCalled())
+    await waitFor(() => expect(box.checked).toBe(false))
+  })
+
   it('keeps the copy buttons off while the switch is off', async () => {
     await mount()
     expect((screen.getByRole('button', { name: 'Скопировать команду подключения' }) as HTMLButtonElement).disabled).toBe(true)
