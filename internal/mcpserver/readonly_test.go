@@ -1,0 +1,105 @@
+package mcpserver
+
+import "testing"
+
+func TestCheckReadOnly(t *testing.T) {
+	allowed := []string{
+		"docker ps -a",
+		"docker logs web --tail 50",
+		"docker compose ps",
+		"docker stats --no-stream",
+		"df -h",
+		"free -m",
+		"journalctl -u nginx -n 100",
+		"systemctl status nginx",
+		"systemctl status nginx --no-pager -n 20",
+		"ss -tlnp",
+		"ip addr",
+		"ip route show",
+		"ip -br addr show dev eth0",
+		"cat /etc/os-release | grep -i name",
+		"date",
+		"hostname",
+		"hostname -I",
+		"hostname -f",
+		"grep \"a b\" /var/log/syslog | tail -n 5",
+		"grep 'a$b' /var/log/syslog",
+		"ls /var/log/*.log",
+		"journalctl --since '1 hour ago' -u nginx",
+	}
+	denied := []string{
+		"docker ps; rm -rf /",
+		"cat $(reboot)",
+		"cat `reboot`",
+		"cat \"$(reboot)\"",
+		"cat \"$HOME\"",
+		"ls > x",
+		"ls < x",
+		"ls & reboot",
+		"ls && reboot",
+		"ls || reboot",
+		"ls |",
+		"| ls",
+		"ls\nreboot",
+		"ls (x)",
+		"date -s 2020-01-01",
+		"date +%s",
+		"hostname evil",
+		"hostname -F /etc/hostname",
+		"ss -tK",
+		"ss -Kt",
+		"ss --kill",
+		"ss --ki",
+		"ss -D out.raw",
+		"ss --diag=out.raw",
+		"journalctl --vacuum-size=1M",
+		"journalctl --vac=1M",
+		"journalctl --rotate",
+		"journalctl --flush",
+		"journalctl --sync",
+		"journalctl --relinquish-var",
+		"journalctl --smart-relinquish-var",
+		"journalctl --setup-keys",
+		"journalctl --update-catalog",
+		"journalctl --cursor-file=/tmp/c",
+		"systemctl restart nginx",
+		"systemctl",
+		"systemctl -n status restart nginx",
+		"systemctl status nginx -H other",
+		"docker rm web",
+		"docker compose up",
+		"docker compose",
+		"docker exec web sh",
+		"docker -H tcp://x ps",
+		"docker",
+		"ip",
+		"ip link set eth0 down",
+		"ip -batch cmds addr",
+		"ip addr add 10.0.0.1/24 dev eth0",
+		"ip route get 1.1.1.1",
+		"ls | sh",
+		"find / -delete",
+		"echo \"unterminated",
+		"echo 'unterminated",
+		"",
+		"   ",
+		"ls \\",
+		"ls {a,b}",
+		"ss --{kill,x}",
+		"ss -[K]",
+		"docker p[s]",
+		"/bin/ls",
+		"FOO=1 ls",
+		"ls\rreboot",
+	}
+	for _, c := range allowed {
+		if err := CheckReadOnly(c); err != nil {
+			t.Errorf("должно быть разрешено %q: %v", c, err)
+		}
+	}
+	for _, c := range denied {
+		if err := CheckReadOnly(c); err == nil {
+			t.Errorf("должно быть отказано %q", c)
+		}
+	}
+}
