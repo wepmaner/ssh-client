@@ -36,6 +36,14 @@
     const d = new Date(t as string)
     return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('ru-RU')
   }
+
+  /** Exit code and duration; a transfer has no exit code. */
+  function outcome(r: model.MCPRecord): string {
+    const parts: string[] = []
+    if (r.exit_code != null) parts.push(`Код выхода ${r.exit_code}`)
+    if (r.duration_ms) parts.push(`${(r.duration_ms / 1000).toFixed(1)} с`)
+    return parts.join(', ')
+  }
 </script>
 
 <Dialog {open} title="Журнал MCP" {onclose} width={640}>
@@ -54,8 +62,8 @@
           <code>{r.text}</code>
           {#if r.refused}
             <span class="refused">{r.refused}</span>
-          {:else if r.exit_code != null}
-            <span class="result">Код выхода {r.exit_code}{r.duration_ms ? `, ${(r.duration_ms / 1000).toFixed(1)} с` : ''}</span>
+          {:else if outcome(r)}
+            <span class="result">{outcome(r)}</span>
           {/if}
         </li>
       {/each}

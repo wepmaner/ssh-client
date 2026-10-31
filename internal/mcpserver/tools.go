@@ -73,7 +73,12 @@ func textResult(parts ...string) (*mcp.CallToolResult, any, error) {
 
 const transferCancelled = "Передача отменена: файл мог быть передан не полностью. Проверьте результат на сервере, прежде чем повторять."
 
+// cancelledResult answers a cancelled command. Only a command that never reached the server may be
+// reported as not started: a started one that printed nothing can still be running.
 func cancelledResult(res sshclient.ExecResult) (*mcp.CallToolResult, any, error) {
+	if !res.Started && res.ExitCode == -1 && res.Stdout == "" && res.Stderr == "" {
+		return errResult("Вызов отменён: команда не запущена.")
+	}
 	r, _, _ := textResult( //nolint:gosec // G104: textResult never fails
 		jsonText(runOut{res.Stdout, res.Stderr, res.ExitCode, res.Truncated, res.TimedOut}),
 		"Вызов отменён: команда может ещё выполняться на сервере. Проверьте это, прежде чем запускать её повторно. Показан вывод, полученный до отмены.")
@@ -96,7 +101,7 @@ func HostNotFound(name string) error { return errors.New(notFoundText(name)) }
 
 // ReadOnlyCommand is the answer about a command refused by CheckReadOnly.
 func ReadOnlyCommand(cause error) error {
-	return errors.New("Режим хоста «Только просмотр»: команда не выполнена. " + cause.Error()) //nolint:staticcheck // ST1005: Russian text for the client
+	return errors.New("Режим хоста «Только просмотр»: " + cause.Error() + "; команда на сервер не отправлена") //nolint:staticcheck // ST1005: Russian text for the client
 }
 
 // resolve finds an open host by ID or exact name. The error text is ready to

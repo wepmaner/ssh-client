@@ -123,6 +123,18 @@ func TestDownloadRefusesExisting(t *testing.T) {
 	}
 }
 
+func TestDownloadRefusesFolder(t *testing.T) {
+	remoteDir, localDir := t.TempDir(), t.TempDir()
+	_, c := execClient(t, sshtest.Opts{SFTPRoot: remoteDir})
+	writeRandom(t, filepath.Join(remoteDir, "r"), 10)
+	for _, overwrite := range []bool{false, true} {
+		_, err := Download(context.Background(), c, "r", localDir, overwrite)
+		if err == nil || errors.Is(err, ErrExists) || !strings.Contains(err.Error(), "папка") {
+			t.Fatalf("overwrite=%v: ошибка %v", overwrite, err)
+		}
+	}
+}
+
 func TestDownloadInterruptedKeepsTarget(t *testing.T) {
 	remoteDir, localDir := t.TempDir(), t.TempDir()
 	srv, c := execClient(t, sshtest.Opts{SFTPRoot: remoteDir})

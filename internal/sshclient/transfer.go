@@ -219,6 +219,9 @@ func removeRemote(c *ssh.Client, name string) {
 // file behind. It returns the number of bytes received. The client c is shared and is never
 // closed here.
 func Download(ctx context.Context, c *ssh.Client, remote, local string, overwrite bool) (int64, error) {
+	if st, err := os.Stat(local); err == nil && st.IsDir() {
+		return 0, fmt.Errorf("%s: это папка, а не файл", local)
+	}
 	if !overwrite {
 		if _, err := os.Lstat(local); err == nil {
 			return 0, ErrExists

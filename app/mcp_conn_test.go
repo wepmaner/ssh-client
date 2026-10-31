@@ -426,10 +426,6 @@ func TestMCPTrustRefusedIsError(t *testing.T) {
 	s := newMCPApp(t)
 	untrust(t)
 	ch := s.beginAsync(context.Background())
-	s.waitEvent(t, "mcplogin:open", 1)
-	if err := s.MCPLoginAttach(s.hostID, s.loginID(1)); err != nil {
-		t.Fatal(err)
-	}
 	q := s.ev.waitTrustAsk(t, 1)
 	checkQuestion(t, q, s.srv)
 	if q.MCPHostID != s.hostID || q.SessionID != "" || q.ForwardHostID != "" {
@@ -444,7 +440,120 @@ func TestMCPTrustRefusedIsError(t *testing.T) {
 	if got := readKnownHosts(t); got != "" {
 		t.Fatalf("known_hosts written: %q", got)
 	}
-	s.waitEvent(t, "mcplogin:close", 1)
+	if n := s.ev.count("mcplogin:open"); n != 0 {
+		t.Fatalf("%d login dialogs for a key question", n)
+	}
+}
+
+// A key question needs no typing: it shows only the trust dialog, and its line stays out of the login.
+func TestMCPUnknownHostOnlyTrustDialog(t *testing.T) {
+	s := newPlainMCPApp(t)
+	untrust(t)
+	ch := s.beginAsync(context.Background())
+	q := s.ev.waitTrustAsk(t, 1)
+	if err := s.TrustAnswer(q.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	r := waitBegun(t, ch)
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	defer s.mcpEnd(r.call)
+	if n := s.ev.count("mcplogin:open"); n != 0 {
+		t.Fatalf("%d login dialogs", n)
+	}
+	if got := s.loginData(t); got != "" {
+		t.Fatalf("login output %q", got)
+	}
+}
+
+func TestMCPPassphraseAfterTrustOpensDialog(t *testing.T) {
+	s := newMCPApp(t)
+	untrust(t)
+	ch := s.beginAsync(context.Background())
+	q := s.ev.waitTrustAsk(t, 1)
+	if n := s.ev.count("mcplogin:open"); n != 0 {
+		t.Fatalf("%d login dialogs before the answer", n)
+	}
+	if err := s.TrustAnswer(q.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	s.openLogin(t, 1)
+	s.typeLogin(t, fwdPassphrase)
+	r := waitBegun(t, ch)
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	s.mcpEnd(r.call)
+}
+
+// A withdrawn question reaches the frontend although the login's stream is never attached.
+func TestMCPTrustWithdrawnWithLogin(t *testing.T) {
+	s := newMCPApp(t)
+	untrust(t)
+	ch := s.beginAsync(context.Background())
+	q := s.ev.waitTrustAsk(t, 1)
+	s.mcpReleaseHost(s.hostID)
+	s.ev.waitTrustCancel(t, q.ID)
+	if r := waitBegun(t, ch); r.err == nil {
+		t.Fatal("the call went on")
+	}
+}
+
+// slotsFull takes every call slot of the host.
+func (s sessionsApp) slotsFull(t *testing.T) []begun {
+	t.Helper()
+	calls := make([]begun, mcpHostCalls)
+	for i := range calls {
+		calls[i] = s.mustBegin(t)
+	}
+	return calls
+}
+
+func TestMCPCallBeyondLimitWaits(t *testing.T) {
+	s := newPlainMCPApp(t)
+	calls := s.slotsFull(t)
+	ch := s.beginAsync(context.Background())
+	select {
+	case r := <-ch:
+		t.Fatalf("a call beyond the limit got through: %+v", r)
+	case <-time.After(100 * time.Millisecond):
+	}
+	s.mcpEnd(calls[0].call)
+	r := waitBegun(t, ch)
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	s.mcpEnd(r.call)
+	for _, c := range calls[1:] {
+		s.mcpEnd(c.call)
+	}
+}
+
+func TestMCPWaitingCallCancelledLeaksNoSlot(t *testing.T) {
+	s := newPlainMCPApp(t)
+	calls := s.slotsFull(t)
+	hold := calls[0].call.hold
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := s.beginAsync(ctx)
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	if r := waitBegun(t, ch); !errors.Is(r.err, context.Canceled) {
+		t.Fatalf("got %v", r.err)
+	}
+	if n := len(hold.slots); n != mcpHostCalls {
+		t.Fatalf("%d slots taken", n)
+	}
+	for _, c := range calls {
+		s.mcpEnd(c.call)
+		s.mcpEnd(c.call) // ends once: a slot is not given back twice
+	}
+	if n := len(hold.slots); n != 0 {
+		t.Fatalf("%d slots still taken", n)
+	}
+	for _, c := range s.slotsFull(t) {
+		s.mcpEnd(c.call)
+	}
 }
 
 func TestMCPHostKeyChanged(t *testing.T) {

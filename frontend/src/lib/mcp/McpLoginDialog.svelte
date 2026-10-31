@@ -3,6 +3,7 @@
   import { EventsOn, MCPLoginAttach, MCPLoginWrite } from '../api'
   import MiniTerminal from '../forwards/MiniTerminal.svelte'
   import { decodeBase64 } from '../terminal/base64'
+  import { trust } from '../trust.svelte'
   import Dialog from '../ui/Dialog.svelte'
   import { cancelMcpLogin, mcpLoginTitle, mcpLogins, subscribeMcpLogins, type McpLogin } from './mcp.svelte'
 
@@ -12,10 +13,10 @@
   const current = $derived(mcpLogins.queue.slice(0, 1))
 
   // Esc cancels the login even with focus in the terminal: caught in the capture phase, before xterm
-  // sees it, so  never reaches the server.
+  // sees it, so the Esc byte never reaches the server. A trust question above this dialog takes it.
   function onkeydown(e: KeyboardEvent): void {
     const l = mcpLogins.queue[0]
-    if (!l || e.key !== 'Escape') return
+    if (!l || e.key !== 'Escape' || trust.queue.length > 0) return
     e.preventDefault()
     e.stopImmediatePropagation()
     void cancelMcpLogin(l)

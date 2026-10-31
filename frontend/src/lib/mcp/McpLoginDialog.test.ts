@@ -10,6 +10,7 @@ const api = vi.hoisted(() => ({
   MCPLoginCancel: vi.fn(),
   MCPLoginAttach: vi.fn(),
   ClipboardGetText: vi.fn(),
+  TrustAnswer: vi.fn(),
 }))
 vi.mock('../api', async () => {
   const model = await import('../../../bindings/sshclient/internal/model/models')
@@ -36,6 +37,8 @@ vi.mock('@xterm/xterm', () => ({
 }))
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { proposeDimensions() { return undefined } } }))
 
+import { trust } from '../trust.svelte'
+import TrustDialog from '../ui/TrustDialog.svelte'
 import { mcpLogins } from './mcp.svelte'
 import McpLoginDialog from './McpLoginDialog.svelte'
 
@@ -51,6 +54,7 @@ describe('McpLoginDialog', () => {
     vi.resetAllMocks()
     handlers.clear()
     mcpLogins.queue.length = 0
+    trust.queue.length = 0
     api.EventsOn.mockImplementation((name: string, h: Handler) => {
       handlers.set(name, h)
       return () => handlers.delete(name)
@@ -89,6 +93,16 @@ describe('McpLoginDialog', () => {
     expect(api.MCPLoginCancel).toHaveBeenCalledTimes(1)
     expect(api.MCPLoginCancel).toHaveBeenCalledWith('h1', 'l1')
     expect(seen).not.toHaveBeenCalled()
+  })
+
+  it('leaves Esc to an open trust question', async () => {
+    render(TrustDialog) // after the login dialog: its listener runs second, unlike in the app
+    api.TrustAnswer.mockResolvedValue(undefined)
+    await open('h1', 'l1', 'srv')
+    await emit('trust:ask', { id: 'q1', session_id: '', forward_host_id: '', host: 'a', port: 22, user: 'u', key_type: 'ed25519', fingerprint: 'SHA256:x' })
+    await fireEvent.keyDown(window, { key: 'Escape' })
+    expect(api.TrustAnswer).toHaveBeenCalledWith('q1', false)
+    expect(api.MCPLoginCancel).not.toHaveBeenCalled()
   })
 
   it('queues two hosts and shows the second after the first closes', async () => {

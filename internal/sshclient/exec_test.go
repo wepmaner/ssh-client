@@ -153,6 +153,50 @@ func TestExecTimeoutClosesWhenSignalIgnored(t *testing.T) {
 	}
 }
 
+func TestExecCancelledContextDoesNotStart(t *testing.T) {
+	ran := make(chan struct{}, 1)
+	_, c := execClient(t, sshtest.Opts{Exec: func(string, io.Writer, io.Writer, <-chan string) int {
+		ran <- struct{}{}
+		return 0
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	res, err := Exec(ctx, c, "x", 1024)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ошибка %v, ожидалась context.Canceled", err)
+	}
+	if res.ExitCode != -1 || res.Started {
+		t.Fatalf("неожиданный результат: %+v", res)
+	}
+	select {
+	case <-ran:
+		t.Fatal("команда запущена на отменённом контексте")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// Команда без вывода, отменённая на ходу, отличается от незапущенной только флагом Started.
+func TestExecSilentCancelIsStarted(t *testing.T) {
+	started := make(chan struct{})
+	_, c := execClient(t, sshtest.Opts{Exec: func(_ string, _, _ io.Writer, stop <-chan string) int {
+		close(started)
+		<-stop
+		return 143
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-started
+		cancel()
+	}()
+	res, err := Exec(ctx, c, "x", 1024)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ошибка %v, ожидалась context.Canceled", err)
+	}
+	if !res.Started {
+		t.Fatalf("неожиданный результат: %+v", res)
+	}
+}
+
 func TestExecCancelReturnsCanceledWithPartialOutput(t *testing.T) {
 	started := make(chan struct{})
 	_, c := execClient(t, sshtest.Opts{Exec: func(_ string, stdout, _ io.Writer, stop <-chan string) int {

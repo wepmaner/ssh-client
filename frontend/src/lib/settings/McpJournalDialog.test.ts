@@ -27,6 +27,18 @@ describe('McpJournalDialog', () => {
     expect(screen.getAllByText('srv').length).toBe(2)
   })
 
+  it('shows the duration of a transfer, which has no exit code', async () => {
+    api.MCPJournalList.mockResolvedValue([rec('1', { tool: 'download_file', text: 'a -> b', duration_ms: 1500 })])
+    render(McpJournalDialog, { open: true, onclose: vi.fn() })
+    await waitFor(() => expect(screen.getByText('1.5 с')).toBeTruthy())
+  })
+
+  it('shows the exit code with the duration', async () => {
+    api.MCPJournalList.mockResolvedValue([rec('1', { exit_code: 3, duration_ms: 1500 })])
+    render(McpJournalDialog, { open: true, onclose: vi.fn() })
+    await waitFor(() => expect(screen.getByText('Код выхода 3, 1.5 с')).toBeTruthy())
+  })
+
   it('clears the journal', async () => {
     api.MCPJournalList.mockResolvedValueOnce([rec('1')]).mockResolvedValue([])
     api.MCPJournalClear.mockResolvedValue(undefined)

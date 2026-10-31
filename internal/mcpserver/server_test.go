@@ -329,7 +329,7 @@ func TestReadModeRefusesCommandWithoutRun(t *testing.T) {
 	url, _ := start(t, b)
 	s := connect(t, url)
 	text, isErr := call(t, s, "run_command", map[string]any{"host": "db", "command": "rm -rf /"})
-	if !isErr || !strings.Contains(text, "Только просмотр") {
+	if !isErr || strings.Count(text, "Только просмотр") != 1 || !strings.HasPrefix(text, "Режим хоста") {
 		t.Fatalf("%v %s", isErr, text)
 	}
 	if len(b.runs) != 0 {
@@ -503,6 +503,27 @@ func TestCancelledReturnsPartialOutput(t *testing.T) {
 	text := sb.String()
 	if !r.IsError || !strings.Contains(text, "part") || !strings.Contains(text, "отменён") || !strings.Contains(text, "может ещё выполняться") {
 		t.Fatalf("%v %s", r.IsError, text)
+	}
+}
+
+func TestCancelledNotStarted(t *testing.T) {
+	text := func(res sshclient.ExecResult) string {
+		r, _, _ := cancelledResult(res) //nolint:gosec // G104: test code, the result does not matter
+		if !r.IsError {
+			t.Fatal("not an error")
+		}
+		var sb strings.Builder
+		for _, c := range r.Content {
+			sb.WriteString(c.(*mcp.TextContent).Text)
+		}
+		return sb.String()
+	}
+	if got := text(sshclient.ExecResult{ExitCode: -1}); !strings.Contains(got, "не запущена") || strings.Contains(got, "может ещё выполняться") {
+		t.Fatal(got)
+	}
+	// Started, silent and cancelled: it may well be running.
+	if got := text(sshclient.ExecResult{ExitCode: -1, Started: true}); !strings.Contains(got, "может ещё выполняться") || strings.Contains(got, "не запущена") {
+		t.Fatal(got)
 	}
 }
 

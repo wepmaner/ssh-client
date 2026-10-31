@@ -103,7 +103,7 @@ func (a *App) dropTrustLocked(p *pendingTrust) {
 
 // appTrustAsker asks through the app's trust dialog for one session or forwards group. Its events go
 // through the owner's outStream, so they follow the terminal output in order and wait, like it,
-// until the view has attached.
+// until the view has attached. The MCP login is the exception, see emit.
 type appTrustAsker struct {
 	a     *App
 	owner trustOwner
@@ -116,6 +116,16 @@ func (a *App) trustAsker(owner trustOwner, user string, out *outStream) sshclien
 	return appTrustAsker{a: a, owner: owner, user: user, out: out}
 }
 
+// emit sends a trust event of the owner. The MCP login's stream is held until its dialog attaches,
+// and a key question needs no typing, so it must not wait for that dialog: its events go out at once.
+func (t appTrustAsker) emit(name string, payload any) {
+	if t.owner.mcpHostID != "" {
+		t.a.events().Emit(name, payload)
+		return
+	}
+	t.out.Event(name, payload, false)
+}
+
 // AskTrust emits trust:ask and blocks until TrustAnswer, a newer question of the same owner
 // (ErrCancelled) or the end of ctx (ctx.Err()); a withdrawn question is announced as trust:cancel.
 // No lock is held while waiting.
@@ -124,15 +134,21 @@ func (t appTrustAsker) AskTrust(ctx context.Context, q sshclient.TrustQuestion) 
 	if old := t.a.addTrust(p); old != nil {
 		close(old.gone)
 	}
-	addr := net.JoinHostPort(q.Host, strconv.Itoa(q.Port))
-	// One line for the history; the answer comes from the dialog, not the terminal.
-	_, _ = fmt.Fprintf(t.out, "Сервер %s неизвестен, отпечаток %s\r\n", addr, q.FingerprintSHA256) //nolint:gosec // G104: outStream never fails
-	t.out.Event("trust:ask", TrustAskDTO{
+	if t.owner.mcpHostID == "" {
+		// One line for the history; the answer comes from the dialog, not the terminal. The first
+		// output of the MCP login opens its dialog, so that login has no such line.
+		addr := net.JoinHostPort(q.Host, strconv.Itoa(q.Port))
+		_, _ = fmt.Fprintf(t.out, "Сервер %s неизвестен, отпечаток %s\r\n", addr, q.FingerprintSHA256) //nolint:gosec // G104: outStream never fails
+	}
+	t.emit("trust:ask", TrustAskDTO{
 		ID: p.id, SessionID: t.owner.sessionID, ForwardHostID: t.owner.forwardHostID, MCPHostID: t.owner.mcpHostID,
 		Host: q.Host, Port: q.Port, User: t.user, KeyType: q.KeyType, Fingerprint: q.FingerprintSHA256,
-	}, false)
+	})
+	if t.owner.mcpHostID != "" && t.a.mainWin != nil {
+		raiseWindow(t.a.mainWin) // the owner may be elsewhere: the call came from outside
+	}
 
-	withdraw := func() { t.out.Event("trust:cancel", TrustCancelDTO{ID: p.id}, false) }
+	withdraw := func() { t.emit("trust:cancel", TrustCancelDTO{ID: p.id}) }
 	select {
 	case ok := <-p.answer:
 		return ok, nil

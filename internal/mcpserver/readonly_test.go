@@ -91,6 +91,8 @@ func TestCheckReadOnly(t *testing.T) {
 		"/bin/ls",
 		"FOO=1 ls",
 		"ls\rreboot",
+		"ls \xff",
+		"cat '\xc3'",
 	}
 	for _, c := range allowed {
 		if err := CheckReadOnly(c); err != nil {

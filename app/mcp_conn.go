@@ -20,6 +20,10 @@ const (
 	mcpHoldTime = 30 * time.Minute
 	// mcpLoginTime is how long one call waits for a login before it returns errMCPLoginPending.
 	mcpLoginTime = 2 * time.Minute
+	// mcpHostCalls is how many calls of one host run at once; the rest wait. A call may take a session
+	// of the connection, and servers limit those (MaxSessions, 10 by default in OpenSSH), which consoles
+	// and forwards share.
+	mcpHostCalls = 4
 
 	// mcpAskerLabel counts the login's asker among the waiters a login is handed over to.
 	mcpAskerLabel = "MCP"
@@ -56,6 +60,7 @@ type mcpHold struct {
 	calls  map[*mcpCall]struct{} // the calls in progress
 	login  *mcpLogin             // the login in progress, nil if none
 	gone   bool                  // left the host: it never rejoins
+	slots  chan struct{}         // one element per running call, at most mcpHostCalls; set once
 }
 
 // mcpCall is a user of the host's current connection for one tool call: a call on a connection that
@@ -67,6 +72,7 @@ type mcpCall struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	once   sync.Once
+	slot   bool // it has taken a slot of the hold; only its own goroutine touches this
 }
 
 // mcpLogin is the hold's one login: it runs in its own context, so a call's limit or cancel does not
@@ -91,9 +97,9 @@ type mcpLogin struct {
 }
 
 // mcpBegin returns a live client of the host's current connection for one tool call, and the call,
-// which the caller ends with mcpEnd. Without a client it waits for the host's login at most
-// mcpLoginTime; the error errMCPLoginPending leaves that login running for the next call. No lock
-// is held while waiting.
+// which the caller ends with mcpEnd. It first waits for a slot of the hold, for as long as the call
+// lives. Without a client it waits for the host's login at most mcpLoginTime; the error
+// errMCPLoginPending leaves that login running for the next call. No lock is held while waiting.
 func (a *App) mcpBegin(ctx context.Context, hostID string) (*ssh.Client, *mcpCall, error) {
 	if a.restoring.Load() {
 		return nil, nil, errRestoring
@@ -107,6 +113,13 @@ func (a *App) mcpBegin(ctx context.Context, hostID string) (*ssh.Client, *mcpCal
 	callCtx, cancel := context.WithCancel(ctx)
 	call := &mcpCall{hostID: hostID, ctx: callCtx, cancel: cancel}
 	a.mcpEnter(call)
+	select {
+	case call.hold.slots <- struct{}{}:
+		call.slot = true
+	case <-callCtx.Done():
+		a.mcpEnd(call)
+		return nil, nil, callCtx.Err()
+	}
 	client, err := a.mcpClient(call)
 	if err != nil {
 		a.mcpEnd(call)
@@ -120,6 +133,9 @@ func (a *App) mcpEnd(c *mcpCall) {
 	c.once.Do(func() {
 		c.cancel()
 		a.mcpLeave(c)
+		if c.slot {
+			<-c.hold.slots
+		}
 		a.mcpMu.Lock()
 		defer a.mcpMu.Unlock()
 		delete(c.hold.calls, c)
@@ -220,7 +236,7 @@ func (a *App) mcpEnter(c *mcpCall) {
 	defer a.mcpMu.Unlock()
 	h := a.mcpHolds[c.hostID]
 	if h == nil {
-		h = &mcpHold{hostID: c.hostID, calls: map[*mcpCall]struct{}{}}
+		h = &mcpHold{hostID: c.hostID, calls: map[*mcpCall]struct{}{}, slots: make(chan struct{}, mcpHostCalls)}
 		if a.mcpHolds == nil {
 			a.mcpHolds = map[string]*mcpHold{}
 		}

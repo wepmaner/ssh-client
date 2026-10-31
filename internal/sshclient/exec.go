@@ -20,6 +20,7 @@ type ExecResult struct {
 	ExitCode       int
 	Truncated      bool // either stream lost its beginning
 	TimedOut       bool // the context deadline ended the command
+	Started        bool // the command was handed to the server
 }
 
 // tailBuffer keeps the last limit bytes written to it.
@@ -59,8 +60,12 @@ func (b *tailBuffer) text() (string, bool) {
 // Exec runs command on a new session of c and waits for it. A non-zero exit code is a result,
 // not an error. When ctx ends, the command gets SIGTERM, then its session is closed after
 // execKillGrace; a deadline sets TimedOut, a cancellation returns context.Canceled together
-// with the output collected so far. The client c is shared and is never closed here.
+// with the output collected so far. A ctx already ended starts nothing: the result has ExitCode -1
+// and the error is ctx.Err(). The client c is shared and is never closed here.
 func Exec(ctx context.Context, c *ssh.Client, command string, limit int) (ExecResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ExecResult{ExitCode: -1}, err
+	}
 	if limit < 1 {
 		limit = 1
 	}
@@ -92,7 +97,7 @@ func Exec(ctx context.Context, c *ssh.Client, command string, limit int) (ExecRe
 		}
 	}
 
-	res := ExecResult{ExitCode: -1}
+	res := ExecResult{ExitCode: -1, Started: true}
 	res.Stdout, res.Truncated = stdout.text()
 	var errTrunc bool
 	res.Stderr, errTrunc = stderr.text()

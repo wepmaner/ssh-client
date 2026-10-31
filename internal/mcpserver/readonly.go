@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // token is one shell word after quote removal. glob is set when it held an
@@ -15,25 +16,25 @@ type token struct {
 
 // CheckReadOnly decides whether a command may run on a host in the
 // "view only" mode. It is default-deny: anything it does not understand is
-// refused, so a false refusal is acceptable and a false allow is a defect.
+// refused, so a false refusal is acceptable and a false allow is a defect. The error is the reason
+// alone; ReadOnlyCommand makes the answer for the client.
 func CheckReadOnly(command string) error {
+	if !utf8.ValidString(command) {
+		return errors.New("команда не в кодировке UTF-8")
+	}
 	segments, err := splitPipeline(command)
 	if err != nil {
-		return refusal(err.Error())
+		return err
 	}
 	for _, seg := range segments {
 		if len(seg) == 0 {
-			return refusal("пустое звено конвейера")
+			return errors.New("пустое звено конвейера")
 		}
 		if err := checkSegment(seg); err != nil {
-			return refusal(err.Error())
+			return err
 		}
 	}
 	return nil
-}
-
-func refusal(reason string) error {
-	return fmt.Errorf("режим хоста «Только просмотр»: %s; команда на сервер не отправлена", reason)
 }
 
 // splitPipeline scans the line rune by rune and cuts it at "|" outside quotes.
