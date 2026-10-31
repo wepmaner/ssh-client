@@ -26,14 +26,14 @@ func execClient(t *testing.T, opts sshtest.Opts) (*sshtest.Server, *ssh.Client) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = c.Close() })
+	t.Cleanup(func() { _ = c.Close() }) //nolint:gosec // G104: test code, the result does not matter
 	return srv, c
 }
 
 func TestExecStreamsAndExitCode(t *testing.T) {
 	_, c := execClient(t, sshtest.Opts{Exec: func(cmd string, stdout, stderr io.Writer, _ <-chan string) int {
-		_, _ = io.WriteString(stdout, "out:"+cmd+"\n")
-		_, _ = io.WriteString(stderr, "err\n")
+		_, _ = io.WriteString(stdout, "out:"+cmd+"\n") //nolint:gosec // G104: test code, the result does not matter
+		_, _ = io.WriteString(stderr, "err\n")         //nolint:gosec // G104: test code, the result does not matter
 		return 0
 	}})
 	res, err := Exec(context.Background(), c, "hello", 1024)
@@ -65,7 +65,7 @@ func TestExecKeepsTail(t *testing.T) {
 	_, c := execClient(t, sshtest.Opts{Exec: func(_ string, stdout, _ io.Writer, _ <-chan string) int {
 		// несколькими записями, чтобы буфер обрезался не за один раз
 		for i := 0; i < 100; i += 7 {
-			_, _ = io.WriteString(stdout, all[i:min(i+7, 100)])
+			_, _ = io.WriteString(stdout, all[i:min(i+7, 100)]) //nolint:gosec // G104: test code, the result does not matter
 		}
 		return 0
 	}})
@@ -81,9 +81,9 @@ func TestExecKeepsTail(t *testing.T) {
 func TestExecInvalidUTF8(t *testing.T) {
 	_, c := execClient(t, sshtest.Opts{Exec: func(cmd string, stdout, stderr io.Writer, _ <-chan string) int {
 		if cmd == "bad" {
-			_, _ = stdout.Write([]byte{'a', 0xff, 'b'})
+			_, _ = stdout.Write([]byte{'a', 0xff, 'b'}) //nolint:gosec // G104: test code, the result does not matter
 		} else {
-			_, _ = io.WriteString(stdout, "ééééé") // 10 байт; хвост в 5 байт начинается посреди руны
+			_, _ = io.WriteString(stdout, "ééééé") //nolint:gosec // G104: test code; 10 байт, хвост в 5 байт начинается посреди руны
 		}
 		return 0
 	}})
@@ -106,7 +106,7 @@ func TestExecInvalidUTF8(t *testing.T) {
 func TestExecTimeoutSignalsThenCloses(t *testing.T) {
 	got := make(chan string, 1)
 	_, c := execClient(t, sshtest.Opts{Exec: func(_ string, stdout, _ io.Writer, stop <-chan string) int {
-		_, _ = io.WriteString(stdout, "partial")
+		_, _ = io.WriteString(stdout, "partial") //nolint:gosec // G104: test code, the result does not matter
 		got <- <-stop
 		return 143
 	}})
@@ -131,7 +131,7 @@ func TestExecTimeoutSignalsThenCloses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("клиент закрыт после Exec: %v", err)
 	}
-	_ = s.Close()
+	_ = s.Close() //nolint:gosec // G104: test code, the result does not matter
 }
 
 func TestExecTimeoutClosesWhenSignalIgnored(t *testing.T) {
@@ -156,7 +156,7 @@ func TestExecTimeoutClosesWhenSignalIgnored(t *testing.T) {
 func TestExecCancelReturnsCanceledWithPartialOutput(t *testing.T) {
 	started := make(chan struct{})
 	_, c := execClient(t, sshtest.Opts{Exec: func(_ string, stdout, _ io.Writer, stop <-chan string) int {
-		_, _ = io.WriteString(stdout, "part")
+		_, _ = io.WriteString(stdout, "part") //nolint:gosec // G104: test code, the result does not matter
 		close(started)
 		<-stop
 		return 143

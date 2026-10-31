@@ -59,7 +59,7 @@ func Serve(l net.Listener, token string, version string, b Backend) *http.Server
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", guard(port, token, h))
 	hs := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	go func() { _ = hs.Serve(l) }()
+	go func() { _ = hs.Serve(l) }() //nolint:gosec // G104: Serve only ends when the server is closed
 	return hs
 }
 

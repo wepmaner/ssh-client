@@ -68,7 +68,7 @@ func Exec(ctx context.Context, c *ssh.Client, command string, limit int) (ExecRe
 	if err != nil {
 		return ExecResult{}, err
 	}
-	defer func() { _ = sess.Close() }()
+	defer func() { _ = sess.Close() }() //nolint:gosec // G104: the session is being discarded
 	stdout, stderr := &tailBuffer{limit: limit}, &tailBuffer{limit: limit}
 	sess.Stdout, sess.Stderr = stdout, stderr
 	if err := sess.Start(command); err != nil {
@@ -83,11 +83,11 @@ func Exec(ctx context.Context, c *ssh.Client, command string, limit int) (ExecRe
 	case waitErr = <-done:
 	case <-ctx.Done():
 		interrupted = true
-		_ = sess.Signal(ssh.SIGTERM)
+		_ = sess.Signal(ssh.SIGTERM) //nolint:gosec // G104: the session is closed after the grace
 		select {
 		case waitErr = <-done:
 		case <-time.After(execKillGrace):
-			_ = sess.Close()
+			_ = sess.Close() //nolint:gosec // G104: the session is being discarded
 			waitErr = <-done
 		}
 	}

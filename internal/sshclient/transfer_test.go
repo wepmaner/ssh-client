@@ -63,7 +63,7 @@ func TestUploadDownloadRoundTrip(t *testing.T) {
 	if err != nil || n != int64(len(data)) {
 		t.Fatalf("Download: n=%d err=%v", n, err)
 	}
-	got, err = os.ReadFile(dst)
+	got, err = os.ReadFile(dst) //nolint:gosec // G304: test temp path
 	if err != nil || !bytes.Equal(got, data) {
 		t.Fatalf("скачанный файл не совпал: %v", err)
 	}
@@ -87,13 +87,13 @@ func TestUploadRefusesExisting(t *testing.T) {
 	if _, err := Upload(context.Background(), c, src, remote, false); !errors.Is(err, ErrExists) {
 		t.Fatalf("ошибка %v, ожидалась ErrExists", err)
 	}
-	if b, _ := os.ReadFile(target); string(b) != "old" {
+	if b, _ := os.ReadFile(target); string(b) != "old" { //nolint:gosec // G104: a failed read fails the check below
 		t.Fatalf("цель изменена: %q", b)
 	}
 	if _, err := Upload(context.Background(), c, src, remote, true); err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(target); string(b) != "new" {
+	if b, _ := os.ReadFile(target); string(b) != "new" { //nolint:gosec // G104: a failed read fails the check below
 		t.Fatalf("цель не заменена: %q", b)
 	}
 }
@@ -112,13 +112,13 @@ func TestDownloadRefusesExisting(t *testing.T) {
 	if _, err := Download(context.Background(), c, "r", dst, false); !errors.Is(err, ErrExists) {
 		t.Fatalf("ошибка %v, ожидалась ErrExists", err)
 	}
-	if b, _ := os.ReadFile(dst); string(b) != "old" {
+	if b, _ := os.ReadFile(dst); string(b) != "old" { //nolint:gosec // G104: a failed read fails the check below
 		t.Fatalf("цель изменена: %q", b)
 	}
 	if _, err := Download(context.Background(), c, "r", dst, true); err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(dst); string(b) != "new" {
+	if b, _ := os.ReadFile(dst); string(b) != "new" { //nolint:gosec // G104: a failed read fails the check below
 		t.Fatalf("цель не заменена: %q", b)
 	}
 }
@@ -142,7 +142,7 @@ func TestDownloadInterruptedKeepsTarget(t *testing.T) {
 	if _, err := Download(context.Background(), c, "big", dst, true); err == nil {
 		t.Fatal("обрыв не дал ошибки")
 	}
-	if b, _ := os.ReadFile(dst); string(b) != "old" {
+	if b, _ := os.ReadFile(dst); string(b) != "old" { //nolint:gosec // G104: a failed read fails the check below
 		t.Fatalf("цель изменена: %q", b)
 	}
 	if names := readDirNames(t, localDir); len(names) != 1 {
@@ -172,7 +172,7 @@ func TestUploadInterruptedRemovesRemoteTemp(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("ошибка %v, ожидалась context.Canceled", err)
 	}
-	if b, _ := os.ReadFile(target); string(b) != "old" {
+	if b, _ := os.ReadFile(target); string(b) != "old" { //nolint:gosec // G104: a failed read fails the check below
 		t.Fatalf("цель изменена: %q", b)
 	}
 	if names := readDirNames(t, remoteDir); len(names) != 1 {
@@ -183,7 +183,7 @@ func TestUploadInterruptedRemovesRemoteTemp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("клиент закрыт после Upload: %v", err)
 	}
-	_ = s.Close()
+	_ = s.Close() //nolint:gosec // G104: test code, the result does not matter
 }
 
 func TestNoSFTPIsClearError(t *testing.T) {
@@ -247,7 +247,7 @@ func TestDownloadTargetCreatedDuringTransferSurvives(t *testing.T) {
 	if _, err := Download(context.Background(), c, "r", dst, false); !errors.Is(err, ErrExists) {
 		t.Fatalf("ошибка %v, ожидалась ErrExists", err)
 	}
-	if b, _ := os.ReadFile(dst); string(b) != "mine" {
+	if b, _ := os.ReadFile(dst); string(b) != "mine" { //nolint:gosec // G104: a failed read fails the check below
 		t.Fatalf("цель затёрта: %q", b)
 	}
 	if names := readDirNames(t, localDir); len(names) != 1 {

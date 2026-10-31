@@ -74,7 +74,7 @@ func textResult(parts ...string) (*mcp.CallToolResult, any, error) {
 const transferCancelled = "Передача отменена: файл мог быть передан не полностью. Проверьте результат на сервере, прежде чем повторять."
 
 func cancelledResult(res sshclient.ExecResult) (*mcp.CallToolResult, any, error) {
-	r, _, _ := textResult(
+	r, _, _ := textResult( //nolint:gosec // G104: textResult never fails
 		jsonText(runOut{res.Stdout, res.Stderr, res.ExitCode, res.Truncated, res.TimedOut}),
 		"Вызов отменён: команда может ещё выполняться на сервере. Проверьте это, прежде чем запускать её повторно. Показан вывод, полученный до отмены.")
 	r.IsError = true
@@ -82,7 +82,7 @@ func cancelledResult(res sshclient.ExecResult) (*mcp.CallToolResult, any, error)
 }
 
 func jsonText(v any) string {
-	b, _ := json.Marshal(v)
+	b, _ := json.Marshal(v) //nolint:gosec // G104: the values are plain structs
 	return string(b)
 }
 

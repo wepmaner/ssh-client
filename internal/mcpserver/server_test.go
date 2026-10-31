@@ -103,7 +103,7 @@ func startSrv(t *testing.T, b Backend) (string, int, *http.Server) {
 		t.Fatal(err)
 	}
 	srv := Serve(l, testToken, "test", b)
-	t.Cleanup(func() { _ = srv.Close() })
+	t.Cleanup(func() { _ = srv.Close() }) //nolint:gosec // G104: test code, the result does not matter
 	port := l.Addr().(*net.TCPAddr).Port
 	return "http://127.0.0.1:" + strconv.Itoa(port) + "/mcp", port, srv
 }
@@ -119,7 +119,7 @@ func connect(t *testing.T, url string) *mcp.ClientSession {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = s.Close() })
+	t.Cleanup(func() { _ = s.Close() }) //nolint:gosec // G104: test code, the result does not matter
 	return s
 }
 
@@ -150,7 +150,7 @@ func testHosts() []HostInfo {
 
 func rawPost(t *testing.T, url string, mod func(*http.Request)) int {
 	t.Helper()
-	req, _ := http.NewRequest("POST", url, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	req, _ := http.NewRequest("POST", url, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)) //nolint:gosec // G104: test code, the result does not matter
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	mod(req)
@@ -158,7 +158,7 @@ func rawPost(t *testing.T, url string, mod func(*http.Request)) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { _ = resp.Body.Close() }() //nolint:gosec // G104: test code, the result does not matter
 	return resp.StatusCode
 }
 
@@ -236,7 +236,7 @@ func TestListenLoopbackOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = l.Close() }()
+	defer func() { _ = l.Close() }() //nolint:gosec // G104: test code, the result does not matter
 	if !l.Addr().(*net.TCPAddr).IP.IsLoopback() {
 		t.Fatalf("addr %v", l.Addr())
 	}
@@ -457,12 +457,12 @@ func blockingBackend() *fakeBackend {
 
 func postRun(ctx context.Context, url string) {
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run_command","arguments":{"host":"web","command":"sleep 100"}}}`
-	req, _ := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(body))
+	req, _ := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(body)) //nolint:gosec // G104: test code, the result does not matter
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+testToken)
 	if resp, err := http.DefaultClient.Do(req); err == nil {
-		_ = resp.Body.Close()
+		_ = resp.Body.Close() //nolint:gosec // G104: test code, the result does not matter
 	}
 }
 
@@ -490,12 +490,12 @@ func TestServerCloseCancelsBackend(t *testing.T) {
 	url, _, srv := startSrv(t, b)
 	go postRun(context.Background(), url)
 	<-b.started
-	_ = srv.Close()
+	_ = srv.Close() //nolint:gosec // G104: test code, the result does not matter
 	waitDone(t, b)
 }
 
 func TestCancelledReturnsPartialOutput(t *testing.T) {
-	r, _, _ := cancelledResult(sshclient.ExecResult{Stdout: "part", Stderr: "e", ExitCode: -1})
+	r, _, _ := cancelledResult(sshclient.ExecResult{Stdout: "part", Stderr: "e", ExitCode: -1}) //nolint:gosec // G104: test code, the result does not matter
 	var sb strings.Builder
 	for _, c := range r.Content {
 		sb.WriteString(c.(*mcp.TextContent).Text)

@@ -78,7 +78,7 @@ func (a *App) mcpCloseLocked() {
 	}
 	a.mcpLive.Store(nil)
 	_ = a.mcpSrv.Close() //nolint:gosec // G104: the server is being discarded
-	_ = a.mcpLn.Close() //nolint:gosec // G104: Serve may have closed it already
+	_ = a.mcpLn.Close()  //nolint:gosec // G104: Serve may have closed it already
 	a.mcpSrv, a.mcpLn = nil, nil
 }
 

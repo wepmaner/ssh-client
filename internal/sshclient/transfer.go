@@ -64,10 +64,10 @@ func openSFTPNow(ctx context.Context, c *ssh.Client) (*sftp.Client, func(), erro
 		return nil, nil, err
 	}
 	// ending ctx closes the session, which unblocks a handshake the server leaves unanswered
-	stop := context.AfterFunc(ctx, func() { _ = sess.Close() })
+	stop := context.AfterFunc(ctx, func() { _ = sess.Close() }) //nolint:gosec // G104: the session is being discarded
 	defer stop()
 	fail := func(err error) (*sftp.Client, func(), error) {
-		_ = sess.Close()
+		_ = sess.Close() //nolint:gosec // G104: the session is being discarded
 		return nil, nil, fmt.Errorf("%w (%v)", ErrNoSFTP, err)
 	}
 	w, err := sess.StdinPipe()
@@ -86,8 +86,8 @@ func openSFTPNow(ctx context.Context, c *ssh.Client) (*sftp.Client, func(), erro
 		return fail(err)
 	}
 	return sc, func() {
-		_ = sess.Close()
-		_ = sc.Close()
+		_ = sess.Close() //nolint:gosec // G104: the session is being discarded
+		_ = sc.Close()   //nolint:gosec // G104: the client is being discarded
 	}, nil
 }
 
@@ -136,7 +136,7 @@ func Upload(ctx context.Context, c *ssh.Client, local, remote string, overwrite 
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = src.Close() }()
+	defer func() { _ = src.Close() }() //nolint:gosec // G104: read-only file, close errors are irrelevant
 	if st, err := src.Stat(); err != nil {
 		return 0, err
 	} else if st.IsDir() {
@@ -211,7 +211,7 @@ func removeRemote(c *ssh.Client, name string) {
 	defer closeSFTP()
 	stop := context.AfterFunc(ctx, closeSFTP) // unblocks Remove on a stalled connection
 	defer stop()
-	_ = sc.Remove(name)
+	_ = sc.Remove(name) //nolint:gosec // G104: best-effort cleanup of a temporary file
 }
 
 // Download copies the remote file to local through a temporary file next to local and renames
@@ -238,7 +238,7 @@ func Download(ctx context.Context, c *ssh.Client, remote, local string, overwrit
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = src.Close() }()
+	defer func() { _ = src.Close() }() //nolint:gosec // G104: read-only file, close errors are irrelevant
 
 	tmp := tempName(local)
 	n, err := downloadTo(ctx, src, tmp)
@@ -249,7 +249,7 @@ func Download(ctx context.Context, c *ssh.Client, remote, local string, overwrit
 		if cerr := ctx.Err(); cerr != nil {
 			err = cerr
 		}
-		_ = os.Remove(tmp)
+		_ = os.Remove(tmp) //nolint:gosec // G104: best-effort cleanup after the primary error
 		return 0, err
 	}
 	return n, nil
@@ -265,7 +265,7 @@ func placeLocal(tmp, target string, overwrite bool) error {
 	err := os.Link(tmp, target)
 	switch {
 	case err == nil:
-		_ = os.Remove(tmp)
+		_ = os.Remove(tmp) //nolint:gosec // G104: the file is linked, the temporary name is only clutter
 		return nil
 	case errors.Is(err, fs.ErrExist):
 		return ErrExists

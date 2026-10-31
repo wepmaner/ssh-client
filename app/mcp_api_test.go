@@ -154,7 +154,7 @@ func freeMCPPort(t *testing.T) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = l.Close() }()
+	defer func() { _ = l.Close() }() //nolint:gosec // G104: test code, the result does not matter
 	return l.Addr().(*net.TCPAddr).Port
 }
 
@@ -163,7 +163,7 @@ func portOpen(port int) bool {
 	if err != nil {
 		return false
 	}
-	_ = c.Close()
+	_ = c.Close() //nolint:gosec // G104: test code, the result does not matter
 	return true
 }
 
@@ -303,7 +303,7 @@ func TestMCPPortBusyShowsError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = l.Close() }()
+	defer func() { _ = l.Close() }() //nolint:gosec // G104: test code, the result does not matter
 	port := l.Addr().(*net.TCPAddr).Port
 	if _, err := s.MCPSetPort(port); err != nil {
 		t.Fatal(err)
@@ -322,7 +322,7 @@ func TestMCPPortBusyShowsError(t *testing.T) {
 	if len(s.HostsList()) != 1 {
 		t.Fatal("app broken")
 	}
-	_ = l.Close()
+	_ = l.Close() //nolint:gosec // G104: test code, the result does not matter
 	st, err = s.MCPSetEnabled(true)
 	if err != nil || st.State != "running" || st.Error != "" || st.Detail != "" {
 		t.Fatalf("after release: %+v, %v", st, err)
@@ -374,14 +374,14 @@ func TestMCPRotateTokenInvalidatesOld(t *testing.T) {
 		t.Fatal("rotation dropped the hold: the passphrase would be asked again")
 	}
 	if cs, err := mcpConnect(st.Port, old); err == nil {
-		_ = cs.Close()
+		_ = cs.Close() //nolint:gosec // G104: test code, the result does not matter
 		t.Fatal("old token accepted")
 	}
 	cs, err := mcpConnect(st.Port, fresh)
 	if err != nil {
 		t.Fatal("new token refused:", err)
 	}
-	defer func() { _ = cs.Close() }()
+	defer func() { _ = cs.Close() }() //nolint:gosec // G104: test code, the result does not matter
 	if text, isErr := toolText(t, cs, "list_hosts", nil); isErr || !strings.Contains(text, s.hostID) {
 		t.Fatalf("list_hosts: %q", text)
 	}
@@ -421,7 +421,7 @@ func TestMCPLockedRefusesNewCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal("the token works while locked:", err)
 	}
-	defer func() { _ = cs.Close() }()
+	defer func() { _ = cs.Close() }() //nolint:gosec // G104: test code, the result does not matter
 	if text, isErr := toolText(t, cs, "list_hosts", nil); !isErr || text != refused {
 		t.Fatalf("list_hosts: %q", text)
 	}
@@ -510,7 +510,7 @@ func TestMCPRestoreStopsServer(t *testing.T) {
 	if err != nil {
 		t.Fatal("token of the copy refused:", err)
 	}
-	_ = cs.Close()
+	_ = cs.Close() //nolint:gosec // G104: test code, the result does not matter
 }
 
 func TestMCPFailedRestoreRestartsServer(t *testing.T) {
@@ -610,7 +610,7 @@ func TestMCPRefusalInJournal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = cs.Close() }()
+	defer func() { _ = cs.Close() }() //nolint:gosec // G104: test code, the result does not matter
 	text, isErr := toolText(t, cs, "run_command", map[string]any{"host": s.hostID, "command": "rm -rf /"})
 	if !isErr || !strings.Contains(text, "Только просмотр") {
 		t.Fatalf("run_command: %q", text)
@@ -820,7 +820,7 @@ func TestMCPTokenNeverInEventsOrJournal(t *testing.T) {
 	if text, isErr := toolText(t, cs, "run_command", map[string]any{"host": s.hostID, "command": "ls"}); isErr {
 		t.Fatal(text)
 	}
-	_ = cs.Close()
+	_ = cs.Close() //nolint:gosec // G104: test code, the result does not matter
 	if err := s.MCPRotateToken(); err != nil {
 		t.Fatal(err)
 	}
