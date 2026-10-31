@@ -123,6 +123,16 @@ func (s sessionsApp) hasCall() bool {
 	return h != nil && len(h.calls) > 0
 }
 
+// callCount is the number of the host's calls, running and queued.
+func (s sessionsApp) callCount() int {
+	s.mcpMu.Lock()
+	defer s.mcpMu.Unlock()
+	if h := s.mcpHolds[s.hostID]; h != nil {
+		return len(h.calls)
+	}
+	return 0
+}
+
 type runResult struct {
 	res sshclient.ExecResult
 	err error
@@ -746,6 +756,84 @@ func TestMCPReadModeLetsRunningFinish(t *testing.T) {
 	r := waitRun(t, running)
 	if r.err != nil || r.res.ExitCode != 7 {
 		t.Fatalf("running call: %+v", r)
+	}
+}
+
+// TestMCPQueuedCallSeesNewMode: a call passed the mode check, waited for a slot, and the owner
+// lowered the host to read-only meanwhile.
+func TestMCPQueuedCallSeesNewMode(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "a.txt")
+	if err := os.WriteFile(src, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		tool, text string
+		run        func(*mcpBackend, mcpserver.HostInfo) error
+		refused    bool
+	}{
+		"write command": {tool: mcpToolRun, text: "rm -rf /", refused: true, run: func(b *mcpBackend, h mcpserver.HostInfo) error {
+			_, err := b.Run(context.Background(), h, "rm -rf /", time.Minute)
+			return err
+		}},
+		"upload": {tool: mcpToolUpload, text: src + " -> b.txt", refused: true, run: func(b *mcpBackend, h mcpserver.HostInfo) error {
+			_, err := b.Upload(context.Background(), h, src, "b.txt", true)
+			return err
+		}},
+		"read command": {tool: mcpToolRun, text: "ls", run: func(b *mcpBackend, h mcpserver.HostInfo) error {
+			_, err := b.Run(context.Background(), h, "ls", time.Minute)
+			return err
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			be := newBlockingExec()
+			s, b := mcpApp(t, sshtest.Opts{Exec: be.exec, SFTPRoot: t.TempDir()}, model.MCPAccessFull)
+			h := s.info(t, b)
+			running := make([]chan runResult, mcpHostCalls)
+			for i := range running {
+				running[i] = runAsync(b, h, "sleep")
+				be.waitStarted(t)
+			}
+			queued := make(chan error, 1)
+			go func() { queued <- tc.run(b, h) }()
+			deadline := time.Now().Add(hcWait)
+			for s.callCount() <= mcpHostCalls {
+				if time.Now().After(deadline) {
+					t.Fatal("the call did not queue")
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+
+			s.setAccess(t, model.MCPAccessRead)
+			close(be.release)
+			for _, ch := range running {
+				if r := waitRun(t, ch); r.err != nil {
+					t.Fatalf("running call: %+v", r)
+				}
+			}
+			var err error
+			select {
+			case err = <-queued:
+			case <-time.After(hcWait):
+				t.Fatal("the queued call did not end")
+			}
+
+			if !tc.refused {
+				if err != nil {
+					t.Fatalf("a read command was refused: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "Только просмотр") {
+				t.Fatalf("queued call: %v", err)
+			}
+			if len(be.started) != 0 {
+				t.Fatal("the queued command reached the server")
+			}
+			j := s.MCPJournalList()
+			if j[0].Refused == "" || j[0].Tool != tc.tool || j[0].Text != tc.text || j[0].Access != model.MCPAccessRead {
+				t.Fatalf("journal %+v", j[0])
+			}
+		})
 	}
 }
 

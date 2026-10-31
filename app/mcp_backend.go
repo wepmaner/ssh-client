@@ -35,6 +35,12 @@ var (
 	errMCPTransferTime = errors.New("Передача не уложилась в 30 минут: файл мог быть передан не полностью. Проверьте результат на сервере, прежде чем повторять.")
 )
 
+// mcpCheck decides whether a host in its present mode may run an action; a refusal is journalled.
+type mcpCheck func(model.Host) error
+
+// mcpAnyMode is the check of an action every open mode allows.
+func mcpAnyMode(model.Host) error { return nil }
+
 // mcpBackend is the app behind one run of the MCP server. The HostInfo a tool got is only as fresh
 // as its Hosts call: every action reads the host's mode again.
 type mcpBackend struct{ a *App }
@@ -84,13 +90,18 @@ func (b *mcpBackend) current(h mcpserver.HostInfo) (model.Host, error) {
 // begin starts a call on the host's connection. What it checks after mcpBegin covers what happened
 // meanwhile. A close of the host saves first and releases after, and a stop of the server drops
 // mcpLive first and releases after: so a call either is seen by that release or sees the change
-// here, and then it takes its hold off itself.
-func (b *mcpBackend) begin(ctx context.Context, h mcpserver.HostInfo) (*ssh.Client, *mcpCall, error) {
+// here, and then it takes its hold off itself. The wait for a slot or a login has no limit the
+// owner can see, so allowed judges the action again by the mode the host has now.
+func (b *mcpBackend) begin(ctx context.Context, h mcpserver.HostInfo, allowed mcpCheck) (*ssh.Client, *mcpCall, error) {
 	a := b.a
 	client, call, err := a.mcpBegin(ctx, h.ID)
-	_, curErr := b.current(h)
+	host, curErr := b.current(h)
 	live := a.mcpLive.Load()
 	if err == nil && curErr == nil && live == b {
+		if err := allowed(host); err != nil {
+			a.mcpEnd(call)
+			return nil, nil, err
+		}
 		return client, call, nil
 	}
 	if call != nil {
@@ -160,18 +171,25 @@ func (b *mcpBackend) Run(ctx context.Context, h mcpserver.HostInfo, command stri
 	if err != nil {
 		return res, err
 	}
-	if host.MCPAccess != model.MCPAccessFull {
+	allowed := func(host model.Host) error {
+		if host.MCPAccess == model.MCPAccessFull {
+			return nil
+		}
 		if cerr := mcpserver.CheckReadOnly(command); cerr != nil {
 			b.refused(host, mcpToolRun, command, cerr.Error())
-			return res, mcpserver.ReadOnlyCommand(cerr)
+			return mcpserver.ReadOnlyCommand(cerr)
 		}
+		return nil
+	}
+	if err := allowed(host); err != nil {
+		return res, err
 	}
 	id, err := b.journal(host, mcpToolRun, command)
 	if err != nil {
 		return res, err
 	}
 	start := time.Now()
-	client, call, err := b.begin(ctx, h)
+	client, call, err := b.begin(ctx, h, allowed)
 	if err != nil {
 		b.finish(id, nil, start)
 		return res, err
@@ -198,11 +216,17 @@ func (b *mcpBackend) Upload(ctx context.Context, h mcpserver.HostInfo, local, re
 		return 0, err
 	}
 	text := local + " -> " + remote
-	if host.MCPAccess != model.MCPAccessFull {
+	allowed := func(host model.Host) error {
+		if host.MCPAccess == model.MCPAccessFull {
+			return nil
+		}
 		b.refused(host, mcpToolUpload, text, "загрузка файлов запрещена в режиме «Только просмотр»")
-		return 0, errors.New(mcpserver.ReadOnlyUpload) //nolint:staticcheck // ST1005: Russian text for the client
+		return errors.New(mcpserver.ReadOnlyUpload) //nolint:staticcheck // ST1005: Russian text for the client
 	}
-	return b.transfer(ctx, h, host, mcpToolUpload, text, local, func(ctx context.Context, c *ssh.Client) (int64, error) {
+	if err := allowed(host); err != nil {
+		return 0, err
+	}
+	return b.transfer(ctx, h, host, mcpToolUpload, text, local, allowed, func(ctx context.Context, c *ssh.Client) (int64, error) {
 		return sshclient.Upload(ctx, c, local, remote, overwrite)
 	})
 }
@@ -214,7 +238,7 @@ func (b *mcpBackend) Download(ctx context.Context, h mcpserver.HostInfo, remote,
 		return 0, err
 	}
 	text := remote + " -> " + local
-	return b.transfer(ctx, h, host, mcpToolDownload, text, local, func(ctx context.Context, c *ssh.Client) (int64, error) {
+	return b.transfer(ctx, h, host, mcpToolDownload, text, local, mcpAnyMode, func(ctx context.Context, c *ssh.Client) (int64, error) {
 		return sshclient.Download(ctx, c, remote, local, overwrite)
 	})
 }
@@ -222,7 +246,7 @@ func (b *mcpBackend) Download(ctx context.Context, h mcpserver.HostInfo, remote,
 // transfer runs one file transfer: the check of the local path, the record, the connection, and the
 // limit of mcpTransferTime. The cancel of a transfer is context.Canceled whatever the closed sftp
 // session answered.
-func (b *mcpBackend) transfer(ctx context.Context, h mcpserver.HostInfo, host model.Host, tool, text, local string,
+func (b *mcpBackend) transfer(ctx context.Context, h mcpserver.HostInfo, host model.Host, tool, text, local string, allowed mcpCheck,
 	run func(context.Context, *ssh.Client) (int64, error)) (int64, error) {
 	dir, err := appdir.Dir()
 	if err == nil {
@@ -238,7 +262,7 @@ func (b *mcpBackend) transfer(ctx context.Context, h mcpserver.HostInfo, host mo
 	}
 	start := time.Now()
 	defer func() { b.finish(id, nil, start) }()
-	client, call, err := b.begin(ctx, h)
+	client, call, err := b.begin(ctx, h, allowed)
 	if err != nil {
 		return 0, err
 	}
