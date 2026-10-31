@@ -50,7 +50,7 @@ func TestUploadDownloadRoundTrip(t *testing.T) {
 	if err != nil || n != int64(len(data)) {
 		t.Fatalf("Upload: n=%d err=%v", n, err)
 	}
-	got, err := os.ReadFile(filepath.Join(remoteDir, "r.bin"))
+	got, err := os.ReadFile(filepath.Join(remoteDir, "r.bin")) //nolint:gosec // G304: test temp path
 	if err != nil || !bytes.Equal(got, data) {
 		t.Fatalf("удалённый файл не совпал: %v", err)
 	}

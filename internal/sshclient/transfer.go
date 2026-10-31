@@ -132,7 +132,7 @@ func (w *ctxWriter) Write(p []byte) (int, error) {
 // it into place, so a broken transfer never leaves a half-written target. It returns the number
 // of bytes sent. The client c is shared and is never closed here.
 func Upload(ctx context.Context, c *ssh.Client, local, remote string, overwrite bool) (int64, error) {
-	src, err := os.Open(local)
+	src, err := os.Open(local) //nolint:gosec // G304: path checked by checkLocalPath
 	if err != nil {
 		return 0, err
 	}
@@ -277,7 +277,7 @@ func placeLocal(tmp, target string, overwrite bool) error {
 }
 
 func downloadTo(ctx context.Context, src io.Reader, tmp string) (int64, error) {
-	dst, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	dst, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // G304: path checked by checkLocalPath
 	if err != nil {
 		return 0, err
 	}

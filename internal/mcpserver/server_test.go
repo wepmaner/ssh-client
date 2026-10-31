@@ -103,7 +103,7 @@ func startSrv(t *testing.T, b Backend) (string, int, *http.Server) {
 		t.Fatal(err)
 	}
 	srv := Serve(l, testToken, "test", b)
-	t.Cleanup(func() { srv.Close() })
+	t.Cleanup(func() { _ = srv.Close() })
 	port := l.Addr().(*net.TCPAddr).Port
 	return "http://127.0.0.1:" + strconv.Itoa(port) + "/mcp", port, srv
 }
@@ -119,7 +119,7 @@ func connect(t *testing.T, url string) *mcp.ClientSession {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 
@@ -158,7 +158,7 @@ func rawPost(t *testing.T, url string, mod func(*http.Request)) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return resp.StatusCode
 }
 
@@ -236,7 +236,7 @@ func TestListenLoopbackOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	if !l.Addr().(*net.TCPAddr).IP.IsLoopback() {
 		t.Fatalf("addr %v", l.Addr())
 	}
@@ -462,7 +462,7 @@ func postRun(ctx context.Context, url string) {
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+testToken)
 	if resp, err := http.DefaultClient.Do(req); err == nil {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 }
 
@@ -490,7 +490,7 @@ func TestServerCloseCancelsBackend(t *testing.T) {
 	url, _, srv := startSrv(t, b)
 	go postRun(context.Background(), url)
 	<-b.started
-	srv.Close()
+	_ = srv.Close()
 	waitDone(t, b)
 }
 

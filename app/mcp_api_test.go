@@ -40,7 +40,7 @@ func (b *blockingExec) exec(cmd string, stdout, _ io.Writer, stop <-chan string)
 	b.started <- cmd
 	select {
 	case <-b.release:
-		_, _ = stdout.Write([]byte("done\n"))
+		_, _ = stdout.Write([]byte("done\n")) //nolint:gosec // G104: a test backend, the write cannot matter
 		return 7
 	case <-stop:
 		b.stopped <- struct{}{}
