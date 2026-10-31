@@ -71,6 +71,8 @@ func textResult(parts ...string) (*mcp.CallToolResult, any, error) {
 	return r, nil, nil
 }
 
+const transferCancelled = "Передача отменена: файл мог быть передан не полностью. Проверьте результат на сервере, прежде чем повторять."
+
 func cancelledResult(res sshclient.ExecResult) (*mcp.CallToolResult, any, error) {
 	r, _, _ := textResult(
 		jsonText(runOut{res.Stdout, res.Stderr, res.ExitCode, res.Truncated, res.TimedOut}),
@@ -178,7 +180,7 @@ func registerTools(s *mcp.Server, b Backend, reqCtx context.Context) {
 			sec = maxTimeoutSec
 		}
 		res, err := b.Run(ctx, h, in.Command, time.Duration(sec)*time.Second)
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 			return cancelledResult(res)
 		}
 		if err != nil {
@@ -206,6 +208,9 @@ func registerTools(s *mcp.Server, b Backend, reqCtx context.Context) {
 			return errResult(readOnlyUpload)
 		}
 		n, err := b.Upload(ctx, h, in.LocalPath, in.RemotePath, in.Overwrite)
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+			return errResult(transferCancelled)
+		}
 		if err != nil {
 			return errResult(err.Error())
 		}
@@ -223,6 +228,9 @@ func registerTools(s *mcp.Server, b Backend, reqCtx context.Context) {
 			return errResult(err.Error())
 		}
 		n, err := b.Download(ctx, h, in.RemotePath, in.LocalPath, in.Overwrite)
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+			return errResult(transferCancelled)
+		}
 		if err != nil {
 			return errResult(err.Error())
 		}

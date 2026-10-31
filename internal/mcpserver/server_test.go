@@ -540,3 +540,13 @@ func TestRejectsEmptyOriginHeader(t *testing.T) {
 		t.Fatalf("status %d", c)
 	}
 }
+
+func TestBackendCancelledWithLiveContext(t *testing.T) {
+	b := &fakeBackend{hosts: testHosts(), result: sshclient.ExecResult{Stdout: "part", ExitCode: -1}, runErr: context.Canceled}
+	url, _ := start(t, b)
+	s := connect(t, url)
+	text, isErr := call(t, s, "run_command", map[string]any{"host": "web", "command": "ls"})
+	if !isErr || !strings.Contains(text, "part") || !strings.Contains(text, "отменён") || strings.Contains(text, "context canceled") {
+		t.Fatalf("%v %s", isErr, text)
+	}
+}
