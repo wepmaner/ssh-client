@@ -92,7 +92,7 @@ func jsonText(v any) string {
 }
 
 func notFoundText(name string) string {
-	return fmt.Sprintf("Сервер «%s» не найден. Список доступных серверов даёт list_hosts; если сервера там нет, его нужно открыть в клиенте: «Доступ по MCP» в настройках хоста.", name)
+	return fmt.Sprintf("Сервер «%s» не найден. Список доступных серверов даёт list_hosts; если сервера там нет, его нужно открыть в клиенте: раздел «MCP».", name)
 }
 
 // HostNotFound is the answer about a host that is missing or closed. The Backend gives it for a

@@ -3,6 +3,7 @@
   import {
     ClipboardSetText,
     EventsOn,
+    HostSave,
     MCPAddCommand,
     MCPPrompt,
     MCPRotateToken,
@@ -10,9 +11,10 @@
     MCPSetPort,
     MCPStatus,
     errorText,
+    type app,
   } from '../api'
-  import { fieldError } from '../hosts/format'
-  import { toast } from '../stores.svelte'
+  import { fieldError, userAtHost } from '../hosts/format'
+  import { hosts, refreshHosts, toast } from '../stores.svelte'
   import Button from '../ui/Button.svelte'
   import Input from '../ui/Input.svelte'
   import McpJournalDialog from './McpJournalDialog.svelte'
@@ -56,6 +58,7 @@
     MCPStatus()
       .then(apply)
       .catch(() => {})
+    void refreshHosts().catch(() => {})
   })
   // The server also changes by itself (a port lost, a restore from a copy).
   onDestroy(EventsOn('mcp:status', (s: Status) => apply(s)))
@@ -103,6 +106,16 @@
     void MCPStatus().then(apply).catch(() => {})
   }
 
+  async function setAccess(h: app.HostDTO, box: HTMLSelectElement): Promise<void> {
+    try {
+      await HostSave({ ...h, mcp_access: box.value })
+      await refreshHosts()
+    } catch (e) {
+      toast(errorText(e))
+      box.value = h.mcp_access // the failed change must not stay on screen
+    }
+  }
+
   async function copy(get: () => Promise<string>, done: string): Promise<void> {
     try {
       await ClipboardSetText(await get())
@@ -112,6 +125,7 @@
     }
   }
 
+  const anyFull = $derived(hosts.some((h) => h.mcp_access === 'full'))
   const stateText = $derived(status.state === 'running' ? 'Работает' : status.state === 'error' ? status.error || 'Ошибка' : 'Выключен')
 </script>
 
@@ -144,6 +158,32 @@
     <div class="row">
       <Button variant="outline" onclick={() => (journal = true)}>Журнал</Button>
     </div>
+  </section>
+
+  <section class="card" aria-labelledby="set-mcp-hosts">
+    <h2 id="set-mcp-hosts">Серверы</h2>
+    {#if hosts.length === 0}
+      <p class="hint">Хостов пока нет. Добавьте их в разделе «Хосты».</p>
+    {:else}
+      <ul class="hosts">
+        {#each hosts as h (h.id)}
+          <li>
+            <span class="host">
+              <span class="name">{h.name}</span>
+              <span class="addr">{userAtHost(h)}</span>
+            </span>
+            <select class="select" aria-label={`Доступ для ${h.name}`} value={h.mcp_access} onchange={(e) => setAccess(h, e.currentTarget)}>
+              <option value="">Закрыт</option>
+              <option value="read">Только просмотр</option>
+              <option value="full">Полный</option>
+            </select>
+          </li>
+        {/each}
+      </ul>
+      {#if anyFull}
+        <p class="hint">Полный доступ — всё, что может пользователь этого хоста на сервере</p>
+      {/if}
+    {/if}
   </section>
 
   <section class="card" aria-labelledby="set-mcp-connect">
@@ -185,6 +225,53 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     user-select: text;
+  }
+  .hosts {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .hosts li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 6px 0;
+  }
+  .hosts li + li {
+    border-top: 1px solid var(--border);
+  }
+  .host {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .name,
+  .addr {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .addr {
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+  .select {
+    flex: 0 0 170px;
+    height: var(--control-height);
+    padding: 0 8px;
+    border: 1px solid #333a44;
+    border-radius: var(--radius-control);
+    background: #15181c;
+    color: var(--text);
+    font: inherit;
+  }
+  .select:focus {
+    outline: none;
+    border-color: var(--accent);
   }
   .card {
     display: flex;

@@ -15,6 +15,9 @@ const api = vi.hoisted(() => ({
   MCPJournalList: vi.fn(),
   MCPJournalClear: vi.fn(),
   ClipboardSetText: vi.fn(),
+  HostsList: vi.fn(),
+  GroupsList: vi.fn(),
+  HostSave: vi.fn(),
 }))
 vi.mock('../api', async () => {
   const model = await import('../../../bindings/sshclient/internal/model/models')
@@ -27,6 +30,10 @@ import McpView from './McpView.svelte'
 const off = { enabled: false, port: 47821, state: 'off', error: '', detail: '' }
 const on = { enabled: true, port: 47821, state: 'running', error: '', detail: '' }
 const SECRET = 'tok-SECRET-123'
+const host = {
+  id: 'h1', name: 'prod', address: '10.0.0.1', port: 22, user: 'root', group_id: 'g1', group_name: 'G',
+  key_id: 'k1', key_name: 'K', os: '', connected: false, mcp_access: '',
+}
 
 async function mount(status = off) {
   api.MCPStatus.mockResolvedValue(status)
@@ -49,6 +56,9 @@ describe('McpView', () => {
     api.MCPPrompt.mockResolvedValue(`prompt with ${SECRET}`)
     api.ClipboardSetText.mockResolvedValue(undefined)
     api.MCPJournalList.mockResolvedValue([])
+    api.HostsList.mockResolvedValue([host])
+    api.HostSave.mockResolvedValue(host)
+    api.GroupsList.mockResolvedValue([])
   })
 
   it('switches the server through MCPSetEnabled and shows the state', async () => {
@@ -142,6 +152,38 @@ describe('McpView', () => {
     await waitFor(() => expect(screen.getByLabelText('Текст промпта')).toBeTruthy())
     screen.getByLabelText('Текст промпта').remove()
     expect(document.body.textContent).not.toMatch(/claude/i)
+  })
+
+  it('lists the hosts with their modes, closed ones too', async () => {
+    api.HostsList.mockResolvedValue([host, { ...host, id: 'h2', name: 'stage', mcp_access: 'read' }])
+    await mount()
+    await waitFor(() => expect(screen.getByLabelText('Доступ для prod')).toBeTruthy())
+    expect((screen.getByLabelText('Доступ для prod') as HTMLSelectElement).value).toBe('')
+    expect((screen.getByLabelText('Доступ для stage') as HTMLSelectElement).value).toBe('read')
+  })
+
+  it('saves a new mode with every other host field unchanged', async () => {
+    await mount()
+    const select = (await screen.findByLabelText('Доступ для prod')) as HTMLSelectElement
+    api.HostsList.mockResolvedValue([{ ...host, mcp_access: 'full' }])
+    await fireEvent.change(select, { target: { value: 'full' } })
+    await waitFor(() => expect(api.HostSave).toHaveBeenCalledWith({ ...host, mcp_access: 'full' }))
+    await waitFor(() => expect(screen.getByText(/всё, что может пользователь/)).toBeTruthy())
+  })
+
+  it('puts the mode back when the save fails', async () => {
+    await mount()
+    const select = (await screen.findByLabelText('Доступ для prod')) as HTMLSelectElement
+    api.HostSave.mockRejectedValue('Хранилище заблокировано')
+    await fireEvent.change(select, { target: { value: 'full' } })
+    await waitFor(() => expect(toastState.message).toBe('Хранилище заблокировано'))
+    expect(select.value).toBe('')
+  })
+
+  it('says where to add hosts when there are none', async () => {
+    api.HostsList.mockResolvedValue([])
+    await mount()
+    await waitFor(() => expect(screen.getByText(/Хостов пока нет/)).toBeTruthy())
   })
 
   it('opens the journal', async () => {
