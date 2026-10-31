@@ -31,6 +31,8 @@ type Opts struct {
 	Exec func(cmd string, stdout, stderr io.Writer, stop <-chan string) int
 	// SFTPRoot — рабочая папка подсистемы sftp; "" — подсистема отклоняется.
 	SFTPRoot string
+	// StallSFTP: запрос подсистемы sftp принимается без ответа (зависшее рукопожатие).
+	StallSFTP bool
 
 	OnPty          func(term string, cols, rows uint32) // вызывается на pty-req
 	OnWindowChange func(cols, rows uint32)              // вызывается на window-change
@@ -349,6 +351,9 @@ func (s *Server) handleSession(nc ssh.NewChannel) {
 				ignoreErr(req.Reply(true, nil))
 			}
 		case "subsystem":
+			if s.opts.StallSFTP {
+				continue
+			}
 			var sub struct{ Name string }
 			if s.opts.SFTPRoot == "" || ssh.Unmarshal(req.Payload, &sub) != nil || sub.Name != "sftp" {
 				ignoreErr(req.Reply(false, nil))

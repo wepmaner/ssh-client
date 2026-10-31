@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"sshclient/internal/sshclient/sshtest"
 )
@@ -197,5 +198,59 @@ func TestNoSFTPIsClearError(t *testing.T) {
 	}
 	if !strings.Contains(ErrNoSFTP.Error(), "SFTP") {
 		t.Fatalf("текст ErrNoSFTP: %q", ErrNoSFTP)
+	}
+}
+
+func TestStalledSFTPHandshakeHonoursContext(t *testing.T) {
+	remoteDir, localDir := t.TempDir(), t.TempDir()
+	_, c := execClient(t, sshtest.Opts{SFTPRoot: remoteDir, StallSFTP: true})
+	src := filepath.Join(localDir, "s")
+	if err := os.WriteFile(src, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, run := range map[string]func(ctx context.Context) error{
+		"upload": func(ctx context.Context) error {
+			_, err := Upload(ctx, c, src, "r", true)
+			return err
+		},
+		"download": func(ctx context.Context) error {
+			_, err := Download(ctx, c, "r", filepath.Join(localDir, "d"), true)
+			return err
+		},
+	} {
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		start := time.Now()
+		err := run(ctx)
+		cancel()
+		if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 2*time.Second {
+			t.Fatalf("%s: ошибка %v за %v", name, err, time.Since(start))
+		}
+	}
+}
+
+func TestDownloadTargetCreatedDuringTransferSurvives(t *testing.T) {
+	remoteDir, localDir := t.TempDir(), t.TempDir()
+	_, c := execClient(t, sshtest.Opts{SFTPRoot: remoteDir})
+	writeRandom(t, filepath.Join(remoteDir, "r"), 1<<20)
+	dst := filepath.Join(localDir, "d")
+	created := false
+	transferHook = func(int64) {
+		if !created {
+			created = true
+			if err := os.WriteFile(dst, []byte("mine"), 0o600); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	t.Cleanup(func() { transferHook = nil })
+
+	if _, err := Download(context.Background(), c, "r", dst, false); !errors.Is(err, ErrExists) {
+		t.Fatalf("ошибка %v, ожидалась ErrExists", err)
+	}
+	if b, _ := os.ReadFile(dst); string(b) != "mine" {
+		t.Fatalf("цель затёрта: %q", b)
+	}
+	if names := readDirNames(t, localDir); len(names) != 1 {
+		t.Fatalf("остались временные файлы: %v", names)
 	}
 }

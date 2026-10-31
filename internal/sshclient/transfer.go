@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pkg/sftp"
@@ -29,13 +31,41 @@ func tempName(target string) string {
 	return target + ".sshclient-" + uuid.NewString() + ".tmp"
 }
 
-// openSFTP starts an sftp session on its own channel of c. The returned function closes the
-// session and the sftp client, never c.
-func openSFTP(c *ssh.Client) (*sftp.Client, func(), error) {
+// openSFTP starts an sftp session on its own channel of c and gives up when ctx ends, even if
+// the server never answers. The returned function closes the session and the sftp client,
+// never c.
+func openSFTP(ctx context.Context, c *ssh.Client) (*sftp.Client, func(), error) {
+	type opened struct {
+		sc    *sftp.Client
+		close func()
+		err   error
+	}
+	ch := make(chan opened, 1)
+	go func() {
+		sc, cl, err := openSFTPNow(ctx, c)
+		ch <- opened{sc, cl, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.sc, r.close, r.err
+	case <-ctx.Done():
+		go func() { // whatever the handshake yields later is closed at once
+			if r := <-ch; r.close != nil {
+				r.close()
+			}
+		}()
+		return nil, nil, ctx.Err()
+	}
+}
+
+func openSFTPNow(ctx context.Context, c *ssh.Client) (*sftp.Client, func(), error) {
 	sess, err := c.NewSession()
 	if err != nil {
 		return nil, nil, err
 	}
+	// ending ctx closes the session, which unblocks a handshake the server leaves unanswered
+	stop := context.AfterFunc(ctx, func() { _ = sess.Close() })
+	defer stop()
 	fail := func(err error) (*sftp.Client, func(), error) {
 		_ = sess.Close()
 		return nil, nil, fmt.Errorf("%w (%v)", ErrNoSFTP, err)
@@ -113,7 +143,7 @@ func Upload(ctx context.Context, c *ssh.Client, local, remote string, overwrite 
 		return 0, fmt.Errorf("%s: это папка, а не файл", local)
 	}
 
-	sc, closeSFTP, err := openSFTP(c)
+	sc, closeSFTP, err := openSFTP(ctx, c)
 	if err != nil {
 		return 0, err
 	}
@@ -165,14 +195,22 @@ func uploadTo(ctx context.Context, sc *sftp.Client, src io.Reader, tmp string) (
 	return cr.n, err
 }
 
+// removeGrace bounds the cleanup of a leftover remote temporary file.
+const removeGrace = 2 * time.Second
+
 // removeRemote deletes a leftover temporary file over a fresh sftp session (the one that wrote
-// it may be closed). Best effort: if the connection is gone, there is nothing to do.
+// it may be closed). Best effort and bounded by removeGrace: if the connection is gone or
+// stalled, there is nothing to do.
 func removeRemote(c *ssh.Client, name string) {
-	sc, closeSFTP, err := openSFTP(c)
+	ctx, cancel := context.WithTimeout(context.Background(), removeGrace)
+	defer cancel()
+	sc, closeSFTP, err := openSFTP(ctx, c)
 	if err != nil {
 		return
 	}
 	defer closeSFTP()
+	stop := context.AfterFunc(ctx, closeSFTP) // unblocks Remove on a stalled connection
+	defer stop()
 	_ = sc.Remove(name)
 }
 
@@ -186,7 +224,7 @@ func Download(ctx context.Context, c *ssh.Client, remote, local string, overwrit
 			return 0, ErrExists
 		}
 	}
-	sc, closeSFTP, err := openSFTP(c)
+	sc, closeSFTP, err := openSFTP(ctx, c)
 	if err != nil {
 		return 0, err
 	}
@@ -205,14 +243,7 @@ func Download(ctx context.Context, c *ssh.Client, remote, local string, overwrit
 	tmp := tempName(local)
 	n, err := downloadTo(ctx, src, tmp)
 	if err == nil {
-		if !overwrite {
-			if _, serr := os.Lstat(local); serr == nil {
-				err = ErrExists
-			}
-		}
-		if err == nil {
-			err = os.Rename(tmp, local)
-		}
+		err = placeLocal(tmp, local, overwrite)
 	}
 	if err != nil {
 		if cerr := ctx.Err(); cerr != nil {
@@ -222,6 +253,27 @@ func Download(ctx context.Context, c *ssh.Client, remote, local string, overwrit
 		return 0, err
 	}
 	return n, nil
+}
+
+// placeLocal moves tmp to target. Without overwrite it links first, which fails if target
+// exists even when it appeared a moment ago; where hard links are unsupported (FAT) it falls
+// back to a check and a rename.
+func placeLocal(tmp, target string, overwrite bool) error {
+	if overwrite {
+		return os.Rename(tmp, target)
+	}
+	err := os.Link(tmp, target)
+	switch {
+	case err == nil:
+		_ = os.Remove(tmp)
+		return nil
+	case errors.Is(err, fs.ErrExist):
+		return ErrExists
+	}
+	if _, serr := os.Lstat(target); serr == nil {
+		return ErrExists
+	}
+	return os.Rename(tmp, target)
 }
 
 func downloadTo(ctx context.Context, src io.Reader, tmp string) (int64, error) {
