@@ -227,6 +227,11 @@ type comPtr struct {
 // call invokes method i of p.
 //
 //nolint:gosec // G103: calling a COM method passes the interface pointer itself
+// call invokes vtable method i. Like syscall's Proc.Call it must be uintptrescapes: callers pass
+// uintptr(unsafe.Pointer(&local)) for out parameters, and without the directive the local may sit on
+// a stack that moves during the call, so the callee writes to the old address (seen under -race).
+//
+//go:uintptrescapes
 func (p *comPtr) call(i int, args ...uintptr) uintptr {
 	all := append([]uintptr{uintptr(unsafe.Pointer(p))}, args...)
 	r, _, _ := syscall.SyscallN(p.vtbl[i], all...)
