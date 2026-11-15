@@ -152,3 +152,26 @@ func TestFilesDragOutStreams(t *testing.T) {
 		}
 	}
 }
+
+func TestDragOutStep(t *testing.T) {
+	for _, c := range []struct {
+		ev               dragEvent
+		down, outside    bool
+		wantOut, wantEnd bool
+	}{
+		{dragTick, true, false, false, false},   // dragging inside
+		{dragTick, true, true, true, false},     // outside before the watch heard the leave
+		{dragTick, false, false, false, true},   // dropped or cancelled somewhere
+		{dragTick, false, true, false, true},    // released outside
+		{dragLeft, true, true, true, false},     // left the window with the button held
+		{dragLeft, true, false, false, true},    // Esc over the window
+		{dragLeft, false, true, false, true},    // released outside the window
+		{dragDropped, true, false, false, true}, // dropped on the list
+		{dragDropped, false, true, false, true},
+	} {
+		out, end := dragOutStep(c.ev, c.down, c.outside)
+		if out != c.wantOut || end != c.wantEnd {
+			t.Errorf("%+v: out %v end %v", c, out, end)
+		}
+	}
+}

@@ -256,8 +256,8 @@
     model.dragging = paths
     e.dataTransfer.setData(MOVE_TYPE, JSON.stringify(paths))
     e.dataTransfer.effectAllowed = 'move'
-    // Out of the window the drag goes on as a system drag that Explorer copies from.
-    watchDragOut(model.id, paths)
+    // Go watches the drag: out of the window it goes on as a system drag that Explorer copies from.
+    void watchDragOut(model.id, paths)
   }
 
   function ondragover(e: DragEvent, entry: Entry): void {

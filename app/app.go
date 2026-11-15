@@ -28,6 +28,7 @@ type App struct {
 	window  application.WebviewWindowOptions // the main window without saved geometry
 	wapp    *application.App                 // nil before ServiceStartup and in tests
 	mainWin *application.WebviewWindow
+	drops   dropForward // the main window's drop target and the row drag it reports to
 
 	// refs holds the vault, its store and the open error as one value: VaultResetCorrupt and
 	// VaultRestore replace it while other bound calls read it. refsMu serialises the writers.
@@ -214,6 +215,8 @@ func (a *App) ServiceStartup(_ context.Context, _ application.ServiceOptions) er
 	// Files dropped from Explorer on a files tab (EnableFileDrop in main.go) go to the frontend.
 	a.mainWin.OnWindowEvent(events.Common.WindowFilesDropped, a.filesDropped)
 	fixRestoreScale(a.mainWin)
+	// The composition-hosted WebView gets drags only through a drop target on the window.
+	a.setupDrops()
 	return nil
 }
 

@@ -63,7 +63,12 @@ func dragItems(plan []sshclient.PlanItem) (items []oledrag.Item, srcs []string, 
 
 // dragPlan walks the chosen remote paths of tab t into the items of a drag.
 func (t *filesTab) dragPlan(paths []string) ([]oledrag.Item, []string, error) {
-	ctx, cancel := context.WithTimeout(t.ctx, dragOutPlanTimeout)
+	return t.dragPlanCtx(t.ctx, paths)
+}
+
+// dragPlanCtx is dragPlan that also stops when ctx ends.
+func (t *filesTab) dragPlanCtx(ctx context.Context, paths []string) ([]oledrag.Item, []string, error) {
+	ctx, cancel := context.WithTimeout(ctx, dragOutPlanTimeout)
 	defer cancel()
 	var plan []sshclient.PlanItem
 	err := t.withSFTP(func(sc *sftp.Client) error {
@@ -144,11 +149,34 @@ func dragError(err error) error {
 	return errors.New(err.Error())
 }
 
-// FilesDragOut hands the chosen remote files and folders of a tab to Windows as a drag: the
-// frontend calls it while its own row drag has left the window with the button still held. It
-// ends that drag, starts the system one and returns when it is dropped or cancelled; Explorer goes
-// on copying in its own progress window. Nothing happens when the button is already up or the
-// cursor came back into the window.
+// dragEvent is what the window's drop target saw of a watched row drag.
+type dragEvent int
+
+const (
+	dragTick    dragEvent = iota // nothing new: a periodic look at the mouse
+	dragLeft                     // the drag left the window or was cancelled over it
+	dragDropped                  // the drag was dropped on the window
+)
+
+// dragOutStep decides a watched row drag: out starts the system drag (the button is held with the
+// cursor outside the window), end stops watching (dropped, cancelled over the window, or the button
+// is up). Otherwise the HTML drag goes on inside the window.
+func dragOutStep(ev dragEvent, buttonDown, outside bool) (out, end bool) {
+	switch {
+	case ev == dragDropped, !buttonDown:
+		return false, true
+	case outside:
+		return true, false
+	case ev == dragLeft: // left while the cursor is over the window: cancelled (Esc)
+		return false, true
+	}
+	return false, false
+}
+
+// FilesDragOut watches the row drag of the chosen remote files and folders of a tab: the frontend
+// calls it when the drag starts, and it returns when the drag ends. When the drag leaves the window
+// with the button held, it ends the HTML drag and hands the files to Windows as a system drag that
+// Explorer copies from in its own progress window. A drag that ends inside the window returns nil.
 func (a *App) FilesDragOut(tabID string, paths []string) error {
 	t, err := a.filesTab(tabID)
 	if err != nil {
