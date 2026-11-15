@@ -27,7 +27,10 @@ import { emptySelection, pruneSelection, type Selection } from './selection'
 export type JobKind = 'upload' | 'download' | 'delete'
 export type JobState = 'queued' | 'running' | 'waiting' | 'done' | 'failed' | 'cancelled'
 
-/** One job of the tab's queue, see app.FilesJobDTO; retryAt is when a waiting job tries again. */
+/**
+ * One job of the tab's queue, see app.FilesJobDTO; retryAt is when a waiting job tries again,
+ * finishedAt when the view saw it finish (0 for one finished before the view listened).
+ */
 export interface Job {
   id: string
   kind: JobKind
@@ -41,12 +44,17 @@ export interface Job {
   done_files: number
   failed: number
   renamed: number
+  skipped: number
   current: string
   speed_bps: number
   dest: string
   retry_in_s: number
   retryAt: number
+  finishedAt: number
 }
+
+/** A job as Go sends it; skipped may be missing from an older payload. */
+export type JobDTO = Omit<Job, 'retryAt' | 'finishedAt' | 'skipped'> & { skipped?: number }
 
 /** Payload of files:drop, see app.FilesDropDTO. */
 export interface DropPayload {
@@ -102,7 +110,7 @@ export class FilesTab {
 
   jobs = $state<Job[]>([])
   /** The conflict question of a transfer, answered by the dialog. */
-  conflict = $state<{ names: string[]; resolve: (c: ConflictChoice | null) => void } | null>(null)
+  conflict = $state<{ names: string[]; merge: boolean; resolve: (c: ConflictChoice | null) => void } | null>(null)
   /** Names asked to be deleted, confirmed by the dialog. */
   deleteAsk = $state<string[] | null>(null)
 
@@ -155,7 +163,7 @@ export class FilesTab {
     this.hostId = hostId
     this.onConnected = onConnected
     this.offs.push(
-      EventsOn('files:job:' + id, (dto: Omit<Job, 'retryAt'>) => this.applyJob(dto)),
+      EventsOn('files:job:' + id, (dto: JobDTO) => this.applyJob(dto)),
       EventsOn('files:changed:' + id, (p: { dir: string }) => {
         if (this.loaded && p && samePath(p.dir, this.path)) void this.load(this.path, { keep: true })
       }),
@@ -434,12 +442,13 @@ export class FilesTab {
 
   // ---- transfers ----
 
-  /** Asks the conflict dialog; null is «Отмена». */
-  askConflict(names: string[]): Promise<ConflictChoice | null> {
+  /** Asks the conflict dialog; null is «Отмена». merge: a clash is a folder that merges. */
+  askConflict(names: string[], merge = false): Promise<ConflictChoice | null> {
     this.conflict?.resolve(null)
     return new Promise((resolve) => {
       this.conflict = {
         names,
+        merge,
         resolve: (c) => {
           this.conflict = null
           resolve(c)
@@ -455,7 +464,10 @@ export class FilesTab {
       const clashes = (await FilesConflicts(this.id, direction, sources, dest)) ?? []
       let mode: ConflictChoice = 'skip'
       if (clashes.length > 0) {
-        const choice = await this.askConflict(clashes)
+        const choice = await this.askConflict(
+          clashes.map((c) => c.name),
+          clashes.some((c) => c.merge),
+        )
         if (!choice) return ''
         mode = choice
       }
@@ -497,9 +509,16 @@ export class FilesTab {
     return this.transfer('upload', p.paths, p.dir || this.path)
   }
 
-  applyJob(dto: Omit<Job, 'retryAt'>): void {
-    const job: Job = { ...plain(dto), retryAt: dto.state === 'waiting' && dto.retry_in_s > 0 ? Date.now() + dto.retry_in_s * 1000 : 0 }
-    const i = this.jobs.findIndex((j) => j.id === job.id)
+  applyJob(dto: JobDTO): void {
+    const i = this.jobs.findIndex((j) => j.id === dto.id)
+    const prev = i >= 0 ? this.jobs[i] : undefined
+    const job: Job = {
+      ...plain(dto),
+      skipped: dto.skipped ?? 0,
+      retryAt: dto.state === 'waiting' && dto.retry_in_s > 0 ? Date.now() + dto.retry_in_s * 1000 : 0,
+      finishedAt: 0,
+    }
+    if (isFinished(job)) job.finishedAt = prev && isFinished(prev) ? prev.finishedAt : prev ? Date.now() : 0
     if (i >= 0) this.jobs[i] = job
     else this.jobs.push(job)
   }

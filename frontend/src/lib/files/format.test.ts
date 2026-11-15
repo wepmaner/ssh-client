@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Job } from './files.svelte'
 import { baseName, compareEntries, crumbs, formatDate, formatSize, formatSpeed, joinPath, objectsLabel, parentPath, stemRange, type Entry } from './format'
-import { jobStatus, queueSummary, retryLeft } from './jobs'
+import { jobResult, jobStatus, orderJobs, queueSummary, retryLeft } from './jobs'
 
 const entry = (name: string, over: Partial<Entry> = {}): Entry => ({ name, dir: false, link: false, broken: false, size: 0, mtime: 0, mode: '-rw-r--r--', ...over })
 
@@ -77,13 +77,29 @@ describe('compareEntries', () => {
   const list = [entry('b10.txt', { size: 5, mtime: 3 }), entry('Docs', { dir: true, mtime: 1 }), entry('b2.txt', { size: 50, mtime: 2 }), entry('ёж'), entry('Арбуз'), entry('apps', { dir: true, mtime: 9 })]
   const names = (key: 'name' | 'size' | 'mtime', desc = false) => [...list].sort((a, b) => compareEntries(a, b, { key, desc })).map((e) => e.name)
 
-  // The ru collation puts Cyrillic before Latin and treats ё as е.
-  it('puts folders first and orders names naturally, Russian included', () => {
-    expect(names('name')).toEqual(['apps', 'Docs', 'Арбуз', 'ёж', 'b2.txt', 'b10.txt'])
+  // As Explorer on Russian Windows: Latin before Cyrillic, ё next to е.
+  it('puts folders first and orders names naturally, Latin before Cyrillic', () => {
+    expect(names('name')).toEqual(['apps', 'Docs', 'b2.txt', 'b10.txt', 'Арбуз', 'ёж'])
+  })
+
+  it('orders Cyrillic names alphabetically with ё next to е', () => {
+    const ru = ['яма', 'ёлка', 'Жук', 'Елена', 'еда', 'Документы', 'empty', 'Ёж', 'file10', 'file2'].map((n) => entry(n))
+    expect(ru.sort((a, b) => compareEntries(a, b, { key: 'name', desc: false })).map((e) => e.name)).toEqual([
+      'empty',
+      'file2',
+      'file10',
+      'Документы',
+      'еда',
+      'Ёж',
+      'Елена',
+      'ёлка',
+      'Жук',
+      'яма',
+    ])
   })
 
   it('keeps folders first when sorted descending or by another column', () => {
-    expect(names('name', true)).toEqual(['Docs', 'apps', 'b10.txt', 'b2.txt', 'ёж', 'Арбуз'])
+    expect(names('name', true)).toEqual(['Docs', 'apps', 'ёж', 'Арбуз', 'b10.txt', 'b2.txt'])
     expect(names('size')).toEqual(['apps', 'Docs', 'Арбуз', 'ёж', 'b10.txt', 'b2.txt'])
     expect(names('mtime', true).slice(0, 2)).toEqual(['apps', 'Docs'])
   })
@@ -103,18 +119,38 @@ describe('job texts', () => {
     done_files: 1,
     failed: 0,
     renamed: 0,
+    skipped: 0,
     current: '',
     speed_bps: 3.2 * 1024 * 1024,
     dest: '',
     retry_in_s: 0,
     retryAt: 0,
+    finishedAt: 0,
     ...over,
   })
 
   it('summarises the queue', () => {
     expect(queueSummary([job({})], 0)).toBe('Передаётся 2 из 5 · 12,3 МБ из 40 МБ · 3,2 МБ/с')
-    expect(queueSummary([job({ state: 'done' })], 0)).toBe('Передачи завершены')
-    expect(queueSummary([job({ state: 'failed' })], 0)).toBe('Передачи завершены, ошибок: 1')
+    // With everything finished there is no summary: the rows tell how each job ended.
+    expect(queueSummary([job({ state: 'done' })], 0)).toBe('')
+    expect(queueSummary([job({ state: 'failed' }), job({ id: 'k', state: 'cancelled' })], 0)).toBe('')
+  })
+
+  it('orders active jobs first, then finished ones newest first', () => {
+    const jobs = [
+      job({ id: 'a', state: 'done', finishedAt: 100 }),
+      job({ id: 'b', state: 'queued' }),
+      job({ id: 'c', state: 'failed', finishedAt: 300 }),
+      job({ id: 'd', state: 'running' }),
+      job({ id: 'e', state: 'done' }), // finished before the view listened
+      job({ id: 'f', state: 'waiting' }),
+      job({ id: 'g', state: 'cancelled', finishedAt: 200 }),
+    ]
+    expect(orderJobs(jobs).map((j) => j.id)).toEqual(['d', 'f', 'b', 'c', 'g', 'a', 'e'])
+  })
+
+  it('shows a waiting job that reconnects now', () => {
+    expect(jobStatus(job({ state: 'waiting', retry_in_s: 0 }), 0)).toBe('Переподключение…')
   })
 
   it('counts a waiting job down', () => {
@@ -124,10 +160,13 @@ describe('job texts', () => {
     expect(queueSummary([w], 7_100)).toBe('Связь прервана, повтор через 3 с')
   })
 
-  it('reports errors and renames in the result', () => {
-    expect(jobStatus(job({ state: 'done', failed: 2, renamed: 1 }), 0)).toBe('Готово, с ошибками: 2, переименовано: 1')
-    expect(jobStatus(job({ state: 'done' }), 0)).toBe('Готово')
-    expect(jobStatus(job({ state: 'failed', message: 'нет прав' }), 0)).toBe('Ошибка: нет прав')
+  it('reports the size, errors, skipped and renamed files in the result', () => {
+    expect(jobStatus(job({ state: 'done', failed: 2, renamed: 1 }), 0)).toBe('40 МБ · ошибок: 2 · переименовано: 1')
+    expect(jobResult(job({ state: 'done', skipped: 1 }))).toBe('40 МБ · пропущено: 1')
+    expect(jobResult(job({ state: 'done', total_bytes: 0 }))).toBe('Готово')
+    expect(jobResult(job({ kind: 'delete', state: 'done', done_files: 4 }))).toBe('Удалено: 4')
+    expect(jobStatus(job({ state: 'failed', message: 'нет прав' }), 0)).toBe('нет прав')
+    expect(jobStatus(job({ state: 'cancelled' }), 0)).toBe('Отменено')
     expect(jobStatus(job({ state: 'queued' }), 0)).toBe('В очереди')
   })
 })

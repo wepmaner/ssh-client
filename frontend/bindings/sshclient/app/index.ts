@@ -7,6 +7,7 @@ export {
 };
 
 export {
+    FilesConflictDTO,
     FilesEntryDTO,
     FilesJobDTO,
     FilesListDTO,

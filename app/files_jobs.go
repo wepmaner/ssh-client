@@ -66,6 +66,7 @@ type filesJob struct {
 	sources []string
 	dest    string
 	replace bool
+	now     chan struct{} // FilesJobRetry on a waiting job: the pause ends at once
 
 	// Touched by the runner goroutine only.
 	sc       *sftp.Client
@@ -309,6 +310,9 @@ func doneMessage(d FilesJobDTO) string {
 	if d.Failed > 0 {
 		msg = fmt.Sprintf("Готово, с ошибками: %d", d.Failed)
 	}
+	if d.Skipped > 0 {
+		msg += fmt.Sprintf(" · пропущено: %d", d.Skipped)
+	}
 	if d.Renamed > 0 {
 		msg += fmt.Sprintf(" · переименовано: %d", d.Renamed)
 	}
@@ -438,8 +442,12 @@ func (j *filesJob) conn(ctx context.Context) (*sftp.Client, error) {
 	}
 }
 
-// pause waits d in the waiting state, counting down the seconds.
+// pause waits d in the waiting state, counting down the seconds; FilesJobRetry ends it at once.
 func (j *filesJob) pause(ctx context.Context, d time.Duration) error {
+	select { // a request from before this pause is for an attempt that has already run
+	case <-j.now:
+	default:
+	}
 	end := time.Now().Add(d)
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
@@ -454,13 +462,15 @@ func (j *filesJob) pause(ctx context.Context, d time.Duration) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-timer.C:
-			j.update(true, func(dto *FilesJobDTO) {
-				dto.RetryInS, dto.Message = 0, "Переподключение…"
-			})
-			return nil
 		case <-tick.C:
+			continue
+		case <-timer.C:
+		case <-j.now:
 		}
+		j.update(true, func(dto *FilesJobDTO) {
+			dto.RetryInS, dto.Message = 0, "Переподключение…"
+		})
+		return nil
 	}
 }
 
@@ -561,8 +571,10 @@ func (j *filesJob) upload(ctx context.Context) error {
 		}
 		j.startFile(it.Rel)
 		part := sshclient.PartName(target, j.id)
+		skipped := false
 		ierr, ferr := j.withConn(ctx, func(sc *sftp.Client) error {
-			_, err := sshclient.UploadFile(ctx, sc, it.Src, target, j.copyOpts(target))
+			res, err := sshclient.UploadFile(ctx, sc, it.Src, target, j.copyOpts(target))
+			skipped = res == sshclient.Skipped
 			return err
 		})
 		if ferr != nil {
@@ -576,6 +588,9 @@ func (j *filesJob) upload(ctx context.Context) error {
 		}
 		j.dropPart(part)
 		j.finished[target] = true
+		if skipped {
+			j.update(false, func(d *FilesJobDTO) { d.Skipped++ })
+		}
 		j.fileDone(it.Size)
 	}
 	return nil
@@ -643,8 +658,10 @@ func (j *filesJob) download(ctx context.Context) error {
 		}
 		j.startFile(it.Rel)
 		part := sshclient.PartName(target, j.id)
+		skipped := false
 		ierr, ferr := j.withConn(ctx, func(sc *sftp.Client) error {
-			_, err := sshclient.DownloadFile(ctx, sc, it.Src, target, j.copyOpts(target))
+			res, err := sshclient.DownloadFile(ctx, sc, it.Src, target, j.copyOpts(target))
+			skipped = res == sshclient.Skipped
 			return err
 		})
 		if ferr != nil {
@@ -659,6 +676,9 @@ func (j *filesJob) download(ctx context.Context) error {
 		}
 		j.dropPart(part)
 		j.finished[target] = true
+		if skipped {
+			j.update(false, func(d *FilesJobDTO) { d.Skipped++ })
+		}
 		j.fileDone(it.Size)
 	}
 	return nil
@@ -758,7 +778,7 @@ func (t *filesTab) wake() {
 
 // addJob queues a new job and returns its id.
 func (t *filesTab) addJob(kind string, sources []string, dest string, replace bool) (string, error) {
-	j := &filesJob{tab: t, id: newJobID(), kind: kind, sources: sources, dest: dest, replace: replace}
+	j := &filesJob{tab: t, id: newJobID(), kind: kind, sources: sources, dest: dest, replace: replace, now: make(chan struct{}, 1)}
 	j.dto = FilesJobDTO{ID: j.id, Kind: kind, Title: jobTitle(kind, sources), State: jobQueued, Dest: jobDest(kind, sources, dest)}
 	t.mu.Lock()
 	if t.closing {
@@ -783,7 +803,7 @@ func (t *filesTab) job(id string) (*filesJob, error) {
 	return nil, errFilesJobNotFound
 }
 
-// retryJob queues a failed, cancelled or partly failed job again; it resumes its kept parts and does
+// retryJob reconnects a waiting job at once, or queues a failed, cancelled or partly failed job again; it resumes its kept parts and does
 // not copy again what it has finished.
 func (t *filesTab) retryJob(id string) error {
 	j, err := t.job(id)
@@ -792,6 +812,14 @@ func (t *filesTab) retryJob(id string) error {
 	}
 	j.mu.Lock()
 	d := j.dto
+	if d.State == jobWaiting { // «Повторить сейчас»: the pause ends and the job reconnects at once
+		j.mu.Unlock()
+		select {
+		case j.now <- struct{}{}:
+		default:
+		}
+		return nil
+	}
 	if d.State != jobFailed && d.State != jobCancelled && (d.State != jobDone || d.Failed == 0) {
 		j.mu.Unlock()
 		return errFilesJobActive

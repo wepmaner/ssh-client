@@ -241,12 +241,13 @@ describe('FilesTab transfers', () => {
     const t = await open()
     t.sel = { selected: ['a.txt', 'docs'], anchor: 'a.txt', cursor: 'docs' }
     api.FilesPickDownloadDir.mockResolvedValue('C:\\Загрузки')
-    api.FilesConflicts.mockResolvedValue(['a.txt'])
+    api.FilesConflicts.mockResolvedValue([{ name: 'a.txt', merge: false }])
     api.FilesDownload.mockResolvedValue('j2')
 
     let p = t.download()
     await flush()
     expect(t.conflict?.names).toEqual(['a.txt'])
+    expect(t.conflict?.merge).toBe(false)
     t.conflict!.resolve('replace')
     expect(await p).toBe('j2')
     expect(api.FilesConflicts).toHaveBeenCalledWith('t1', 'download', ['/home/u/a.txt', '/home/u/docs'], 'C:\\Загрузки')

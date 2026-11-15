@@ -27,6 +27,12 @@ function rules(src: string): { selector: string; body: string }[] {
 
 const field = /(^|[\s,>+~(])(input|select|textarea)\b|\.(input|select)\b/
 const menuFile = '../lib/ui/Menu.svelte'
+// Ruling 2026-11-15: the file list is one composite control (a listbox, as in Explorer). Its keyboard
+// focus is a 1px inset outline in --focus on the current row; the list itself draws no ring round
+// all the rows, which looked heavy after a click and a key.
+const listFile = '../lib/files/FileList.svelte'
+const listContainer = /^\.list:focus-visible$/
+const listRow = /\.row\b/
 
 describe('native motion and focus', () => {
   it('has the focus ring colour and a global keyboard focus ring', () => {
@@ -56,6 +62,7 @@ describe('native motion and focus', () => {
           expect(r.body, file).toMatch(/background:/)
           continue
         }
+        if (file === listFile && listContainer.test(r.selector)) continue
         expect(r.selector, `${file}: ${r.selector}`).toMatch(field)
       }
       if (removed.length > 0 && file !== menuFile) {
@@ -66,10 +73,18 @@ describe('native motion and focus', () => {
     expect(block(input, /\.input:focus/)).toMatch(/border-color:\s*var\(--accent\)/)
   })
 
+  it('shows the focus of the file list on its current row', () => {
+    const list = rules(components[listFile])
+    const row = list.filter((r) => /:focus-visible/.test(r.selector) && listRow.test(r.selector))
+    expect(row.map((r) => r.selector)).toEqual(expect.arrayContaining(['.row:focus-visible']))
+    for (const r of row) expect(r.body, r.selector).toMatch(/outline:\s*1px solid var\(--focus\)/)
+  })
+
   it('keeps the standard ring on every other focus-visible rule', () => {
     for (const [file, src] of Object.entries(components)) {
       if (file === menuFile) continue
       for (const r of rules(src).filter((r) => r.selector.includes(':focus-visible'))) {
+        if (file === listFile && (listContainer.test(r.selector) || listRow.test(r.selector))) continue
         const outline = /outline:\s*([^;]+);/.exec(r.body)?.[1]
         if (outline !== undefined) expect(`${file}: ${outline}`).toBe(`${file}: 2px solid var(--focus)`)
       }

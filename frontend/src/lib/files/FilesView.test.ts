@@ -234,16 +234,25 @@ describe('FilesView', () => {
   it('asks about clashes before an upload and passes the answer', async () => {
     await setup()
     api.FilesPickUpload.mockResolvedValue(['C:\\a.txt', 'C:\\new.txt'])
-    api.FilesConflicts.mockResolvedValue(['a.txt'])
+    api.FilesConflicts.mockResolvedValue([{ name: 'a.txt', merge: false }])
     api.FilesUpload.mockResolvedValue('j1')
     await fireEvent.click(screen.getByRole('button', { name: /Загрузить/ }))
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Файлы…' }))
     await flush()
-    const dialog = screen.getByRole('dialog', { name: 'Такие имена уже есть' })
+    let dialog = screen.getByRole('dialog', { name: 'Такие имена уже есть' })
     expect(dialog.textContent).toContain('В папке уже есть: a.txt')
+    expect(dialog.textContent).not.toContain('сливаются') // no folder among the clashes
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Заменить' }))
     await flush()
     expect(api.FilesUpload).toHaveBeenCalledWith('f1', ['C:\\a.txt', 'C:\\new.txt'], '/home/u', 'replace')
+
+    api.FilesConflicts.mockResolvedValue([{ name: 'a.txt', merge: false }, { name: 'docs', merge: true }])
+    await fireEvent.click(screen.getByRole('button', { name: /Загрузить/ }))
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Файлы…' }))
+    await flush()
+    dialog = screen.getByRole('dialog', { name: 'Такие имена уже есть' })
+    expect(dialog.textContent).toContain('Папки с тем же именем сливаются')
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Отмена' }))
   })
 
   it('shows the queue with the job state and the tab percent', async () => {
@@ -254,12 +263,47 @@ describe('FilesView', () => {
     expect(queue.textContent).toContain('Передаётся 1 из 1')
     expect(filesTab(tab.id)?.progress).toBe(45)
     api.FilesJobCancel.mockResolvedValue(undefined)
-    await fireEvent.click(within(queue).getByRole('button', { name: 'Отмена' }))
+    expect(within(queue).queryByRole('button', { name: 'Убрать из списка' })).toBeNull()
+    await fireEvent.click(within(queue).getByRole('button', { name: 'Отменить' }))
     expect(api.FilesJobCancel).toHaveBeenCalledWith('f1', 'j1')
-    handlers.get('files:job:f1')!({ id: 'j1', kind: 'download', title: 'a.txt', state: 'done', message: '', detail: '', total_bytes: 100, done_bytes: 100, total_files: 1, done_files: 1, failed: 0, renamed: 0, current: '', speed_bps: 0, dest: 'C:\\Загрузки', retry_in_s: 0 })
+    handlers.get('files:job:f1')!({ id: 'j1', kind: 'download', title: 'a.txt', state: 'done', message: '', detail: '', total_bytes: 100, done_bytes: 100, total_files: 1, done_files: 1, failed: 0, renamed: 0, skipped: 1, current: '', speed_bps: 0, dest: 'C:\\Загрузки', retry_in_s: 0 })
     await tick()
+    // Finished: no summary text, no bar, the result on the row and its own × that removes it.
+    expect(queue.textContent).not.toContain('завершены')
+    expect(queue.textContent).toContain('Передачи')
+    expect(queue.textContent).toContain('100 байт · пропущено: 1')
+    expect(within(queue).queryByRole('progressbar')).toBeNull()
+    expect(within(queue).queryByRole('button', { name: 'Отменить' })).toBeNull()
     await fireEvent.click(within(queue).getByRole('button', { name: 'Показать в папке' }))
     expect(api.FilesShowLocal).toHaveBeenCalledWith('C:\\Загрузки')
+    api.FilesJobRemove.mockResolvedValue(undefined)
+    await fireEvent.click(within(queue).getByRole('button', { name: 'Убрать из списка' }))
+    expect(api.FilesJobRemove).toHaveBeenCalledWith('f1', 'j1')
+  })
+
+  it('offers «Повторить сейчас» on a waiting job and lists active jobs first', async () => {
+    await setup()
+    const base = { kind: 'upload', message: '', detail: '', total_bytes: 10, done_bytes: 1, total_files: 1, done_files: 0, failed: 0, renamed: 0, skipped: 0, current: '', speed_bps: 0, dest: '', retry_in_s: 0 }
+    handlers.get('files:job:f1')!({ ...base, id: 'old', title: 'old.txt', state: 'done', done_bytes: 10, done_files: 1 })
+    handlers.get('files:job:f1')!({ ...base, id: 'w', title: 'w.txt', state: 'waiting', retry_in_s: 30 })
+    await tick()
+    const queue = screen.getByRole('region', { name: 'Передачи' })
+    const titles = within(queue).getAllByRole('listitem').map((li) => li.querySelector('.title')?.textContent?.trim())
+    expect(titles).toEqual(['w.txt', 'old.txt'])
+    api.FilesJobRetry.mockResolvedValue(undefined)
+    await fireEvent.click(within(queue).getByRole('button', { name: 'Повторить сейчас' }))
+    expect(api.FilesJobRetry).toHaveBeenCalledWith('f1', 'w')
+  })
+
+  it('goes up with Backspace when the folder failed to open', async () => {
+    const tab = await setup()
+    const m = filesTab(tab.id)!
+    m.listError = 'Нет доступа'
+    await tick()
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    const up = vi.spyOn(m, 'up').mockResolvedValue(true)
+    await fireEvent.keyDown(window, { key: 'Backspace' })
+    expect(up).toHaveBeenCalled()
   })
 
   it('asks before closing a tab with a running transfer', async () => {

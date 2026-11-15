@@ -1,12 +1,14 @@
 <script lang="ts">
   import { FilesShowLocal, errorText } from '../api'
   import { toast } from '../stores.svelte'
-  import Button from '../ui/Button.svelte'
   import { isActive, isFinished, type FilesTab, type Job } from './files.svelte'
-  import Icon from './Icon.svelte'
-  import { jobFraction, jobStatus, queueSummary } from './jobs'
+  import Icon, { type IconName } from './Icon.svelte'
+  import { jobFraction, jobStatus, orderJobs, queueSummary } from './jobs'
 
-  /** The queue at the bottom of a file tab: a summary row that opens the list of jobs. */
+  /**
+   * The queue at the bottom of a file tab. Its head shows the summary while something runs and only
+   * a muted title once everything has finished; the rows run first, finished ones follow, newest first.
+   */
   let { model }: { model: FilesTab } = $props()
 
   let expanded = $state(true)
@@ -22,11 +24,20 @@
   })
 
   const summary = $derived(queueSummary(model.jobs, now))
+  const rows = $derived(orderJobs(model.jobs))
   const finished = $derived(model.jobs.filter(isFinished).length)
-  const running = $derived(model.jobs.some(isActive))
 
-  const icon = (j: Job) => (j.kind === 'upload' ? 'upload' : j.kind === 'download' ? 'download' : 'trash')
   const direction = (j: Job) => (j.kind === 'upload' ? 'Загрузка на сервер' : j.kind === 'download' ? 'Скачивание' : 'Удаление')
+
+  function stateIcon(j: Job): { name: IconName; label: string } {
+    if (isActive(j)) return { name: j.kind === 'upload' ? 'upload' : j.kind === 'download' ? 'download' : 'trash', label: direction(j) }
+    if (j.state === 'failed') return { name: 'error', label: 'Ошибка' }
+    if (j.state === 'cancelled') return { name: 'cancelled', label: 'Отменено' }
+    if (j.failed > 0) return { name: 'warning', label: 'Готово, с ошибками' }
+    return { name: 'check', label: 'Готово' }
+  }
+
+  const retryable = (j: Job) => j.state === 'failed' || j.state === 'cancelled' || (j.state === 'done' && j.failed > 0)
 
   async function reveal(j: Job): Promise<void> {
     try {
@@ -42,57 +53,70 @@
 </script>
 
 <section class="transfers" aria-label="Передачи">
-  <div class="summary">
+  <div class="head">
     <button type="button" class="toggle" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>
       <span class="chev" class:open={expanded}><Icon name="chevron" size={12} /></span>
-      <span class="summary-text" class:live={running}>{summary}</span>
+      {#if summary}
+        <span class="summary">{summary}</span>
+      {:else}
+        <span class="caption">Передачи</span>
+      {/if}
     </button>
     {#if finished > 0}
-      <Button variant="ghost" onclick={() => model.clearFinished()} style="height:26px;padding:0 10px;font-size:12px">Очистить завершённые</Button>
+      <button type="button" class="text-btn" title="Убрать завершённые из списка" onclick={() => model.clearFinished()}>Очистить</button>
     {/if}
   </div>
   {#if expanded}
     <ul class="jobs">
-      {#each model.jobs as j (j.id)}
-        <li class="job {j.state}">
-          <span class="dir" title={direction(j)}><Icon name={icon(j)} size={14} /></span>
-          <div class="main">
-            <div class="line">
-              <span class="title" title={j.title}>{j.title}</span>
-              <span class="status">{jobStatus(j, now)}</span>
-            </div>
-            {#if j.kind !== 'delete' || j.state === 'running'}
-              <div
-                class="bar"
-                role="progressbar"
-                aria-label={j.title}
-                aria-valuemin="0"
-                aria-valuemax="100"
-                aria-valuenow={Math.floor(jobFraction(j) * 100)}
-              >
-                <span style:width="{jobFraction(j) * 100}%"></span>
-              </div>
+      {#each rows as j (j.id)}
+        {@const ico = stateIcon(j)}
+        {@const active = isActive(j)}
+        <li class="job {j.state}" class:finished={!active} class:partial={j.state === 'done' && j.failed > 0}>
+          <span class="ico" title={ico.label}><Icon name={ico.name} size={14} /></span>
+          <span class="title" title={j.title}>
+            {j.title}{#if j.state === 'running' && j.current}<span class="current"> · {j.current}</span>{/if}
+          </span>
+          <span class="status">{jobStatus(j, now)}</span>
+          <span class="actions">
+            {#if j.state === 'waiting'}
+              <button type="button" class="text-btn" onclick={() => model.retryJob(j.id)}>Повторить сейчас</button>
             {/if}
-            {#if j.state === 'running' && j.current}<span class="current" title={j.current}>{j.current}</span>{/if}
-            {#if details.includes(j.id) && j.detail}<pre>{j.detail}</pre>{/if}
-          </div>
-          <div class="actions">
-            {#if j.detail && isFinished(j)}
-              <button type="button" class="act" onclick={() => toggleDetail(j.id)}>{details.includes(j.id) ? 'Скрыть' : 'Подробности'}</button>
+            {#if !active && j.detail}
+              <button type="button" class="text-btn" aria-expanded={details.includes(j.id)} onclick={() => toggleDetail(j.id)}>
+                {details.includes(j.id) ? 'Скрыть' : 'Подробности'}
+              </button>
             {/if}
-            {#if isActive(j)}
-              <button type="button" class="act" onclick={() => model.cancelJob(j.id)}>Отмена</button>
-            {/if}
-            {#if j.state === 'failed' || j.state === 'cancelled'}
-              <button type="button" class="act" onclick={() => model.retryJob(j.id)}>Повторить</button>
+            {#if retryable(j)}
+              <button type="button" class="text-btn" onclick={() => model.retryJob(j.id)}>Повторить</button>
             {/if}
             {#if j.kind === 'download' && j.state === 'done' && j.dest}
-              <button type="button" class="act" onclick={() => reveal(j)}>Показать в папке</button>
+              <button type="button" class="icon-btn" aria-label="Показать в папке" title="Показать в папке" onclick={() => reveal(j)}>
+                <Icon name="folder" size={14} />
+              </button>
             {/if}
-            {#if isFinished(j)}
-              <button type="button" class="act" onclick={() => model.removeJob(j.id)}>Убрать</button>
+            {#if active}
+              <button type="button" class="icon-btn" aria-label="Отменить" title="Отменить" onclick={() => model.cancelJob(j.id)}>
+                <Icon name="close" size={14} />
+              </button>
+            {:else}
+              <button type="button" class="icon-btn remove" aria-label="Убрать из списка" title="Убрать из списка" onclick={() => model.removeJob(j.id)}>
+                <Icon name="close" size={14} />
+              </button>
             {/if}
-          </div>
+          </span>
+          {#if active && (j.kind !== 'delete' || j.state === 'running')}
+            <div
+              class="bar"
+              role="progressbar"
+              aria-label={j.title}
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow={Math.floor(jobFraction(j) * 100)}
+            >
+              <span style:width="{jobFraction(j) * 100}%"></span>
+            </div>
+          {/if}
+          {#if details.includes(j.id) && j.detail}<pre>{j.detail}</pre>{/if}
         </li>
       {/each}
     </ul>
@@ -105,12 +129,12 @@
     border-top: 1px solid var(--border);
     background: var(--sidebar);
   }
-  .summary {
+  .head {
     display: flex;
     align-items: center;
-    gap: 8px;
-    height: 34px;
-    padding: 0 10px 0 6px;
+    gap: 4px;
+    height: 32px;
+    padding: 0 8px 0 4px;
   }
   .toggle {
     display: flex;
@@ -118,14 +142,14 @@
     align-items: center;
     gap: 6px;
     min-width: 0;
-    height: 26px;
-    padding: 0 8px;
+    height: 24px;
+    padding: 0 6px;
     border: 0;
     border-radius: var(--radius-control);
     background: transparent;
     color: var(--text);
     font: inherit;
-    font-size: 12.5px;
+    font-size: 12px;
     text-align: left;
     cursor: default;
     transition: background-color 80ms;
@@ -145,124 +169,84 @@
   .chev.open {
     transform: none;
   }
-  .summary-text {
+  .summary {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: var(--muted);
     font-variant-numeric: tabular-nums;
   }
-  .summary-text.live {
-    color: var(--text);
+  .caption {
+    color: var(--muted);
   }
   .jobs {
-    max-height: 196px;
+    max-height: 168px;
     margin: 0;
-    padding: 0 8px 8px;
+    padding: 0 8px 6px;
     overflow: auto;
     list-style: none;
   }
   .job {
+    position: relative;
     display: grid;
-    grid-template-columns: 22px 1fr auto;
-    align-items: start;
-    gap: 8px;
-    padding: 7px 8px;
+    grid-template-columns: 16px minmax(0, 1fr) auto auto;
+    align-items: center;
+    column-gap: 10px;
+    min-height: 32px;
+    padding: 0 4px 0 8px;
     border-radius: var(--radius-control);
+    font-size: 12.5px;
   }
   .job:hover {
     background: #1c1f24;
   }
-  .dir {
+  .ico {
     display: grid;
     place-items: center;
-    height: 18px;
     color: var(--muted);
   }
-  .main {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    min-width: 0;
+  .done .ico {
+    color: var(--ok);
   }
-  .line {
-    display: flex;
-    align-items: baseline;
-    gap: 12px;
-    min-width: 0;
-    font-size: 12.5px;
+  .partial .ico,
+  .waiting .ico {
+    color: #e3b341;
+  }
+  .failed .ico {
+    color: var(--error);
   }
   .title {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .finished .title {
+    color: #c9ced6;
+  }
+  .current {
+    color: #7d8794;
+  }
   .status {
-    flex: none;
-    margin-left: auto;
     color: var(--muted);
     font-size: 12px;
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
   .failed .status {
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
     color: var(--error);
   }
   .waiting .status {
     color: #e3b341;
   }
-  .done .status {
-    color: var(--ok);
-  }
-  .bar {
-    height: 3px;
-    overflow: hidden;
-    border-radius: 2px;
-    background: #2a2f37;
-  }
-  .bar span {
-    display: block;
-    height: 100%;
-    background: var(--accent);
-  }
-  .waiting .bar span,
-  .cancelled .bar span {
-    background: #6f7a87;
-  }
-  .failed .bar span {
-    background: var(--error);
-  }
-  .done .bar span {
-    background: var(--ok);
-  }
-  .current {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: #7d8794;
-    font-family: var(--font-mono);
-    font-size: 11px;
-  }
-  pre {
-    max-height: 120px;
-    margin: 2px 0 0;
-    padding: 8px 10px;
-    overflow: auto;
-    background: var(--terminal);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-control);
-    color: var(--muted);
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    white-space: pre-wrap;
-    word-break: break-word;
-    user-select: text;
-  }
   .actions {
     display: flex;
+    align-items: center;
     gap: 2px;
   }
-  .act {
-    height: 22px;
+  .text-btn {
+    height: 24px;
     padding: 0 8px;
     border: 0;
     border-radius: var(--radius-control);
@@ -274,11 +258,71 @@
     cursor: default;
     transition: background-color 80ms;
   }
-  .act:hover {
+  .icon-btn {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-control);
+    background: transparent;
+    color: var(--muted);
+    cursor: default;
+    transition: background-color 80ms;
+  }
+  .text-btn:hover,
+  .icon-btn:hover {
     background: #262b33;
   }
-  .act:focus-visible {
+  .icon-btn:hover {
+    color: var(--text);
+  }
+  .text-btn:focus-visible,
+  .icon-btn:focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: -2px;
+  }
+  /* A finished row's × appears on hover and keyboard focus; an active row's × (cancel) always shows. */
+  .remove {
+    opacity: 0;
+  }
+  .job:hover .remove,
+  .job:focus-within .remove {
+    opacity: 1;
+  }
+  .bar {
+    position: absolute;
+    right: 8px;
+    bottom: 3px;
+    left: 34px;
+    height: 2px;
+    overflow: hidden;
+    border-radius: 1px;
+    background: #2a2f37;
+  }
+  .bar span {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+  }
+  .waiting .bar span {
+    background: #6f7a87;
+  }
+  pre {
+    grid-column: 2 / -1;
+    max-height: 120px;
+    margin: 0 0 6px;
+    padding: 6px 8px;
+    overflow: auto;
+    background: var(--terminal);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    user-select: text;
   }
 </style>

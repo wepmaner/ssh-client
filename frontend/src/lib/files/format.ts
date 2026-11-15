@@ -108,7 +108,9 @@ export const isHidden = (name: string) => name.startsWith('.')
 /** A link to a folder opens as a folder; Go reports dir for its target. */
 export const opensAsFolder = (e: Entry) => e.dir && !e.broken
 
-const collator = new Intl.Collator('ru', { numeric: true, sensitivity: 'base' })
+// As Explorer on Russian Windows: Latin before Cyrillic (the ru collation puts Cyrillic first),
+// numbers in natural order, case ignored, ё next to е.
+const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' })
 
 /** Folders always first, then by the column; ties fall back to the natural name order. */
 export function compareEntries(a: Entry, b: Entry, sort: Sort): number {

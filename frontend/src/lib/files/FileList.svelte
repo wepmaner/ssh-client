@@ -50,10 +50,10 @@
   const isFolder = (e: Entry) => e.dir && !e.broken
 
   /** Focus on the list: the cursor row, or the list itself when it has none. */
-  export function focus(): void {
+  export function focus(options?: FocusOptions): void {
     const row = model.sel.cursor ? document.getElementById(rowId(model.sel.cursor)) : null
-    if (row) row.focus()
-    else listEl?.focus()
+    if (row) row.focus(options)
+    else listEl?.focus(options)
   }
 
   async function focusCursor(): Promise<void> {
@@ -66,6 +66,9 @@
   function onrowclick(e: MouseEvent, entry: Entry): void {
     if (model.renaming === entry.name) return
     model.sel = clickSelect(model.sel, model.order, entry.name, { ctrl: e.ctrlKey, shift: e.shiftKey })
+    // A draggable row does not take the focus on its own: the keys that follow go to the row, not the list.
+    const row = e.currentTarget as HTMLElement
+    row.focus({ preventScroll: true })
   }
 
   /** Space selects the row, Ctrl+Space toggles it, as in Explorer. */
@@ -78,7 +81,7 @@
   function onblankclick(e: MouseEvent): void {
     if ((e.target as HTMLElement).closest('[role="option"], [role="alert"]')) return
     if (!e.ctrlKey && !e.shiftKey) model.sel = { ...model.sel, selected: [] }
-    listEl?.focus()
+    focus({ preventScroll: true })
   }
 
   // ---- context menus ----
@@ -494,10 +497,15 @@
     min-height: 0;
     padding: 4px 8px 8px;
     overflow: auto;
-    outline-offset: -2px;
   }
+  /* Keyboard focus is drawn on the current row, as in Explorer, never as a ring round the list. With
+     the list itself focused (no current row yet), the first row, where the arrows start, shows it. */
   .list:focus-visible {
-    outline: 2px solid var(--focus);
+    outline: none;
+  }
+  .list:focus-visible > .row:first-child {
+    outline: 1px solid var(--focus);
+    outline-offset: -1px;
   }
   .list:global(.file-drop-target-active) {
     background: rgba(79, 143, 247, 0.06);
@@ -527,8 +535,8 @@
     background: #2b3850;
   }
   .row:focus-visible {
-    outline: 2px solid var(--focus);
-    outline-offset: -2px;
+    outline: 1px solid var(--focus);
+    outline-offset: -1px;
   }
   .row.over,
   .row:global(.file-drop-target-active) {

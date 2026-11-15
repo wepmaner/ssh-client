@@ -18,11 +18,44 @@ export function jobFraction(j: Job): number {
   return 0
 }
 
-function tail(j: Job): string {
+function tail(j: Job): string[] {
   const parts: string[] = []
-  if (j.failed > 0) parts.push(`с ошибками: ${j.failed}`)
+  if (j.failed > 0) parts.push(`ошибок: ${j.failed}`)
+  if (j.skipped > 0) parts.push(`пропущено: ${j.skipped}`)
   if (j.renamed > 0) parts.push(`переименовано: ${j.renamed}`)
-  return parts.join(', ')
+  return parts
+}
+
+const activeRank = (j: Job) => (j.state === 'queued' ? 1 : 0)
+
+/**
+ * The rows of the queue: running and waiting jobs, then queued ones in queue order, then the finished
+ * ones newest first (those finished before the view listened by queue order, newest first too).
+ */
+export function orderJobs(jobs: Job[]): Job[] {
+  const at = new Map(jobs.map((j, i) => [j.id, i]))
+  const idx = (j: Job) => at.get(j.id) ?? 0
+  const live = jobs.filter(active).sort((a, b) => activeRank(a) - activeRank(b) || idx(a) - idx(b))
+  const done = jobs.filter((j) => !active(j)).sort((a, b) => b.finishedAt - a.finishedAt || idx(b) - idx(a))
+  return [...live, ...done]
+}
+
+/** The short result of a finished job: «572 МБ · пропущено: 1», «Отменено», the error. */
+export function jobResult(j: Job): string {
+  switch (j.state) {
+    case 'done': {
+      let head = ''
+      if (j.kind === 'delete') head = j.done_files > 0 ? `Удалено: ${j.done_files}` : 'Удалено'
+      else if (j.total_bytes > 0) head = formatSize(j.total_bytes)
+      else head = 'Готово'
+      return [head, ...tail(j)].join(' · ')
+    }
+    case 'failed':
+      return j.message || 'Ошибка'
+    case 'cancelled':
+      return 'Отменено'
+  }
+  return ''
 }
 
 /** The state line of one job. */
@@ -30,38 +63,33 @@ export function jobStatus(j: Job, now: number): string {
   switch (j.state) {
     case 'queued':
       return 'В очереди'
-    case 'waiting':
-      return `Связь прервана, повтор через ${retryLeft(j, now)} с`
+    case 'waiting': {
+      const left = retryLeft(j, now)
+      return left > 0 ? `Связь прервана, повтор через ${left} с` : 'Переподключение…'
+    }
     case 'running': {
       if (j.kind === 'delete') return j.total_files > 0 ? `Удалено ${j.done_files} из ${j.total_files}` : 'Удаление…'
       if (j.total_bytes <= 0 && j.total_files <= 0) return 'Подготовка…'
       const speed = formatSpeed(j.speed_bps)
       return [`${formatSize(j.done_bytes)} из ${formatSize(j.total_bytes)}`, speed].filter(Boolean).join(' · ')
     }
-    case 'done': {
-      const t = tail(j)
-      return t ? `Готово, ${t}` : 'Готово'
-    }
+    case 'done':
     case 'failed':
-      return j.message ? `Ошибка: ${j.message}` : 'Ошибка'
     case 'cancelled':
-      return 'Отменено'
+      return jobResult(j)
   }
   return ''
 }
 
-/** The summary row: «Передаётся 2 из 5 · 12,3 МБ из 40 МБ · 3,2 МБ/с». */
+/**
+ * The summary row while something runs: «Передаётся 2 из 5 · 12,3 МБ из 40 МБ · 3,2 МБ/с». With
+ * everything finished there is none: the rows tell how each ended.
+ */
 export function queueSummary(jobs: Job[], now: number): string {
   const run = jobs.filter(active)
-  if (run.length === 0) {
-    const failed = jobs.filter((j) => j.state === 'failed').length
-    const withErrors = jobs.filter((j) => j.state === 'done' && j.failed > 0).length
-    if (failed > 0) return `Передачи завершены, ошибок: ${failed}`
-    if (withErrors > 0) return 'Передачи завершены, с ошибками'
-    return 'Передачи завершены'
-  }
+  if (run.length === 0) return ''
   const waiting = run.find((j) => j.state === 'waiting')
-  if (waiting) return `Связь прервана, повтор через ${retryLeft(waiting, now)} с`
+  if (waiting) return jobStatus(waiting, now)
   const transfers = run.filter((j) => j.kind !== 'delete')
   if (transfers.length === 0) return 'Удаление…'
   const files = transfers.reduce((s, j) => s + j.total_files, 0)

@@ -16,6 +16,10 @@
     | 'link'
     | 'trash'
     | 'warning'
+    | 'close'
+    | 'check'
+    | 'error'
+    | 'cancelled'
 </script>
 
 <script lang="ts">
@@ -67,5 +71,13 @@
     <path d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9a1 1 0 0 0 1 .9h4.6a1 1 0 0 0 1-.9L12 4" />
   {:else if name === 'warning'}
     <path d="M8 1.8 14.6 13.5H1.4z" /><path d="M8 6.2v3.4M8 11.6h.01" />
+  {:else if name === 'close'}
+    <path d="m4.5 4.5 7 7M11.5 4.5l-7 7" />
+  {:else if name === 'check'}
+    <path d="m3.5 8.5 3 3 6-6.5" />
+  {:else if name === 'error'}
+    <circle cx="8" cy="8" r="6" /><path d="m6 6 4 4M10 6l-4 4" />
+  {:else if name === 'cancelled'}
+    <circle cx="8" cy="8" r="6" /><path d="M5.5 10.5l5-5" />
   {/if}
 </svg>

@@ -28,12 +28,12 @@ export function FilesClose(tabID: string): $CancellablePromise<void> {
 }
 
 /**
- * FilesConflicts returns the names of sources ("upload": local paths, "download": remote paths)
- * already present in dest, by their top-level names as shown to the user.
+ * FilesConflicts returns the sources ("upload": local paths, "download": remote paths) already
+ * present in dest, by their top-level names as shown to the user.
  */
-export function FilesConflicts(tabID: string, direction: string, sources: string[], dest: string): $CancellablePromise<string[]> {
+export function FilesConflicts(tabID: string, direction: string, sources: string[], dest: string): $CancellablePromise<$models.FilesConflictDTO[]> {
     return $Call.ByID(654775921, tabID, direction, sources, dest).then(($result: any) => {
-        return $$createType0($result);
+        return $$createType1($result);
     });
 }
 
@@ -86,7 +86,7 @@ export function FilesJobRetry(tabID: string, jobID: string): $CancellablePromise
  */
 export function FilesJobs(tabID: string): $CancellablePromise<$models.FilesJobDTO[]> {
     return $Call.ByID(172008794, tabID).then(($result: any) => {
-        return $$createType2($result);
+        return $$createType3($result);
     });
 }
 
@@ -95,7 +95,7 @@ export function FilesJobs(tabID: string): $CancellablePromise<$models.FilesJobDT
  */
 export function FilesList(tabID: string, dir: string): $CancellablePromise<$models.FilesListDTO> {
     return $Call.ByID(446550438, tabID, dir).then(($result: any) => {
-        return $$createType3($result);
+        return $$createType4($result);
     });
 }
 
@@ -153,7 +153,7 @@ export function FilesPickDownloadDir(): $CancellablePromise<string> {
  */
 export function FilesPickUpload(folder: boolean): $CancellablePromise<string[]> {
     return $Call.ByID(1941123118, folder).then(($result: any) => {
-        return $$createType0($result);
+        return $$createType5($result);
     });
 }
 
@@ -224,7 +224,7 @@ export function ForwardHostWrite(hostID: string, dataB64: string): $CancellableP
  */
 export function ForwardHostsList(): $CancellablePromise<$models.ForwardHostDTO[]> {
     return $Call.ByID(3929598163).then(($result: any) => {
-        return $$createType5($result);
+        return $$createType7($result);
     });
 }
 
@@ -237,7 +237,7 @@ export function ForwardHostsList(): $CancellablePromise<$models.ForwardHostDTO[]
  */
 export function ForwardSave($in: $models.ForwardDTO): $CancellablePromise<$models.ForwardDTO> {
     return $Call.ByID(3147821477, $in).then(($result: any) => {
-        return $$createType6($result);
+        return $$createType8($result);
     });
 }
 
@@ -279,7 +279,7 @@ export function ForwardStopAll(hostID: string): $CancellablePromise<void> {
  */
 export function ForwardsList(): $CancellablePromise<$models.ForwardDTO[]> {
     return $Call.ByID(3028357325).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType9($result);
     });
 }
 
@@ -288,7 +288,7 @@ export function ForwardsList(): $CancellablePromise<$models.ForwardDTO[]> {
  */
 export function GetSettings(): $CancellablePromise<model$0.Settings> {
     return $Call.ByID(3557174032).then(($result: any) => {
-        return $$createType8($result);
+        return $$createType10($result);
     });
 }
 
@@ -311,7 +311,7 @@ export function GroupRename(id: string, name: string): $CancellablePromise<void>
  */
 export function GroupSave(name: string): $CancellablePromise<$models.GroupDTO> {
     return $Call.ByID(4091719495, name).then(($result: any) => {
-        return $$createType9($result);
+        return $$createType11($result);
     });
 }
 
@@ -320,7 +320,7 @@ export function GroupSave(name: string): $CancellablePromise<$models.GroupDTO> {
  */
 export function GroupsList(): $CancellablePromise<$models.GroupDTO[]> {
     return $Call.ByID(1467687219).then(($result: any) => {
-        return $$createType10($result);
+        return $$createType12($result);
     });
 }
 
@@ -340,7 +340,7 @@ export function HostDelete(id: string): $CancellablePromise<void> {
  */
 export function HostSave($in: $models.HostDTO): $CancellablePromise<$models.HostDTO> {
     return $Call.ByID(4277690896, $in).then(($result: any) => {
-        return $$createType11($result);
+        return $$createType13($result);
     });
 }
 
@@ -356,7 +356,7 @@ export function HostsExport(): $CancellablePromise<void> {
  */
 export function HostsList(): $CancellablePromise<$models.HostDTO[]> {
     return $Call.ByID(1079401910).then(($result: any) => {
-        return $$createType12($result);
+        return $$createType14($result);
     });
 }
 
@@ -365,7 +365,7 @@ export function HostsList(): $CancellablePromise<$models.HostDTO[]> {
  */
 export function ImportPuTTY(): $CancellablePromise<$models.ImportResult> {
     return $Call.ByID(2012174936).then(($result: any) => {
-        return $$createType13($result);
+        return $$createType15($result);
     });
 }
 
@@ -374,7 +374,7 @@ export function ImportPuTTY(): $CancellablePromise<$models.ImportResult> {
  */
 export function ImportSSHConfig(): $CancellablePromise<$models.ImportResult> {
     return $Call.ByID(907787950).then(($result: any) => {
-        return $$createType13($result);
+        return $$createType15($result);
     });
 }
 
@@ -406,7 +406,7 @@ export function KeyExport(id: string, format: string, password: string): $Cancel
  */
 export function KeyGenerate(name: string, kind: string, comment: string, passphrase: string): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(1791015309, name, kind, comment, passphrase).then(($result: any) => {
-        return $$createType14($result);
+        return $$createType16($result);
     });
 }
 
@@ -415,7 +415,7 @@ export function KeyGenerate(name: string, kind: string, comment: string, passphr
  */
 export function KeyImportFile(): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(3439102521).then(($result: any) => {
-        return $$createType14($result);
+        return $$createType16($result);
     });
 }
 
@@ -425,7 +425,7 @@ export function KeyImportFile(): $CancellablePromise<$models.KeyDTO> {
  */
 export function KeyImportFileWithPassphrase(path: string, passphrase: string): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(829767293, path, passphrase).then(($result: any) => {
-        return $$createType14($result);
+        return $$createType16($result);
     });
 }
 
@@ -435,7 +435,7 @@ export function KeyImportFileWithPassphrase(path: string, passphrase: string): $
  */
 export function KeyImportText(text: string, name: string): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(1982037696, text, name).then(($result: any) => {
-        return $$createType14($result);
+        return $$createType16($result);
     });
 }
 
@@ -444,7 +444,7 @@ export function KeyImportText(text: string, name: string): $CancellablePromise<$
  */
 export function KeyImportTextWithPassphrase(text: string, name: string, passphrase: string): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(3955193724, text, name, passphrase).then(($result: any) => {
-        return $$createType14($result);
+        return $$createType16($result);
     });
 }
 
@@ -460,7 +460,7 @@ export function KeyRename(id: string, name: string): $CancellablePromise<void> {
  */
 export function KeysList(): $CancellablePromise<$models.KeyDTO[]> {
     return $Call.ByID(1066303763).then(($result: any) => {
-        return $$createType15($result);
+        return $$createType17($result);
     });
 }
 
@@ -483,7 +483,7 @@ export function MCPJournalClear(): $CancellablePromise<void> {
  */
 export function MCPJournalList(): $CancellablePromise<model$0.MCPRecord[]> {
     return $Call.ByID(1040221956).then(($result: any) => {
-        return $$createType17($result);
+        return $$createType19($result);
     });
 }
 
@@ -532,7 +532,7 @@ export function MCPRotateToken(): $CancellablePromise<void> {
  */
 export function MCPSetEnabled(on: boolean): $CancellablePromise<$models.MCPStatusDTO> {
     return $Call.ByID(1984838108, on).then(($result: any) => {
-        return $$createType18($result);
+        return $$createType20($result);
     });
 }
 
@@ -542,7 +542,7 @@ export function MCPSetEnabled(on: boolean): $CancellablePromise<$models.MCPStatu
  */
 export function MCPSetPort(port: number): $CancellablePromise<$models.MCPStatusDTO> {
     return $Call.ByID(2176313760, port).then(($result: any) => {
-        return $$createType18($result);
+        return $$createType20($result);
     });
 }
 
@@ -551,7 +551,7 @@ export function MCPSetPort(port: number): $CancellablePromise<$models.MCPStatusD
  */
 export function MCPStatus(): $CancellablePromise<$models.MCPStatusDTO> {
     return $Call.ByID(1378990627).then(($result: any) => {
-        return $$createType18($result);
+        return $$createType20($result);
     });
 }
 
@@ -583,7 +583,7 @@ export function SessionClose(id: string): $CancellablePromise<void> {
  */
 export function SessionList(): $CancellablePromise<$models.SessionDTO[]> {
     return $Call.ByID(491749225).then(($result: any) => {
-        return $$createType20($result);
+        return $$createType22($result);
     });
 }
 
@@ -636,7 +636,7 @@ export function VaultBackup(password: string): $CancellablePromise<string> {
  */
 export function VaultCounts(): $CancellablePromise<$models.VaultCountsDTO> {
     return $Call.ByID(3202868421).then(($result: any) => {
-        return $$createType21($result);
+        return $$createType23($result);
     });
 }
 
@@ -696,7 +696,7 @@ export function VaultSetPassword(password: string): $CancellablePromise<void> {
  */
 export function VaultState(): $CancellablePromise<$models.VaultStateDTO> {
     return $Call.ByID(1454336566).then(($result: any) => {
-        return $$createType22($result);
+        return $$createType24($result);
     });
 }
 
@@ -716,26 +716,28 @@ export function Version(): $CancellablePromise<string> {
 }
 
 // Private type creation functions
-const $$createType0 = $Create.Array($Create.Any);
-const $$createType1 = $models.FilesJobDTO.createFrom;
-const $$createType2 = $Create.Array($$createType1);
-const $$createType3 = $models.FilesListDTO.createFrom;
-const $$createType4 = $models.ForwardHostDTO.createFrom;
-const $$createType5 = $Create.Array($$createType4);
-const $$createType6 = $models.ForwardDTO.createFrom;
+const $$createType0 = $models.FilesConflictDTO.createFrom;
+const $$createType1 = $Create.Array($$createType0);
+const $$createType2 = $models.FilesJobDTO.createFrom;
+const $$createType3 = $Create.Array($$createType2);
+const $$createType4 = $models.FilesListDTO.createFrom;
+const $$createType5 = $Create.Array($Create.Any);
+const $$createType6 = $models.ForwardHostDTO.createFrom;
 const $$createType7 = $Create.Array($$createType6);
-const $$createType8 = model$0.Settings.createFrom;
-const $$createType9 = $models.GroupDTO.createFrom;
-const $$createType10 = $Create.Array($$createType9);
-const $$createType11 = $models.HostDTO.createFrom;
+const $$createType8 = $models.ForwardDTO.createFrom;
+const $$createType9 = $Create.Array($$createType8);
+const $$createType10 = model$0.Settings.createFrom;
+const $$createType11 = $models.GroupDTO.createFrom;
 const $$createType12 = $Create.Array($$createType11);
-const $$createType13 = $models.ImportResult.createFrom;
-const $$createType14 = $models.KeyDTO.createFrom;
-const $$createType15 = $Create.Array($$createType14);
-const $$createType16 = model$0.MCPRecord.createFrom;
+const $$createType13 = $models.HostDTO.createFrom;
+const $$createType14 = $Create.Array($$createType13);
+const $$createType15 = $models.ImportResult.createFrom;
+const $$createType16 = $models.KeyDTO.createFrom;
 const $$createType17 = $Create.Array($$createType16);
-const $$createType18 = $models.MCPStatusDTO.createFrom;
-const $$createType19 = $models.SessionDTO.createFrom;
-const $$createType20 = $Create.Array($$createType19);
-const $$createType21 = $models.VaultCountsDTO.createFrom;
-const $$createType22 = $models.VaultStateDTO.createFrom;
+const $$createType18 = model$0.MCPRecord.createFrom;
+const $$createType19 = $Create.Array($$createType18);
+const $$createType20 = $models.MCPStatusDTO.createFrom;
+const $$createType21 = $models.SessionDTO.createFrom;
+const $$createType22 = $Create.Array($$createType21);
+const $$createType23 = $models.VaultCountsDTO.createFrom;
+const $$createType24 = $models.VaultStateDTO.createFrom;

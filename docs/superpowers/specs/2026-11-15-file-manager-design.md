@@ -65,7 +65,8 @@
 - Перед запуском проверка конфликтов верхнего уровня: если в цели уже есть такие имена — диалог «В папке уже есть: a.txt, b … (и ещё N)» → Заменить / Пропустить / Отмена. Папка с тем же именем сливается, файлы внутри неё следуют тому же выбору.
 - Каждый файл пишется во временное имя рядом с целью (`<имя>.sshclient-<id>.part`) и переименовывается на место в конце; время изменения переносится.
 - Очередь внизу вкладки появляется при первой задаче: строка-сводка («Передаётся 2 из 5 · 12,3 из 40 МБ · 3,2 МБ/с», развернуть/свернуть) и строки задач: направление, заголовок, полоса прогресса, состояние, действия (Отмена, Повторить, Показать в папке, Убрать). «Очистить завершённые». Задачи одной вкладки выполняются по одной (решение исполнителя: так проще понимать прогресс и не упираться в MaxSessions).
-- Обрыв связи: задача переходит в «Связь прервана, повтор через N с» и сама переподключается (паузы 1, 2, 5, 10, 30 с, дальше по 30 с, до 10 минут), затем продолжает текущий файл с места обрыва (докачка по размеру временного файла). Через 10 минут — «Ошибка» с «Повторить», временный файл сохраняется для докачки при повторе; при «Отмене» и закрытии вкладки временные файлы удаляются.
+- Обрыв связи: задача переходит в «Связь прервана, повтор через N с» и сама переподключается (паузы 1, 2, 5, 10, 30 с, дальше по 30 с, до 10 минут), затем продолжает текущий файл с места обрыва (докачка по размеру временного файла). Через 10 минут — «Ошибка» с «Повторить», временный файл сохраняется для докачки при повторе; при «Отмене» и закрытии вкладки временные файлы удаляются. У ждущей задачи есть «Повторить сейчас»: пауза обрывается, переподключение сразу.
+- Обрыв связи замечает и сама вкладка (следит за клиентом, на котором открыта её SFTP-сессия): показывает плашку «Связь с сервером прервана. Переподключение…» и переподключается в фоне с теми же паузами, пока открыта; ошибки, которые не пройдут сами (ключ сервера изменился, сервер не подтверждён, хост удалён, вкладка закрыта, параметры входа изменились, сервер отверг секрет), останавливают попытки и показывают ошибку с «Повторить».
 - Ошибка одного файла (нет прав, недопустимое имя) не останавливает задачу: файл пропускается, в конце «Готово, с ошибками: N» и список в подробностях.
 - Имена с сервера, недопустимые в Windows (`<>:"/\|?*`, управляющие, CON/PRN/AUX/NUL/COM1–9/LPT1–9, точка или пробел в конце), при скачивании меняются: недопустимые символы → `_`, зарезервированное имя → `_CON`; число переименованных показывается в итоге. Путь назначения всегда проверяется: остаётся внутри выбранной папки.
 - Ссылки при скачивании и загрузке: выбранная пользователем ссылка следует цели; внутри рекурсии ссылки на папки пропускаются (защита от циклов), ссылки на файлы копируются как файлы.
@@ -87,7 +88,7 @@ FilesMkdir(tabID, dir, name string) (string, error)   // путь новой п�
 FilesRename(tabID, from, newName string) (string, error) // новое имя в той же папке
 FilesMove(tabID string, paths []string, destDir string) error
 FilesDelete(tabID string, paths []string) (string, error)   // id задачи
-FilesConflicts(tabID, direction string, sources []string, dest string) ([]string, error) // "upload"|"download"; имена верхнего уровня
+FilesConflicts(tabID, direction string, sources []string, dest string) ([]FilesConflictDTO, error) // "upload"|"download"; имена верхнего уровня
 FilesUpload(tabID string, local []string, remoteDir, onConflict string) (string, error)   // onConflict "replace"|"skip"
 FilesDownload(tabID string, remote []string, localDir, onConflict string) (string, error)
 FilesJobCancel(tabID, jobID string) error
@@ -105,8 +106,9 @@ FilesStateDTO   { state: "connecting"|"connected"|"error"|"closed", message, det
 FilesListDTO    { path string, entries []FilesEntryDTO }
 FilesEntryDTO   { name string, dir bool, link bool, broken bool, size int64, mtime int64 /*unix ms*/, mode string }
 FilesJobDTO     { id, kind /*upload|download|delete*/, title, state /*queued|running|waiting|done|failed|cancelled*/,
-                  message, detail string, total_bytes, done_bytes int64, total_files, done_files, failed, renamed int,
+                  message, detail string, total_bytes, done_bytes int64, total_files, done_files, failed, renamed, skipped int,
                   current string, speed_bps int64, dest string, retry_in_s int }
+FilesConflictDTO { name string, merge bool /*обе стороны — папки: сливаются; только тогда диалог говорит о слиянии*/ }
 FilesDropDTO    { tab string, dir string, paths []string }
 ```
 

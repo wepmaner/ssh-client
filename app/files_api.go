@@ -65,6 +65,7 @@ type FilesJobDTO struct {
 	DoneFiles  int    `json:"done_files"`
 	Failed     int    `json:"failed"`
 	Renamed    int    `json:"renamed"`
+	Skipped    int    `json:"skipped"` // files left as they were by the «Пропустить» choice
 	Current    string `json:"current"`
 	SpeedBps   int64  `json:"speed_bps"`
 	Dest       string `json:"dest"`
@@ -328,25 +329,40 @@ func (a *App) FilesDelete(tabID string, paths []string) (string, error) {
 	return t.addJob(jobDelete, slices.Clone(paths), "", false)
 }
 
-// FilesConflicts returns the names of sources ("upload": local paths, "download": remote paths)
-// already present in dest, by their top-level names as shown to the user.
-func (a *App) FilesConflicts(tabID, direction string, sources []string, dest string) ([]string, error) {
+// FilesConflictDTO is one top-level name of a transfer already present in its destination.
+type FilesConflictDTO struct {
+	Name  string `json:"name"`
+	Merge bool   `json:"merge"` // both are folders: they merge instead of being replaced or skipped
+}
+
+// FilesConflicts returns the sources ("upload": local paths, "download": remote paths) already
+// present in dest, by their top-level names as shown to the user.
+func (a *App) FilesConflicts(tabID, direction string, sources []string, dest string) ([]FilesConflictDTO, error) {
 	t, err := a.filesTab(tabID)
 	if err != nil {
 		return nil, err
 	}
-	out := []string{}
+	out := []FilesConflictDTO{}
 	switch direction {
 	case jobUpload:
 		err = t.withSFTP(func(sc *sftp.Client) error {
 			out = out[:0]
 			for _, s := range sources {
 				name := filepath.Base(s)
-				if _, err := sc.Lstat(path.Join(dest, name)); err == nil {
-					out = append(out, name)
-				} else if sshclient.IsLost(err) {
-					return err
+				target := path.Join(dest, name)
+				if _, err := sc.Lstat(target); err != nil {
+					if sshclient.IsLost(err) {
+						return err
+					}
+					continue
 				}
+				local, lerr := os.Stat(s)
+				remote, rerr := sc.Stat(target)
+				if rerr != nil && sshclient.IsLost(rerr) {
+					return rerr
+				}
+				merge := lerr == nil && rerr == nil && local.IsDir() && remote.IsDir()
+				out = append(out, FilesConflictDTO{Name: name, Merge: merge})
 			}
 			return nil
 		})
@@ -354,14 +370,35 @@ func (a *App) FilesConflicts(tabID, direction string, sources []string, dest str
 			return nil, sshclient.FileError(dest, err)
 		}
 	case jobDownload:
+		var dirs []int // the conflicts whose local target is a folder
 		for _, s := range sources {
 			target, _, err := sshclient.LocalTarget(dest, path.Base(s))
 			if err != nil {
 				continue
 			}
-			if _, err := os.Lstat(target); err == nil {
-				out = append(out, path.Base(s))
+			if fi, err := os.Lstat(target); err == nil {
+				if fi.IsDir() {
+					dirs = append(dirs, len(out))
+				}
+				out = append(out, FilesConflictDTO{Name: path.Base(s)})
 			}
+		}
+		if len(dirs) > 0 {
+			// Best effort: without the link the dialog only leaves out the sentence about merging.
+			_ = t.withSFTP(func(sc *sftp.Client) error { //nolint:gosec // G104: see above
+				for _, i := range dirs {
+					src := sources[slices.IndexFunc(sources, func(s string) bool { return path.Base(s) == out[i].Name })]
+					fi, err := sc.Stat(src)
+					if err != nil {
+						if sshclient.IsLost(err) {
+							return err
+						}
+						continue
+					}
+					out[i].Merge = fi.IsDir()
+				}
+				return nil
+			})
 		}
 	default:
 		return nil, errBadInput

@@ -6,9 +6,12 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,6 +21,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"sshclient/internal/model"
+	"sshclient/internal/sshclient"
 	"sshclient/internal/sshclient/sshtest"
 )
 
@@ -296,12 +300,20 @@ func TestFilesUploadDownloadJobs(t *testing.T) {
 	noParts(t, s.root)
 	s.ev.waitFor(t, hcWait, "files:changed", func([]fakeEvent) bool { return s.ev.count("files:changed:"+tab) > 0 })
 
-	conf, err = s.FilesConflicts(tab, "upload", []string{filepath.Join(local, "c.txt")}, home)
-	if err != nil || len(conf) != 1 || conf[0] != "c.txt" {
-		t.Fatalf("conflicts %v %v", conf, err)
+	conf, err = s.FilesConflicts(tab, "upload", []string{filepath.Join(local, "c.txt"), filepath.Join(local, "up")}, home)
+	if err != nil || len(conf) != 2 || conf[0] != (FilesConflictDTO{Name: "c.txt"}) || conf[1] != (FilesConflictDTO{Name: "up", Merge: true}) {
+		t.Fatalf("conflicts %+v %v", conf, err)
 	}
 
 	dl := t.TempDir()
+	writeData(t, filepath.Join(dl, "c.txt"), 1)
+	if err := os.Mkdir(filepath.Join(dl, "up"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	conf, err = s.FilesConflicts(tab, "download", []string{path.Join(home, "up"), path.Join(home, "c.txt")}, dl)
+	if err != nil || len(conf) != 2 || conf[0] != (FilesConflictDTO{Name: "up", Merge: true}) || conf[1] != (FilesConflictDTO{Name: "c.txt"}) {
+		t.Fatalf("download conflicts %+v %v", conf, err)
+	}
 	job, err = s.FilesDownload(tab, []string{path.Join(home, "up")}, dl, "replace")
 	if err != nil {
 		t.Fatal(err)
@@ -541,12 +553,13 @@ func TestHostConnKeepsSecretsForFilesUsers(t *testing.T) {
 	s.home(t, tab) // the tab's sftp session is open: nothing logs in on its own after the drop
 	c := s.conn(t)
 	pass, _ := c.secretsForTest()
+	before := len(s.tabStates(tab))
 	s.srv.DropConnections()
-	waitConnState(t, c, "none after the drop", func(st HostConnStateDTO) bool { return st.Status == hostConnNone })
+	// The tab logs in again by itself, with the kept secrets.
+	s.waitReconnected(t, tab, before)
 	if p, _ := c.secretsForTest(); string(p) != fwdPassphrase {
 		t.Fatalf("passphrase wiped on a drop with a files tab: %q", p)
 	}
-	// The tab logs in again by itself.
 	if _, err := s.FilesList(tab, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -559,6 +572,155 @@ func TestHostConnKeepsSecretsForFilesUsers(t *testing.T) {
 	}
 	s.waitTabState(t, tab, stateClosed)
 	checkWiped(t, pass)
+}
+
+// waitReconnected waits until the tab, after its state number before, has shown connecting and then
+// connected again.
+func (s filesApp) waitReconnected(t *testing.T, tab string, before int) {
+	t.Helper()
+	s.ev.waitFor(t, 3*hcWait, "the tab reconnected", func([]fakeEvent) bool {
+		st := s.tabStates(tab)
+		if len(st) <= before || st[len(st)-1].State != stateConnected {
+			return false
+		}
+		return slices.ContainsFunc(st[before:], func(d FilesStateDTO) bool { return d.State == stateConnecting })
+	})
+}
+
+func TestFilesTabReconnectsAfterDrop(t *testing.T) {
+	s := newFilesApp(t)
+	writeData(t, filepath.Join(s.root, "a.txt"), 3)
+	tab := s.openTab(t)
+	s.home(t, tab)
+	before := len(s.tabStates(tab))
+	s.srv.DropConnections()
+	// User actions while the tab reconnects share its login.
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = s.FilesList(tab, "") //nolint:gosec // G104: only the logins they cause matter
+		}()
+	}
+	s.waitReconnected(t, tab, before)
+	wg.Wait()
+	for _, st := range s.tabStates(tab)[before:] {
+		if st.State == stateError {
+			t.Fatalf("error during the reconnect: %+v", st)
+		}
+	}
+	if l, err := s.FilesList(tab, ""); err != nil || len(l.Entries) != 1 {
+		t.Fatalf("list after the reconnect %+v %v", l, err)
+	}
+	if n := strings.Count(s.loginData(t, tab), passphrasePrompt); n != 1 {
+		t.Fatalf("%d passphrase questions", n)
+	}
+	if n := s.srv.Accepted(); n != 2 {
+		t.Fatalf("accepted %d connections, want one reconnect", n)
+	}
+	// The new client is watched too: a second drop reconnects again.
+	before = len(s.tabStates(tab))
+	s.srv.DropConnections()
+	s.waitReconnected(t, tab, before)
+}
+
+func TestFilesTabRetriesWhileServerAway(t *testing.T) {
+	s := newFilesApp(t)
+	var attempts atomic.Int32
+	s.filesBackoff = func(int) time.Duration {
+		attempts.Add(1)
+		return 10 * time.Millisecond
+	}
+	tab := s.openTab(t)
+	s.home(t, tab)
+	before := len(s.tabStates(tab))
+	s.srv.StopListening()
+	s.srv.DropConnections()
+	s.waitTabState(t, tab, stateConnecting)
+	s.ev.waitFor(t, hcWait, "several reconnect attempts", func([]fakeEvent) bool { return attempts.Load() >= 5 })
+	for _, st := range s.tabStates(tab)[before:] {
+		if st.State != stateConnecting {
+			t.Fatalf("state %+v while the server is away", st)
+		}
+	}
+	if err := s.FilesClose(tab); err != nil {
+		t.Fatal(err)
+	}
+	s.waitTabState(t, tab, stateClosed)
+	n := attempts.Load()
+	time.Sleep(100 * time.Millisecond)
+	if attempts.Load() > n+1 {
+		t.Fatal("the reconnect goes on after the tab closed")
+	}
+}
+
+func TestFilesTabFatal(t *testing.T) {
+	for _, tc := range []struct {
+		err   error
+		fatal bool
+	}{
+		{sshclient.ErrHostKeyChanged, true},
+		{sshclient.ErrHostNotTrusted, true},
+		{sshclient.ErrCancelled, true},
+		{errHostNotFound, true},
+		{errFilesClosed, true},
+		{errConnStale, true},
+		{fmt.Errorf("%w: refused", errConnLost), false},
+		{errors.New("dial tcp: connection refused"), false},
+	} {
+		if got := filesTabFatal(tc.err); got != tc.fatal {
+			t.Errorf("filesTabFatal(%v) = %v", tc.err, got)
+		}
+	}
+}
+
+func TestFilesJobRetryNowEndsPause(t *testing.T) {
+	s := newFilesApp(t)
+	s.filesBackoff = func(int) time.Duration { return time.Minute }
+	tab := s.openTab(t)
+	home := s.home(t, tab)
+	local := t.TempDir()
+	data := writeData(t, filepath.Join(local, "big.bin"), 8_000_000)
+	s.dropAt(2_000_000)
+	job, err := s.FilesUpload(tab, []string{filepath.Join(local, "big.bin")}, home, "skip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := s.waitJob(t, tab, job, jobWaiting, 3*hcWait)
+	if w.RetryInS < 30 {
+		t.Fatalf("waiting %+v", w)
+	}
+	if err := s.FilesJobRetry(tab, job); err != nil {
+		t.Fatal(err)
+	}
+	s.waitJob(t, tab, job, jobDone, 3*hcWait)
+	checkFile(t, filepath.Join(s.root, "big.bin"), data)
+	// A job done without errors has nothing to retry.
+	if err := s.FilesJobRetry(tab, job); err == nil {
+		t.Fatal("retried a job done without errors")
+	}
+}
+
+func TestFilesJobCountsSkipped(t *testing.T) {
+	s := newFilesApp(t)
+	tab := s.openTab(t)
+	home := s.home(t, tab)
+	writeData(t, filepath.Join(s.root, "a.txt"), 3)
+	local := t.TempDir()
+	writeData(t, filepath.Join(local, "a.txt"), 5)
+	writeData(t, filepath.Join(local, "b.txt"), 5)
+	job, err := s.FilesUpload(tab, []string{filepath.Join(local, "a.txt"), filepath.Join(local, "b.txt")}, home, "skip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := s.waitJob(t, tab, job, jobDone, hcWait)
+	if d.Skipped != 1 || d.DoneFiles != 2 || !strings.Contains(d.Message, "пропущено: 1") {
+		t.Fatalf("job %+v", d)
+	}
+	if fi, err := os.Stat(filepath.Join(s.root, "a.txt")); err != nil || fi.Size() != 3 {
+		t.Fatalf("the skipped file changed: %v", err)
+	}
 }
 
 func TestFilesDrop(t *testing.T) {

@@ -50,6 +50,15 @@
     if (visible && model?.loaded && !blocked) void tick().then(() => list?.focus())
   })
 
+  // A folder that failed to open drops the focused row: the list takes the keys back.
+  $effect(() => {
+    if (!visible || !model?.listError) return
+    void tick().then(() => {
+      const el = document.activeElement
+      if (!el || el === document.body) list?.focus()
+    })
+  })
+
   async function copyPaths(paths: string[]): Promise<void> {
     if (paths.length === 0) return
     try {
@@ -84,6 +93,10 @@
       e.preventDefault()
       void model.forward()
     } else if (e.altKey && !e.ctrlKey && e.key === 'ArrowUp') {
+      e.preventDefault()
+      void model.up()
+    } else if (e.key === 'Backspace' && !e.ctrlKey && !e.altKey && !e.defaultPrevented && !typing(e)) {
+      // The list handles it while it has the focus; this is for a folder that failed to open.
       e.preventDefault()
       void model.up()
     } else if (ctrl && e.shiftKey && e.code === 'KeyN' && !typing(e)) {
@@ -210,7 +223,9 @@
 
   <Dialog open={!!model.conflict} title="Такие имена уже есть" onclose={() => model.conflict?.resolve(null)} width={460} autofocus="button.btn.primary">
     <p class="muted">В папке уже есть: <span class="names">{conflictText}</span></p>
-    <p class="muted small">Папки с тем же именем сливаются, файлы внутри них следуют тому же выбору.</p>
+    {#if model.conflict?.merge}
+      <p class="muted small">Папки с тем же именем сливаются, файлы внутри них следуют тому же выбору.</p>
+    {/if}
     {#snippet footer()}
       <span></span>
       <span class="actions">

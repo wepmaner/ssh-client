@@ -6,6 +6,38 @@
 import { Create as $Create } from "@wailsio/runtime";
 
 /**
+ * FilesConflictDTO is one top-level name of a transfer already present in its destination.
+ */
+export class FilesConflictDTO {
+    "name": string;
+
+    /**
+     * both are folders: they merge instead of being replaced or skipped
+     */
+    "merge": boolean;
+
+    /** Creates a new FilesConflictDTO instance. */
+    constructor($$source: Partial<FilesConflictDTO> = {}) {
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+        if (!("merge" in $$source)) {
+            this["merge"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new FilesConflictDTO instance from a string or object.
+     */
+    static createFrom($$source: any = {}): FilesConflictDTO {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new FilesConflictDTO($$parsedSource as Partial<FilesConflictDTO>);
+    }
+}
+
+/**
  * FilesEntryDTO is one entry of a remote folder.
  */
 export class FilesEntryDTO {
@@ -81,6 +113,11 @@ export class FilesJobDTO {
     "done_files": number;
     "failed": number;
     "renamed": number;
+
+    /**
+     * files left as they were by the «Пропустить» choice
+     */
+    "skipped": number;
     "current": string;
     "speed_bps": number;
     "dest": string;
@@ -123,6 +160,9 @@ export class FilesJobDTO {
         }
         if (!("renamed" in $$source)) {
             this["renamed"] = 0;
+        }
+        if (!("skipped" in $$source)) {
+            this["skipped"] = 0;
         }
         if (!("current" in $$source)) {
             this["current"] = "";

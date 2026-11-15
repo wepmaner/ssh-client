@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -42,6 +43,12 @@ type filesTab struct {
 	sc      *sftp.Client
 	scClose func()
 	scSSH   *ssh.Client // the client sc runs on
+	// watched is the last client the tab got: its watcher reconnects the tab when it ends.
+	watched *ssh.Client
+	// reconnecting is set while the background reconnect runs; again asks it for one more round
+	// (the client it got ended before it returned).
+	reconnecting, again bool
+
 	jobs    []*filesJob // in queue order
 	closing bool
 	ended   bool // left the connection for good (closed or host deleted)
@@ -117,10 +124,17 @@ func (t *filesTab) acquire(ctx context.Context, u any) (*ssh.Client, error) {
 		if t.currentState().State != stateConnected {
 			t.setState(FilesStateDTO{State: stateConnected, Retryable: true})
 		}
-	case ctx.Err() == nil && t.currentState().State == stateConnecting:
+	case ctx.Err() == nil && t.currentState().State == stateConnecting && !t.isReconnecting():
+		// The background reconnect shows only the errors that will not heal by themselves.
 		t.setState(filesErrorState(err))
 	}
 	return cl, err
+}
+
+func (t *filesTab) isReconnecting() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.reconnecting
 }
 
 // sftpClient returns the tab's sftp session on the connection's live client, opening one after a
@@ -165,6 +179,10 @@ func (t *filesTab) sftpClient(ctx context.Context) (*sftp.Client, error) {
 	}
 	old := t.scClose
 	t.sc, t.scClose, t.scSSH = sc, closeSC, cl
+	if cl != t.watched {
+		t.watched = cl
+		go t.watch(cl)
+	}
 	t.mu.Unlock()
 	if old != nil {
 		old()
@@ -198,6 +216,105 @@ func (t *filesTab) withSFTP(op func(sc *sftp.Client) error) error {
 			return err
 		}
 		t.dropSFTP(sc)
+	}
+}
+
+// watch waits for the end of cl, a client the tab got. When cl is still the tab's last client and
+// the tab is open, the tab shows connecting (with no login output: a banner over the listing) and
+// reconnects in the background.
+func (t *filesTab) watch(cl *ssh.Client) {
+	_ = cl.Wait() //nolint:gosec // G104: only the end of the connection matters
+	t.mu.Lock()
+	if t.watched != cl || t.closing || t.ended {
+		t.mu.Unlock()
+		return
+	}
+	if t.reconnecting {
+		t.again = true // the running reconnect got cl and goes one more round
+		t.mu.Unlock()
+		return
+	}
+	t.reconnecting = true
+	t.mu.Unlock()
+	t.reconnect()
+}
+
+// filesTabFatal reports a reconnect error that waiting will not cure.
+func filesTabFatal(err error) bool {
+	return connFatal(err) || errors.Is(err, errConnStale)
+}
+
+// reconnect opens the tab's sftp session anew after its client ended, with pauses by the backoff
+// between attempts, until it succeeds, the tab ends or an error that will not heal. The secrets stay
+// while files users are on the connection, so this is silent unless the server asks again (then the
+// login stream shows the card). A user action meanwhile logs in through the same hostConn.acquire,
+// which shares one login between all its callers.
+func (t *filesTab) reconnect() {
+	backoff := t.a.filesBackoff
+	if backoff == nil {
+		backoff = filesDefaultBackoff
+	}
+	stop := func() {
+		t.mu.Lock()
+		t.reconnecting, t.again = false, false
+		t.mu.Unlock()
+	}
+	for attempt := 0; ; attempt++ {
+		if attempt == 0 {
+			t.forgetEndedSFTP()
+			t.setState(FilesStateDTO{State: stateConnecting, Retryable: true})
+		} else {
+			tm := time.NewTimer(backoff(attempt))
+			select {
+			case <-t.ctx.Done():
+				tm.Stop()
+				stop()
+				return
+			case <-tm.C:
+			}
+		}
+		_, err := t.sftpClient(t.ctx)
+		if t.ctx.Err() != nil {
+			stop()
+			return
+		}
+		if err != nil {
+			if filesTabFatal(err) {
+				stop()
+				t.setState(filesErrorState(err))
+				return
+			}
+			continue
+		}
+		if t.currentState().State != stateConnected {
+			t.setState(FilesStateDTO{State: stateConnected, Retryable: true})
+		}
+		t.mu.Lock()
+		again := t.again
+		t.again = false
+		if !again {
+			t.reconnecting = false
+		}
+		t.mu.Unlock()
+		if !again {
+			return
+		}
+		attempt = -1 // the client it got has ended too: start over
+	}
+}
+
+// forgetEndedSFTP drops the tab's sftp session when its client has ended, so the next sftpClient
+// does not hand it out before the connection's own watcher has noticed the end.
+func (t *filesTab) forgetEndedSFTP() {
+	t.mu.Lock()
+	var cl func()
+	if t.scSSH != nil && t.scSSH == t.watched {
+		cl = t.scClose
+		t.sc, t.scClose, t.scSSH = nil, nil, nil
+	}
+	t.mu.Unlock()
+	if cl != nil {
+		cl()
 	}
 }
 
