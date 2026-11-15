@@ -15,6 +15,7 @@ const { handlers, api } = vi.hoisted(() => ({
     FilesMkdir: vi.fn(),
     FilesRename: vi.fn(),
     FilesMove: vi.fn(),
+    FilesDragOut: vi.fn(() => Promise.resolve()),
     FilesDelete: vi.fn(),
     FilesConflicts: vi.fn(),
     FilesCopy: vi.fn(),
