@@ -25,7 +25,7 @@ func TestWebviewDataDir(t *testing.T) {
 
 func TestSingleInstanceOptions(t *testing.T) {
 	called := false
-	o := singleInstance(func(application.SecondInstanceData) { called = true })
+	o := singleInstance(func(application.SecondInstanceData) { called = true }, "")
 	// The ID names the Windows mutex: changing it lets an old and a new build run side by
 	// side and overwrite each other's vault.
 	if o == nil || o.UniqueID != "ssh-client-wepmaner" || o.ExitCode != 0 {
@@ -48,5 +48,29 @@ func TestMainWindowSnapLayouts(t *testing.T) {
 	// Both are needed for --wails-non-client-region on the maximise button.
 	if !w.Windows.NonClientRegionSupport || !w.Windows.WebView2CompositionHosting {
 		t.Fatal("non-client regions are off: no Snap layouts on the maximise button")
+	}
+}
+
+func TestInstanceSuffix(t *testing.T) {
+	t.Setenv("SSHCLIENT_INSTANCE", "test")
+	if got := instanceSuffix("dev"); got != "-test" {
+		t.Fatalf("dev build: %q", got)
+	}
+	// A release never runs beside another copy: they would save over each other's vault.
+	if got := instanceSuffix("1.2.3"); got != "" {
+		t.Fatalf("release build: %q", got)
+	}
+	if o := singleInstance(nil, instanceSuffix("1.2.3")); o.UniqueID != "ssh-client-wepmaner" {
+		t.Fatalf("release ID %q", o.UniqueID)
+	}
+	t.Setenv("SSHCLIENT_INSTANCE", "")
+	if got := instanceSuffix("dev"); got != "" {
+		t.Fatalf("no variable: %q", got)
+	}
+}
+
+func TestMainWindowFileDrop(t *testing.T) {
+	if !mainWindow().EnableFileDrop {
+		t.Fatal("files cannot be dropped from Explorer")
 	}
 }

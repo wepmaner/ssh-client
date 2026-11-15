@@ -6,6 +6,182 @@
 import { Create as $Create } from "@wailsio/runtime";
 
 /**
+ * FilesEntryDTO is one entry of a remote folder.
+ */
+export class FilesEntryDTO {
+    "name": string;
+    "dir": boolean;
+    "link": boolean;
+    "broken": boolean;
+    "size": number;
+
+    /**
+     * unix ms
+     */
+    "mtime": number;
+    "mode": string;
+
+    /** Creates a new FilesEntryDTO instance. */
+    constructor($$source: Partial<FilesEntryDTO> = {}) {
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+        if (!("dir" in $$source)) {
+            this["dir"] = false;
+        }
+        if (!("link" in $$source)) {
+            this["link"] = false;
+        }
+        if (!("broken" in $$source)) {
+            this["broken"] = false;
+        }
+        if (!("size" in $$source)) {
+            this["size"] = 0;
+        }
+        if (!("mtime" in $$source)) {
+            this["mtime"] = 0;
+        }
+        if (!("mode" in $$source)) {
+            this["mode"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new FilesEntryDTO instance from a string or object.
+     */
+    static createFrom($$source: any = {}): FilesEntryDTO {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new FilesEntryDTO($$parsedSource as Partial<FilesEntryDTO>);
+    }
+}
+
+/**
+ * FilesJobDTO is one job of a tab's queue, the payload of files:job:<tab>.
+ */
+export class FilesJobDTO {
+    "id": string;
+
+    /**
+     * upload|download|delete
+     */
+    "kind": string;
+    "title": string;
+
+    /**
+     * queued|running|waiting|done|failed|cancelled
+     */
+    "state": string;
+    "message": string;
+    "detail": string;
+    "total_bytes": number;
+    "done_bytes": number;
+    "total_files": number;
+    "done_files": number;
+    "failed": number;
+    "renamed": number;
+    "current": string;
+    "speed_bps": number;
+    "dest": string;
+    "retry_in_s": number;
+
+    /** Creates a new FilesJobDTO instance. */
+    constructor($$source: Partial<FilesJobDTO> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("kind" in $$source)) {
+            this["kind"] = "";
+        }
+        if (!("title" in $$source)) {
+            this["title"] = "";
+        }
+        if (!("state" in $$source)) {
+            this["state"] = "";
+        }
+        if (!("message" in $$source)) {
+            this["message"] = "";
+        }
+        if (!("detail" in $$source)) {
+            this["detail"] = "";
+        }
+        if (!("total_bytes" in $$source)) {
+            this["total_bytes"] = 0;
+        }
+        if (!("done_bytes" in $$source)) {
+            this["done_bytes"] = 0;
+        }
+        if (!("total_files" in $$source)) {
+            this["total_files"] = 0;
+        }
+        if (!("done_files" in $$source)) {
+            this["done_files"] = 0;
+        }
+        if (!("failed" in $$source)) {
+            this["failed"] = 0;
+        }
+        if (!("renamed" in $$source)) {
+            this["renamed"] = 0;
+        }
+        if (!("current" in $$source)) {
+            this["current"] = "";
+        }
+        if (!("speed_bps" in $$source)) {
+            this["speed_bps"] = 0;
+        }
+        if (!("dest" in $$source)) {
+            this["dest"] = "";
+        }
+        if (!("retry_in_s" in $$source)) {
+            this["retry_in_s"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new FilesJobDTO instance from a string or object.
+     */
+    static createFrom($$source: any = {}): FilesJobDTO {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new FilesJobDTO($$parsedSource as Partial<FilesJobDTO>);
+    }
+}
+
+/**
+ * FilesListDTO is one remote folder.
+ */
+export class FilesListDTO {
+    "path": string;
+    "entries": FilesEntryDTO[];
+
+    /** Creates a new FilesListDTO instance. */
+    constructor($$source: Partial<FilesListDTO> = {}) {
+        if (!("path" in $$source)) {
+            this["path"] = "";
+        }
+        if (!("entries" in $$source)) {
+            this["entries"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new FilesListDTO instance from a string or object.
+     */
+    static createFrom($$source: any = {}): FilesListDTO {
+        const $$createField1_0 = $$createType1;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("entries" in $$parsedSource) {
+            $$parsedSource["entries"] = $$createField1_0($$parsedSource["entries"]);
+        }
+        return new FilesListDTO($$parsedSource as Partial<FilesListDTO>);
+    }
+}
+
+/**
  * ForwardDTO is a saved forward with its live state. Target is empty for D.
  */
 export class ForwardDTO {
@@ -291,7 +467,7 @@ export class ImportResult {
      * Creates a new ImportResult instance from a string or object.
      */
     static createFrom($$source: any = {}): ImportResult {
-        const $$createField2_0 = $$createType0;
+        const $$createField2_0 = $$createType2;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("warnings" in $$parsedSource) {
             $$parsedSource["warnings"] = $$createField2_0($$parsedSource["warnings"]);
@@ -361,7 +537,7 @@ export class KeyDTO {
      * Creates a new KeyDTO instance from a string or object.
      */
     static createFrom($$source: any = {}): KeyDTO {
-        const $$createField10_0 = $$createType0;
+        const $$createField10_0 = $$createType2;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("host_ids" in $$parsedSource) {
             $$parsedSource["host_ids"] = $$createField10_0($$parsedSource["host_ids"]);
@@ -533,4 +709,6 @@ export class VaultStateDTO {
 }
 
 // Private type creation functions
-const $$createType0 = $Create.Array($Create.Any);
+const $$createType0 = FilesEntryDTO.createFrom;
+const $$createType1 = $Create.Array($$createType0);
+const $$createType2 = $Create.Array($Create.Any);

@@ -38,6 +38,9 @@ type outStream struct {
 	// onOutput (optional, set before the first Write) is called once, on the first output, outside
 	// the stream's locks. The MCP login opens its dialog with it.
 	onOutput func()
+	// onWrite (optional, set before the first Write) is called on every output, outside the
+	// stream's locks. A files tab shows its login card with it.
+	onWrite func()
 
 	emitMu sync.Mutex // serialises emissions so data and state events keep their order
 
@@ -65,7 +68,17 @@ func (o *outStream) Write(b []byte) (int, error) {
 	if first := o.queue(b); first != nil {
 		first()
 	}
+	if o.onWrite != nil {
+		o.onWrite()
+	}
 	return len(b), nil
+}
+
+// isAttached reports whether the view has attached.
+func (o *outStream) isAttached() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.attached
 }
 
 // queue adds b to the output and returns onOutput on the first call.

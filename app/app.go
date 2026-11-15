@@ -58,7 +58,7 @@ type App struct {
 	hcMu           sync.Mutex
 	hostConns      map[string]*hostConn            // the current connection of each host
 	hcLive         map[*hostConn]struct{}          // every connection with users, stale ones included
-	hcUsers        map[any]*hostConn               // the connection each user (*fwdRun, *session, *mcpHold, *mcpCall) is on
+	hcUsers        map[any]*hostConn               // the connection each user (*fwdRun, *session, *mcpHold, *mcpCall, *filesTab, *filesJob) is on
 	hostKeyChanged map[string]bool                 // hosts whose server key changed: blocked until restart
 	hcLastErr      map[string]HostConnStateDTO     // the error state a host's connection closed in, shown until the next login
 	hcDown         bool                            // closeAllHostConns has run
@@ -82,6 +82,15 @@ type App struct {
 	mcpToken string                     // the token while the switch is on; it outlives a vault lock
 	mcpState MCPStatusDTO               // the last published status
 	mcpLive  atomic.Pointer[mcpBackend] // the backend of mcpSrv: a request of an earlier run has another
+
+	// filesMu guards the files tabs (files.go); taken alone, before neither hcMu nor a tab's lock.
+	filesMu       sync.Mutex
+	files         map[string]*filesTab
+	filesDir      string                          // the download folder last chosen in this run
+	filesBackoff  func(attempt int) time.Duration // pauses of a transfer's reconnect; nil means filesDefaultBackoff
+	filesRetryFor time.Duration                   // how long a transfer reconnects; 0 means filesRetryTime
+	// filesProgressHook (tests) sees each position a transfer reaches in a file, on its goroutine.
+	filesProgressHook func(jobID, target string, pos int64)
 
 	version string                   // the release version, "dev" in local builds
 	putty   importers.RegistryReader // PuTTY sessions source; nil means the Windows registry
@@ -202,16 +211,19 @@ func (a *App) ServiceStartup(_ context.Context, _ application.ServiceOptions) er
 	a.mainWin.RegisterHook(events.Common.WindowClosing, func(*application.WindowEvent) {
 		a.saveWindowGeometry(a.mainWin)
 	})
+	// Files dropped from Explorer on a files tab (EnableFileDrop in main.go) go to the frontend.
+	a.mainWin.OnWindowEvent(events.Common.WindowFilesDropped, a.filesDropped)
 	fixRestoreScale(a.mainWin)
 	return nil
 }
 
-// ServiceShutdown runs after the window has closed; it ends the MCP server and every SSH session
-// and forward.
+// ServiceShutdown runs after the window has closed; it ends the MCP server and every SSH session,
+// files tab and forward.
 func (a *App) ServiceShutdown() error {
 	a.exiting.Store(true)
 	a.mcpStop()
 	a.closeAllSessions()
+	a.closeAllFiles()
 	a.stopAllForwards()
 	a.closeAllHostConns()
 	return nil

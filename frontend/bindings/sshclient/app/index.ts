@@ -7,6 +7,9 @@ export {
 };
 
 export {
+    FilesEntryDTO,
+    FilesJobDTO,
+    FilesListDTO,
     ForwardDTO,
     ForwardHostDTO,
     GroupDTO,

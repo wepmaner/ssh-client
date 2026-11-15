@@ -69,7 +69,7 @@ type hostConn struct {
 	wg sync.WaitGroup // attempts, client watchers and keepalives
 
 	mu         sync.Mutex
-	users      map[any]*ssh.Client // *fwdRun, *session, *mcpHold and *mcpCall values, with the client each got last
+	users      map[any]*ssh.Client // *fwdRun, *session, *mcpHold, *mcpCall, *filesTab and *filesJob values, with the client each got last
 	client     *ssh.Client
 	dead       chan struct{} // closed when client.Wait has returned
 	att        *loginAttempt // the login in progress, nil if none
@@ -550,7 +550,11 @@ func (c *hostConn) finish(att *loginAttempt, client *ssh.Client, err error) {
 		c.retries++
 		c.startLocked(c.askFwd(), true, c.backoff(c.retries))
 	default:
-		c.forgetLocked()
+		// A files user retries a failed reconnect by itself: the secrets stay unless the server
+		// rejected them.
+		if !c.hasFilesLocked() || errors.Is(err, sshclient.ErrAuthDenied) {
+			c.forgetLocked()
+		}
 		c.setLocked(errorDTO(err))
 	}
 	att.client, att.err = client, err
@@ -700,8 +704,9 @@ func (c *hostConn) liveClientLocked() *ssh.Client {
 }
 
 // dropLocked handles the end of cl's connection once: with forwards on it a reconnect starts,
-// otherwise the secrets are wiped and the next acquire logs in anew (on a stale connection: moves
-// to the current one). The caller holds mu.
+// otherwise the next acquire logs in anew (on a stale connection: moves to the current one). The
+// secrets are wiped unless files users are on the connection: a files tab or a running transfer
+// reconnects by itself with them. The caller holds mu.
 func (c *hostConn) dropLocked(cl *ssh.Client) {
 	if c.client != cl {
 		return
@@ -712,7 +717,9 @@ func (c *hostConn) dropLocked(cl *ssh.Client) {
 		c.startLocked(c.askFwd(), true, c.backoff(c.retries))
 		return
 	}
-	c.forgetLocked()
+	if !c.hasFilesLocked() {
+		c.forgetLocked()
+	}
 	c.setLocked(HostConnStateDTO{Status: hostConnNone})
 }
 
@@ -740,6 +747,17 @@ func (c *hostConn) forgetLocked() {
 	if c.att != nil {
 		c.att.keep = false
 	}
+}
+
+// hasFilesLocked reports a files tab or a running transfer on the connection; the caller holds mu.
+func (c *hostConn) hasFilesLocked() bool {
+	for u := range c.users {
+		switch u.(type) {
+		case *filesTab, *filesJob:
+			return true
+		}
+	}
+	return false
 }
 
 func (c *hostConn) hasForwardsLocked() bool {

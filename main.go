@@ -33,7 +33,7 @@ func main() {
 	wapp := application.New(application.Options{
 		Name:           "sshclient",
 		Services:       []application.Service{application.NewService(a)},
-		SingleInstance: singleInstance(app.SecondLaunchHandler(a)),
+		SingleInstance: singleInstance(app.SecondLaunchHandler(a), instanceSuffix(version)),
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
 		},
@@ -54,12 +54,25 @@ func main() {
 const singleInstanceID = "ssh-client-wepmaner"
 
 // singleInstance keeps one running copy: application.New of a second start notifies the
-// first one (onLaunch raises its window there) and exits with code 0.
-func singleInstance(onLaunch func(application.SecondInstanceData)) *application.SingleInstanceOptions {
+// first one (onLaunch raises its window there) and exits with code 0. suffix ("" in releases)
+// names a separate copy for live checks beside the working one.
+func singleInstance(onLaunch func(application.SecondInstanceData), suffix string) *application.SingleInstanceOptions {
 	return &application.SingleInstanceOptions{
-		UniqueID:               singleInstanceID,
+		UniqueID:               singleInstanceID + suffix,
 		OnSecondInstanceLaunch: onLaunch,
 	}
+}
+
+// instanceSuffix is SSHCLIENT_INSTANCE in a development build ("-" and its value), so a test copy
+// with its own APPDATA runs beside the working one; a release build always has none.
+func instanceSuffix(version string) string {
+	if version != "dev" {
+		return ""
+	}
+	if v := os.Getenv("SSHCLIENT_INSTANCE"); v != "" {
+		return "-" + v
+	}
+	return ""
 }
 
 // mainWindow is the frameless main window. The title bar is drawn by the frontend;
@@ -78,6 +91,9 @@ func mainWindow() application.WebviewWindowOptions {
 		Frameless:        true,
 		BackgroundColour: application.NewRGB(0x1a, 0x1d, 0x22),
 		URL:              "/",
+		// Files dropped from Explorer reach Go as WindowFilesDropped with the target element's
+		// data-files-tab and data-files-dir (app.filesDropped).
+		EnableFileDrop: true,
 		Windows: application.WindowsWindow{
 			Theme:                             application.Dark,
 			DisableFramelessWindowDecorations: false,

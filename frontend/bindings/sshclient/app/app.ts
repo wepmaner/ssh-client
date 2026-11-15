@@ -20,6 +20,174 @@ import * as model$0 from "../internal/model/models.js";
 import * as $models from "./models.js";
 
 /**
+ * FilesClose cancels the tab's transfers, deletes their part files and leaves the connection. It
+ * does not wait for the cleanup.
+ */
+export function FilesClose(tabID: string): $CancellablePromise<void> {
+    return $Call.ByID(1291908214, tabID);
+}
+
+/**
+ * FilesConflicts returns the names of sources ("upload": local paths, "download": remote paths)
+ * already present in dest, by their top-level names as shown to the user.
+ */
+export function FilesConflicts(tabID: string, direction: string, sources: string[], dest: string): $CancellablePromise<string[]> {
+    return $Call.ByID(654775921, tabID, direction, sources, dest).then(($result: any) => {
+        return $$createType0($result);
+    });
+}
+
+/**
+ * FilesDelete queues the deletion of the entries, folders with all their contents, and returns the
+ * job id.
+ */
+export function FilesDelete(tabID: string, paths: string[]): $CancellablePromise<string> {
+    return $Call.ByID(3203858517, tabID, paths);
+}
+
+/**
+ * FilesDownload queues the download of remote files and folders into the local folder localDir and
+ * returns the job id.
+ */
+export function FilesDownload(tabID: string, remote: string[], localDir: string, onConflict: string): $CancellablePromise<string> {
+    return $Call.ByID(2189800922, tabID, remote, localDir, onConflict);
+}
+
+/**
+ * FilesHome returns the remote home folder.
+ */
+export function FilesHome(tabID: string): $CancellablePromise<string> {
+    return $Call.ByID(650910389, tabID);
+}
+
+/**
+ * FilesJobCancel cancels a queued or running job; its part files are deleted.
+ */
+export function FilesJobCancel(tabID: string, jobID: string): $CancellablePromise<void> {
+    return $Call.ByID(3894962851, tabID, jobID);
+}
+
+/**
+ * FilesJobRemove forgets a finished job.
+ */
+export function FilesJobRemove(tabID: string, jobID: string): $CancellablePromise<void> {
+    return $Call.ByID(1993242309, tabID, jobID);
+}
+
+/**
+ * FilesJobRetry queues a failed or cancelled job again; it resumes from its part files.
+ */
+export function FilesJobRetry(tabID: string, jobID: string): $CancellablePromise<void> {
+    return $Call.ByID(594433537, tabID, jobID);
+}
+
+/**
+ * FilesJobs lists the tab's jobs in queue order.
+ */
+export function FilesJobs(tabID: string): $CancellablePromise<$models.FilesJobDTO[]> {
+    return $Call.ByID(172008794, tabID).then(($result: any) => {
+        return $$createType2($result);
+    });
+}
+
+/**
+ * FilesList reads the remote folder dir ("" is the home folder).
+ */
+export function FilesList(tabID: string, dir: string): $CancellablePromise<$models.FilesListDTO> {
+    return $Call.ByID(446550438, tabID, dir).then(($result: any) => {
+        return $$createType3($result);
+    });
+}
+
+/**
+ * FilesLoginAttach tells Go the tab's mini-terminal listens to files:login:<id>: the output held
+ * since FilesOpen is released.
+ */
+export function FilesLoginAttach(tabID: string): $CancellablePromise<void> {
+    return $Call.ByID(335656682, tabID);
+}
+
+/**
+ * FilesLoginWrite sends base64-encoded keystrokes to the question of the login running for the tab.
+ * Input with no login waiting is dropped.
+ */
+export function FilesLoginWrite(tabID: string, dataB64: string): $CancellablePromise<void> {
+    return $Call.ByID(3888579010, tabID, dataB64);
+}
+
+/**
+ * FilesMkdir creates the folder name in dir and returns its path; a taken name is an error.
+ */
+export function FilesMkdir(tabID: string, dir: string, name: string): $CancellablePromise<string> {
+    return $Call.ByID(3382903281, tabID, dir, name);
+}
+
+/**
+ * FilesMove moves the entries into destDir, never over an existing one. The others are moved
+ * when one fails; the error lists the failures.
+ */
+export function FilesMove(tabID: string, paths: string[], destDir: string): $CancellablePromise<void> {
+    return $Call.ByID(3919055015, tabID, paths, destDir);
+}
+
+/**
+ * FilesOpen opens a files tab on the host's shared connection and returns its id at once; the login
+ * starts right away. Its questions arrive as files:login:<id>, held until FilesLoginAttach, and its
+ * state as files:state:<id>.
+ */
+export function FilesOpen(hostID: string): $CancellablePromise<string> {
+    return $Call.ByID(3951366226, hostID);
+}
+
+/**
+ * FilesPickDownloadDir asks for the folder to download into; "" when cancelled. It starts in the
+ * folder chosen last in this run, else in Downloads, and remembers the choice.
+ */
+export function FilesPickDownloadDir(): $CancellablePromise<string> {
+    return $Call.ByID(2857218414);
+}
+
+/**
+ * FilesPickUpload asks for files (several) or one folder to upload in the system dialog; [] when
+ * cancelled.
+ */
+export function FilesPickUpload(folder: boolean): $CancellablePromise<string[]> {
+    return $Call.ByID(1941123118, folder).then(($result: any) => {
+        return $$createType0($result);
+    });
+}
+
+/**
+ * FilesRename renames from to newName in the same folder, never over an existing entry, and
+ * returns the new path.
+ */
+export function FilesRename(tabID: string, $from: string, newName: string): $CancellablePromise<string> {
+    return $Call.ByID(3425012756, tabID, $from, newName);
+}
+
+/**
+ * FilesRetry starts a new login of a tab whose login failed.
+ */
+export function FilesRetry(tabID: string): $CancellablePromise<void> {
+    return $Call.ByID(3234550936, tabID);
+}
+
+/**
+ * FilesShowLocal opens Explorer with the file or folder selected.
+ */
+export function FilesShowLocal(p: string): $CancellablePromise<void> {
+    return $Call.ByID(421815806, p);
+}
+
+/**
+ * FilesUpload queues the upload of local files and folders into remoteDir and returns the job id.
+ * onConflict is "replace" or "skip" for names already there; folders merge.
+ */
+export function FilesUpload(tabID: string, local: string[], remoteDir: string, onConflict: string): $CancellablePromise<string> {
+    return $Call.ByID(2022292415, tabID, local, remoteDir, onConflict);
+}
+
+/**
  * ForwardAttach tells Go the UI listens to the forward's events: states held since startup
  * (autostart) are released, later ones are sent at once.
  */
@@ -56,7 +224,7 @@ export function ForwardHostWrite(hostID: string, dataB64: string): $CancellableP
  */
 export function ForwardHostsList(): $CancellablePromise<$models.ForwardHostDTO[]> {
     return $Call.ByID(3929598163).then(($result: any) => {
-        return $$createType1($result);
+        return $$createType5($result);
     });
 }
 
@@ -69,7 +237,7 @@ export function ForwardHostsList(): $CancellablePromise<$models.ForwardHostDTO[]
  */
 export function ForwardSave($in: $models.ForwardDTO): $CancellablePromise<$models.ForwardDTO> {
     return $Call.ByID(3147821477, $in).then(($result: any) => {
-        return $$createType2($result);
+        return $$createType6($result);
     });
 }
 
@@ -111,7 +279,7 @@ export function ForwardStopAll(hostID: string): $CancellablePromise<void> {
  */
 export function ForwardsList(): $CancellablePromise<$models.ForwardDTO[]> {
     return $Call.ByID(3028357325).then(($result: any) => {
-        return $$createType3($result);
+        return $$createType7($result);
     });
 }
 
@@ -120,7 +288,7 @@ export function ForwardsList(): $CancellablePromise<$models.ForwardDTO[]> {
  */
 export function GetSettings(): $CancellablePromise<model$0.Settings> {
     return $Call.ByID(3557174032).then(($result: any) => {
-        return $$createType4($result);
+        return $$createType8($result);
     });
 }
 
@@ -143,7 +311,7 @@ export function GroupRename(id: string, name: string): $CancellablePromise<void>
  */
 export function GroupSave(name: string): $CancellablePromise<$models.GroupDTO> {
     return $Call.ByID(4091719495, name).then(($result: any) => {
-        return $$createType5($result);
+        return $$createType9($result);
     });
 }
 
@@ -152,7 +320,7 @@ export function GroupSave(name: string): $CancellablePromise<$models.GroupDTO> {
  */
 export function GroupsList(): $CancellablePromise<$models.GroupDTO[]> {
     return $Call.ByID(1467687219).then(($result: any) => {
-        return $$createType6($result);
+        return $$createType10($result);
     });
 }
 
@@ -172,7 +340,7 @@ export function HostDelete(id: string): $CancellablePromise<void> {
  */
 export function HostSave($in: $models.HostDTO): $CancellablePromise<$models.HostDTO> {
     return $Call.ByID(4277690896, $in).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType11($result);
     });
 }
 
@@ -188,7 +356,7 @@ export function HostsExport(): $CancellablePromise<void> {
  */
 export function HostsList(): $CancellablePromise<$models.HostDTO[]> {
     return $Call.ByID(1079401910).then(($result: any) => {
-        return $$createType8($result);
+        return $$createType12($result);
     });
 }
 
@@ -197,7 +365,7 @@ export function HostsList(): $CancellablePromise<$models.HostDTO[]> {
  */
 export function ImportPuTTY(): $CancellablePromise<$models.ImportResult> {
     return $Call.ByID(2012174936).then(($result: any) => {
-        return $$createType9($result);
+        return $$createType13($result);
     });
 }
 
@@ -206,7 +374,7 @@ export function ImportPuTTY(): $CancellablePromise<$models.ImportResult> {
  */
 export function ImportSSHConfig(): $CancellablePromise<$models.ImportResult> {
     return $Call.ByID(907787950).then(($result: any) => {
-        return $$createType9($result);
+        return $$createType13($result);
     });
 }
 
@@ -238,7 +406,7 @@ export function KeyExport(id: string, format: string, password: string): $Cancel
  */
 export function KeyGenerate(name: string, kind: string, comment: string, passphrase: string): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(1791015309, name, kind, comment, passphrase).then(($result: any) => {
-        return $$createType10($result);
+        return $$createType14($result);
     });
 }
 
@@ -247,7 +415,7 @@ export function KeyGenerate(name: string, kind: string, comment: string, passphr
  */
 export function KeyImportFile(): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(3439102521).then(($result: any) => {
-        return $$createType10($result);
+        return $$createType14($result);
     });
 }
 
@@ -257,7 +425,7 @@ export function KeyImportFile(): $CancellablePromise<$models.KeyDTO> {
  */
 export function KeyImportFileWithPassphrase(path: string, passphrase: string): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(829767293, path, passphrase).then(($result: any) => {
-        return $$createType10($result);
+        return $$createType14($result);
     });
 }
 
@@ -267,7 +435,7 @@ export function KeyImportFileWithPassphrase(path: string, passphrase: string): $
  */
 export function KeyImportText(text: string, name: string): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(1982037696, text, name).then(($result: any) => {
-        return $$createType10($result);
+        return $$createType14($result);
     });
 }
 
@@ -276,7 +444,7 @@ export function KeyImportText(text: string, name: string): $CancellablePromise<$
  */
 export function KeyImportTextWithPassphrase(text: string, name: string, passphrase: string): $CancellablePromise<$models.KeyDTO> {
     return $Call.ByID(3955193724, text, name, passphrase).then(($result: any) => {
-        return $$createType10($result);
+        return $$createType14($result);
     });
 }
 
@@ -292,7 +460,7 @@ export function KeyRename(id: string, name: string): $CancellablePromise<void> {
  */
 export function KeysList(): $CancellablePromise<$models.KeyDTO[]> {
     return $Call.ByID(1066303763).then(($result: any) => {
-        return $$createType11($result);
+        return $$createType15($result);
     });
 }
 
@@ -315,7 +483,7 @@ export function MCPJournalClear(): $CancellablePromise<void> {
  */
 export function MCPJournalList(): $CancellablePromise<model$0.MCPRecord[]> {
     return $Call.ByID(1040221956).then(($result: any) => {
-        return $$createType13($result);
+        return $$createType17($result);
     });
 }
 
@@ -364,7 +532,7 @@ export function MCPRotateToken(): $CancellablePromise<void> {
  */
 export function MCPSetEnabled(on: boolean): $CancellablePromise<$models.MCPStatusDTO> {
     return $Call.ByID(1984838108, on).then(($result: any) => {
-        return $$createType14($result);
+        return $$createType18($result);
     });
 }
 
@@ -374,7 +542,7 @@ export function MCPSetEnabled(on: boolean): $CancellablePromise<$models.MCPStatu
  */
 export function MCPSetPort(port: number): $CancellablePromise<$models.MCPStatusDTO> {
     return $Call.ByID(2176313760, port).then(($result: any) => {
-        return $$createType14($result);
+        return $$createType18($result);
     });
 }
 
@@ -383,7 +551,7 @@ export function MCPSetPort(port: number): $CancellablePromise<$models.MCPStatusD
  */
 export function MCPStatus(): $CancellablePromise<$models.MCPStatusDTO> {
     return $Call.ByID(1378990627).then(($result: any) => {
-        return $$createType14($result);
+        return $$createType18($result);
     });
 }
 
@@ -415,7 +583,7 @@ export function SessionClose(id: string): $CancellablePromise<void> {
  */
 export function SessionList(): $CancellablePromise<$models.SessionDTO[]> {
     return $Call.ByID(491749225).then(($result: any) => {
-        return $$createType16($result);
+        return $$createType20($result);
     });
 }
 
@@ -468,7 +636,7 @@ export function VaultBackup(password: string): $CancellablePromise<string> {
  */
 export function VaultCounts(): $CancellablePromise<$models.VaultCountsDTO> {
     return $Call.ByID(3202868421).then(($result: any) => {
-        return $$createType17($result);
+        return $$createType21($result);
     });
 }
 
@@ -528,7 +696,7 @@ export function VaultSetPassword(password: string): $CancellablePromise<void> {
  */
 export function VaultState(): $CancellablePromise<$models.VaultStateDTO> {
     return $Call.ByID(1454336566).then(($result: any) => {
-        return $$createType18($result);
+        return $$createType22($result);
     });
 }
 
@@ -548,22 +716,26 @@ export function Version(): $CancellablePromise<string> {
 }
 
 // Private type creation functions
-const $$createType0 = $models.ForwardHostDTO.createFrom;
-const $$createType1 = $Create.Array($$createType0);
-const $$createType2 = $models.ForwardDTO.createFrom;
-const $$createType3 = $Create.Array($$createType2);
-const $$createType4 = model$0.Settings.createFrom;
-const $$createType5 = $models.GroupDTO.createFrom;
-const $$createType6 = $Create.Array($$createType5);
-const $$createType7 = $models.HostDTO.createFrom;
-const $$createType8 = $Create.Array($$createType7);
-const $$createType9 = $models.ImportResult.createFrom;
-const $$createType10 = $models.KeyDTO.createFrom;
-const $$createType11 = $Create.Array($$createType10);
-const $$createType12 = model$0.MCPRecord.createFrom;
-const $$createType13 = $Create.Array($$createType12);
-const $$createType14 = $models.MCPStatusDTO.createFrom;
-const $$createType15 = $models.SessionDTO.createFrom;
-const $$createType16 = $Create.Array($$createType15);
-const $$createType17 = $models.VaultCountsDTO.createFrom;
-const $$createType18 = $models.VaultStateDTO.createFrom;
+const $$createType0 = $Create.Array($Create.Any);
+const $$createType1 = $models.FilesJobDTO.createFrom;
+const $$createType2 = $Create.Array($$createType1);
+const $$createType3 = $models.FilesListDTO.createFrom;
+const $$createType4 = $models.ForwardHostDTO.createFrom;
+const $$createType5 = $Create.Array($$createType4);
+const $$createType6 = $models.ForwardDTO.createFrom;
+const $$createType7 = $Create.Array($$createType6);
+const $$createType8 = model$0.Settings.createFrom;
+const $$createType9 = $models.GroupDTO.createFrom;
+const $$createType10 = $Create.Array($$createType9);
+const $$createType11 = $models.HostDTO.createFrom;
+const $$createType12 = $Create.Array($$createType11);
+const $$createType13 = $models.ImportResult.createFrom;
+const $$createType14 = $models.KeyDTO.createFrom;
+const $$createType15 = $Create.Array($$createType14);
+const $$createType16 = model$0.MCPRecord.createFrom;
+const $$createType17 = $Create.Array($$createType16);
+const $$createType18 = $models.MCPStatusDTO.createFrom;
+const $$createType19 = $models.SessionDTO.createFrom;
+const $$createType20 = $Create.Array($$createType19);
+const $$createType21 = $models.VaultCountsDTO.createFrom;
+const $$createType22 = $models.VaultStateDTO.createFrom;

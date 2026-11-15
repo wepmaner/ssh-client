@@ -184,6 +184,7 @@ func (a *App) VaultRestore(path, password string) error {
 	defer a.restoring.Store(false)
 	a.mcpStop()
 	a.closeAllSessions()
+	a.closeAllFiles()
 	a.stopAllForwards()
 	a.closeAllHostConns()
 	defer a.reopenHostConns()

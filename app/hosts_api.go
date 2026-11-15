@@ -195,6 +195,7 @@ func (a *App) HostDelete(id string) error {
 	}
 	a.mcpReleaseHost(id)
 	a.closeSessionsOfHost(id)
+	a.filesHostDeleted(id)
 	err := a.deleteForwardsOfHost(id)
 	a.closeHostConns(id)
 	a.dropFwdHostGroup(id)
