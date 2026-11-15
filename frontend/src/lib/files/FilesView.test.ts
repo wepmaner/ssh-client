@@ -356,7 +356,8 @@ describe('FilesView', () => {
     // Finished: no summary text, no bar, the result on the row and its own × that removes it.
     expect(queue.textContent).not.toContain('завершены')
     expect(queue.textContent).toContain('Передачи')
-    expect(queue.textContent).toContain('100 байт · пропущено: 1')
+    expect(queue.textContent).toContain('100 байт')
+    expect(queue.textContent).not.toContain('пропущено') // the user chose to skip, no need to repeat it
     expect(within(queue).queryByRole('progressbar')).toBeNull()
     expect(within(queue).queryByRole('button', { name: 'Отменить' })).toBeNull()
     await fireEvent.click(within(queue).getByRole('button', { name: 'Показать в папке' }))

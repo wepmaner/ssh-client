@@ -174,7 +174,7 @@ describe('job texts', () => {
 
   it('reports the size, errors, skipped and renamed files in the result', () => {
     expect(jobStatus(job({ state: 'done', failed: 2, renamed: 1 }), 0)).toBe('40 МБ · ошибок: 2 · переименовано: 1')
-    expect(jobResult(job({ state: 'done', skipped: 1 }))).toBe('40 МБ · пропущено: 1')
+    expect(jobResult(job({ state: 'done', skipped: 1 }))).toBe('40 МБ') // skipping was the user's own choice
     expect(jobResult(job({ state: 'done', total_bytes: 0 }))).toBe('Готово')
     expect(jobResult(job({ kind: 'delete', state: 'done', done_files: 4 }))).toBe('Удалено: 4')
     expect(jobStatus(job({ state: 'failed', message: 'нет прав' }), 0)).toBe('нет прав')

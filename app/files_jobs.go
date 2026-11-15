@@ -315,9 +315,6 @@ func doneMessage(d FilesJobDTO) string {
 	if d.Failed > 0 {
 		msg = fmt.Sprintf("Готово, с ошибками: %d", d.Failed)
 	}
-	if d.Skipped > 0 {
-		msg += fmt.Sprintf(" · пропущено: %d", d.Skipped)
-	}
 	if d.Renamed > 0 {
 		msg += fmt.Sprintf(" · переименовано: %d", d.Renamed)
 	}

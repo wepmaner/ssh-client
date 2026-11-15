@@ -715,7 +715,7 @@ func TestFilesJobCountsSkipped(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := s.waitJob(t, tab, job, jobDone, hcWait)
-	if d.Skipped != 1 || d.DoneFiles != 2 || !strings.Contains(d.Message, "пропущено: 1") {
+	if d.Skipped != 1 || d.DoneFiles != 2 || strings.Contains(d.Message, "пропущено") {
 		t.Fatalf("job %+v", d)
 	}
 	if fi, err := os.Stat(filepath.Join(s.root, "a.txt")); err != nil || fi.Size() != 3 {

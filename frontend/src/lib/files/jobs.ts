@@ -21,7 +21,6 @@ export function jobFraction(j: Job): number {
 function tail(j: Job): string[] {
   const parts: string[] = []
   if (j.failed > 0) parts.push(`ошибок: ${j.failed}`)
-  if (j.skipped > 0) parts.push(`пропущено: ${j.skipped}`)
   if (j.renamed > 0) parts.push(`переименовано: ${j.renamed}`)
   return parts
 }
@@ -40,7 +39,7 @@ export function orderJobs(jobs: Job[]): Job[] {
   return [...live, ...done]
 }
 
-/** The short result of a finished job: «572 МБ · пропущено: 1», «Отменено», the error. */
+/** The short result of a finished job: «572 МБ · ошибок: 1», «Отменено», the error. */
 export function jobResult(j: Job): string {
   switch (j.state) {
     case 'done': {
