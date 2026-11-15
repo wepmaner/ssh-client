@@ -23,7 +23,9 @@ const units = ['КБ', 'МБ', 'ГБ', 'ТБ', 'ПБ']
 function cut(v: number, digits: number): string {
   const f = 10 ** digits
   const s = (Math.floor(v * f + 1e-9) / f).toFixed(digits)
-  return s.replace(/\.?0+$/, '').replace('.', ',')
+  // Zeros are dropped only after the point: «1,50» is «1,5», but «190» and «100» stay whole.
+  const t = s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s
+  return t.replace('.', ',')
 }
 
 /** «0 байт», «512 байт», «12,3 КБ», «999 КБ», «1,5 ГБ». */

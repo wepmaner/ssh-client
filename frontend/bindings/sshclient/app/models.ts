@@ -96,7 +96,7 @@ export class FilesJobDTO {
     "id": string;
 
     /**
-     * upload|download|delete
+     * upload|download|delete|copy
      */
     "kind": string;
     "title": string;

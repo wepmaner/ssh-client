@@ -1,6 +1,7 @@
 package sshclient
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -748,3 +749,100 @@ func RemoveRemoteFiles(c *ssh.Client, names []string) {
 		_ = sc.Remove(n) //nolint:gosec // G104: best-effort cleanup of a temporary file
 	}
 }
+
+// copyReadBuffer is the read size of a copy inside the server: a read that large goes out as
+// several sftp requests in flight instead of one round trip per packet.
+const copyReadBuffer = 1 << 20
+
+// CopyRemoteFile copies the remote file src to dst on the same server through dst's part file,
+// streaming through the client, then sets the modification time and moves it into place. An
+// existing dst is replaced or the file skipped, by c.Replace. It does not resume: a part left by an
+// earlier run is written anew.
+func CopyRemoteFile(ctx context.Context, sc *sftp.Client, src, dst string, c Copy) (string, error) {
+	if st, err := sc.Lstat(dst); err == nil {
+		if !c.Replace {
+			return Skipped, nil
+		}
+		if st.IsDir() {
+			return "", &FSError{Msg: "На сервере на этом месте папка: " + dst, Err: ErrNameTaken}
+		}
+	} else if lost(err) {
+		return "", err
+	}
+	in, err := sc.Open(src)
+	if err != nil {
+		if lost(err) {
+			return "", err
+		}
+		return "", FileError(src, err)
+	}
+	defer func() { _ = in.Close() }() //nolint:gosec // G104: read-only file, close errors are irrelevant
+	sst, err := in.Stat()
+	if err != nil {
+		if lost(err) {
+			return "", err
+		}
+		return "", FileError(src, err)
+	}
+	part := PartName(dst, c.JobID)
+	if c.OnPart != nil {
+		c.OnPart(part)
+	}
+	out, err := sc.OpenFile(part, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	if err != nil {
+		if lost(err) {
+			return "", err
+		}
+		return "", FileError(dst, err)
+	}
+	if c.Progress != nil {
+		c.Progress(0)
+	}
+	_, err = pipeUpload(ctx, out, bufioReader(in), 0, c.Progress)
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return "", cerr
+		}
+		if lost(err) {
+			return "", err
+		}
+		return "", FileError(dst, err)
+	}
+	_ = sc.Chmod(part, sst.Mode().Perm())           //nolint:gosec // G104: a server that refuses modes still gets the file
+	_ = sc.Chtimes(part, time.Now(), sst.ModTime()) //nolint:gosec // G104: a server that refuses times still gets the file
+	if err := placeRemote(sc, part, dst, c.Replace); err != nil {
+		return "", err
+	}
+	return Copied, nil
+}
+
+// CopyName is a free name for a copy of name in dir: «a (копия).txt», «a (копия 2).txt»; a
+// folder or a name without an extension gets the suffix at the end.
+func CopyName(sc *sftp.Client, dir, name string, isDir bool) (string, error) {
+	stem, ext := name, ""
+	if i := strings.LastIndex(name, "."); !isDir && i > 0 {
+		stem, ext = name[:i], name[i:]
+	}
+	for n := 1; n < 1000; n++ {
+		suffix := " (копия)"
+		if n > 1 {
+			suffix = fmt.Sprintf(" (копия %d)", n)
+		}
+		cand := stem + suffix + ext
+		if _, err := sc.Lstat(path.Join(dir, cand)); err != nil {
+			if lost(err) {
+				return "", err
+			}
+			if errors.Is(err, fs.ErrNotExist) {
+				return cand, nil
+			}
+			return "", FileError(cand, err)
+		}
+	}
+	return "", FileError(name, ErrNameTaken)
+}
+
+func bufioReader(r io.Reader) io.Reader { return bufio.NewReaderSize(r, copyReadBuffer) }

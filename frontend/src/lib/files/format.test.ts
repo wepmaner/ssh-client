@@ -18,6 +18,18 @@ describe('formatSize', () => {
     expect(formatSize(1.5 * 1024 ** 3)).toBe('1,5 ГБ')
   })
 
+  it('keeps the zeros of a whole number', () => {
+    expect(formatSize(200_000_000)).toBe('190 МБ') // 190,7 МБ, cut to three digits
+    expect(formatSize(100 * 1024)).toBe('100 КБ')
+    expect(formatSize(10 * 1024)).toBe('10 КБ')
+    expect(formatSize(100)).toBe('100 байт')
+    expect(formatSize(10 * 1024 ** 3)).toBe('10 ГБ')
+    expect(formatSize(1000 * 1024 * 1024 - 1)).toBe('999 МБ')
+    expect(formatSize(1000 * 1024 * 1024)).toBe('0,97 ГБ')
+    expect(formatSize(2.05 * 1024 * 1024)).toBe('2,05 МБ')
+    expect(formatSize(2.5 * 1024 * 1024)).toBe('2,5 МБ')
+  })
+
   it('cuts instead of rounding up', () => {
     expect(formatSize(1023 * 1024 + 1023)).toBe('0,99 МБ')
     expect(formatSize(19.99 * 1024)).toBe('19,9 КБ')

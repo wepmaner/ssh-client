@@ -97,6 +97,17 @@ describe('HostsView', () => {
     expect(sess.openSession).toHaveBeenCalledWith('h3')
   })
 
+  it('the folder button of a tile opens the files tab of its host', async () => {
+    load(list)
+    render(HostsView)
+    const item = screen.getByRole('button', { name: /^nas/ }).closest('[role="listitem"]') as HTMLElement
+    const files = within(item).getByRole('button', { name: 'Файлы' })
+    expect(files.getAttribute('title')).toBe('Файлы хоста (SFTP)')
+    await fireEvent.click(files)
+    expect(sess.openFiles).toHaveBeenCalledWith('h3')
+    expect(sess.openSession).not.toHaveBeenCalled()
+  })
+
   it('shows the OS monogram', () => {
     load(list)
     render(HostsView)

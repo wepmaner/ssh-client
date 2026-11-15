@@ -55,6 +55,11 @@
       <span class="col">{host.key_id ? host.key_name : 'ключ не выбран'}</span>
     {/if}
   </button>
+  <button type="button" class="files" aria-label="Файлы" title="Файлы хоста (SFTP)" onclick={onfiles}>
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true">
+      <path d="M1.75 4.25a1 1 0 0 1 1-1h3.1l1.5 1.5h5.9a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1z" />
+    </svg>
+  </button>
   {#if menuOpen}
     <Menu
       anchor={mainEl}
@@ -113,6 +118,36 @@
     cursor: default;
   }
   .main:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: -2px;
+  }
+  .files {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    margin-right: 10px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-control);
+    background: transparent;
+    color: var(--muted);
+    cursor: default;
+    transition:
+      background-color 80ms,
+      color 80ms;
+  }
+  .row .files {
+    width: 28px;
+    height: 28px;
+    margin-right: 8px;
+  }
+  .files:hover {
+    background: #2e333b;
+    color: var(--text);
+  }
+  .files:focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: -2px;
   }
@@ -179,7 +214,8 @@
     font-size: 12px;
   }
   @media (prefers-reduced-motion: reduce) {
-    .host {
+    .host,
+    .files {
       transition: none;
     }
   }

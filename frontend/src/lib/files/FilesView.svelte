@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
+  import { sideButton } from '../mousenav'
   import { requestClose, sessions, type SessionTab } from '../sessions.svelte'
   import { toast } from '../stores.svelte'
   import ErrorCard from '../terminal/ErrorCard.svelte'
@@ -8,7 +9,7 @@
   import Dialog from '../ui/Dialog.svelte'
   import Menu from '../ui/Menu.svelte'
   import FileList from './FileList.svelte'
-  import { filesTab } from './files.svelte'
+  import { AUTO_REFRESH_MS, filesTab } from './files.svelte'
   import { plural } from './format'
   import Icon from './Icon.svelte'
   import LoginCard from './LoginCard.svelte'
@@ -58,6 +59,29 @@
       if (!el || el === document.body) list?.focus()
     })
   })
+
+  // The listing follows the server on its own: when the tab comes to front, when the window gets the
+  // focus back, and every 10 s while it is shown. autoRefresh skips a busy list and stays silent.
+  $effect(() => {
+    const m = model
+    if (!visible || !m || tab.state !== 'connected') return
+    const refresh = () => untrack(() => void m.autoRefresh())
+    refresh()
+    const timer = setInterval(() => document.visibilityState !== 'hidden' && refresh(), AUTO_REFRESH_MS)
+    window.addEventListener('focus', refresh)
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener('focus', refresh)
+    }
+  })
+
+  /** The side buttons of a mouse go back and forward, as in Explorer. */
+  function onmouseup(e: MouseEvent): void {
+    const dir = sideButton(e)
+    if (!dir || !visible || !model || blocked || document.querySelector('[role="dialog"]')) return
+    e.preventDefault()
+    void (dir === 'back' ? model.back() : model.forward())
+  }
 
   async function copyPaths(paths: string[]): Promise<void> {
     if (paths.length === 0) return
@@ -130,15 +154,15 @@
   })
 </script>
 
-<svelte:window {onkeydown} />
+<svelte:window {onkeydown} {onmouseup} />
 
 {#if model}
   <div class="view" aria-hidden={blocked ? 'true' : undefined}>
     <div class="nav">
-      <button type="button" class="icon" aria-label="Назад" title="Назад (Alt+←)" disabled={!model.canBack} onclick={() => model.back()}>
+      <button type="button" class="icon" aria-label="Назад" title="Назад (Alt+←, боковая кнопка мыши)" disabled={!model.canBack} onclick={() => model.back()}>
         <Icon name="back" />
       </button>
-      <button type="button" class="icon" aria-label="Вперёд" title="Вперёд (Alt+→)" disabled={!model.canForward} onclick={() => model.forward()}>
+      <button type="button" class="icon" aria-label="Вперёд" title="Вперёд (Alt+→, боковая кнопка мыши)" disabled={!model.canForward} onclick={() => model.forward()}>
         <Icon name="forward" />
       </button>
       <button type="button" class="icon" aria-label="Вверх" title="На уровень вверх (Alt+↑)" disabled={!model.canUp} onclick={() => model.up()}>
@@ -185,7 +209,13 @@
         <Icon name="download" /><span>Скачать…</span>
       </button>
       <span class="spacer"></span>
-      <button type="button" class="cmd" aria-pressed={model.showHidden} title="Показывать имена, начинающиеся с точки" onclick={() => model.toggleHidden()}>
+      <button
+        type="button"
+        class="cmd toggle"
+        aria-pressed={model.showHidden}
+        title={model.showHidden ? 'Скрытые показаны: имена, начинающиеся с точки' : 'Показать имена, начинающиеся с точки'}
+        onclick={() => model.toggleHidden()}
+      >
         <Icon name="eye" /><span>Скрытые</span>
       </button>
     </div>
@@ -236,13 +266,14 @@
     {/snippet}
   </Dialog>
 
-  <Dialog open={!!model.deleteAsk} title={deleteTitle} onclose={() => (model.deleteAsk = null)} width={440} autofocus="button.btn.primary">
+  <!-- Cancel has the focus: Enter never deletes by itself. -->
+  <Dialog open={!!model.deleteAsk} title={deleteTitle} onclose={() => (model.deleteAsk = null)} width={440} autofocus="[data-autofocus]">
     <p class="muted">Папки удаляются со всем содержимым. Это нельзя отменить.</p>
     {#snippet footer()}
       <span></span>
       <span class="actions">
-        <Button variant="ghost" onclick={() => (model.deleteAsk = null)}>Отмена</Button>
-        <Button variant="primary" onclick={() => model.confirmDelete()}>Удалить</Button>
+        <Button variant="outline" data-autofocus="" onclick={() => (model.deleteAsk = null)}>Отмена</Button>
+        <Button variant="danger" onclick={() => model.confirmDelete()}>Удалить</Button>
       </span>
     {/snippet}
   </Dialog>
@@ -346,8 +377,13 @@
   .cmd[aria-expanded='true'] {
     background: #262b33;
   }
-  .cmd[aria-pressed='true'] {
-    background: #2e333b;
+  /* A pressed toggle reads as on: accent tint and accent text, not just a hover shade. */
+  .cmd.toggle[aria-pressed='true'] {
+    background: rgba(79, 143, 247, 0.16);
+    color: var(--accent);
+  }
+  .cmd.toggle[aria-pressed='true']:hover {
+    background: rgba(79, 143, 247, 0.24);
   }
   .cmd:disabled {
     color: #5f6873;

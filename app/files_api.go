@@ -54,7 +54,7 @@ type FilesEntryDTO struct {
 // FilesJobDTO is one job of a tab's queue, the payload of files:job:<tab>.
 type FilesJobDTO struct {
 	ID         string `json:"id"`
-	Kind       string `json:"kind"` // upload|download|delete
+	Kind       string `json:"kind"` // upload|download|delete|copy
 	Title      string `json:"title"`
 	State      string `json:"state"` // queued|running|waiting|done|failed|cancelled
 	Message    string `json:"message"`
@@ -335,8 +335,9 @@ type FilesConflictDTO struct {
 	Merge bool   `json:"merge"` // both are folders: they merge instead of being replaced or skipped
 }
 
-// FilesConflicts returns the sources ("upload": local paths, "download": remote paths) already
-// present in dest, by their top-level names as shown to the user.
+// FilesConflicts returns the sources ("upload": local paths, "download" and "copy": remote paths)
+// already present in dest, by their top-level names as shown to the user. A copy into the folder
+// its source is in never clashes: it gets a «(копия)» name.
 func (a *App) FilesConflicts(tabID, direction string, sources []string, dest string) ([]FilesConflictDTO, error) {
 	t, err := a.filesTab(tabID)
 	if err != nil {
@@ -400,10 +401,67 @@ func (a *App) FilesConflicts(tabID, direction string, sources []string, dest str
 				return nil
 			})
 		}
+	case jobCopy:
+		dir := path.Clean(dest)
+		err = t.withSFTP(func(sc *sftp.Client) error {
+			out = out[:0]
+			for _, s := range sources {
+				src := path.Clean(s)
+				if path.Dir(src) == dir {
+					continue
+				}
+				target := path.Join(dir, path.Base(src))
+				if _, err := sc.Lstat(target); err != nil {
+					if sshclient.IsLost(err) {
+						return err
+					}
+					continue
+				}
+				from, ferr := sc.Stat(src)
+				to, terr := sc.Stat(target)
+				for _, e := range []error{ferr, terr} {
+					if e != nil && sshclient.IsLost(e) {
+						return e
+					}
+				}
+				merge := ferr == nil && terr == nil && from.IsDir() && to.IsDir()
+				out = append(out, FilesConflictDTO{Name: path.Base(src), Merge: merge})
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, sshclient.FileError(dest, err)
+		}
 	default:
 		return nil, errBadInput
 	}
 	return out, nil
+}
+
+// FilesCopy queues a copy of remote files and folders into the remote folder destDir on the same
+// server and returns the job id. onConflict is "replace" or "skip" for names already there; folders
+// merge. A source copied into its own folder gets a «(копия)» name.
+func (a *App) FilesCopy(tabID string, paths []string, destDir, onConflict string) (string, error) {
+	t, err := a.filesTab(tabID)
+	if err != nil {
+		return "", err
+	}
+	replace, err := replaceChoice(onConflict)
+	if err != nil {
+		return "", err
+	}
+	if len(paths) == 0 {
+		return "", errFilesNothing
+	}
+	if !strings.HasPrefix(destDir, "/") {
+		return "", errBadInput
+	}
+	for _, p := range paths {
+		if !strings.HasPrefix(p, "/") {
+			return "", errBadInput
+		}
+	}
+	return t.addJob(jobCopy, slices.Clone(paths), path.Clean(destDir), replace)
 }
 
 func replaceChoice(onConflict string) (bool, error) {

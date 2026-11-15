@@ -28,13 +28,23 @@ export function FilesClose(tabID: string): $CancellablePromise<void> {
 }
 
 /**
- * FilesConflicts returns the sources ("upload": local paths, "download": remote paths) already
- * present in dest, by their top-level names as shown to the user.
+ * FilesConflicts returns the sources ("upload": local paths, "download" and "copy": remote paths)
+ * already present in dest, by their top-level names as shown to the user. A copy into the folder
+ * its source is in never clashes: it gets a «(копия)» name.
  */
 export function FilesConflicts(tabID: string, direction: string, sources: string[], dest: string): $CancellablePromise<$models.FilesConflictDTO[]> {
     return $Call.ByID(654775921, tabID, direction, sources, dest).then(($result: any) => {
         return $$createType1($result);
     });
+}
+
+/**
+ * FilesCopy queues a copy of remote files and folders into the remote folder destDir on the same
+ * server and returns the job id. onConflict is "replace" or "skip" for names already there; folders
+ * merge. A source copied into its own folder gets a «(копия)» name.
+ */
+export function FilesCopy(tabID: string, paths: string[], destDir: string, onConflict: string): $CancellablePromise<string> {
+    return $Call.ByID(4144980791, tabID, paths, destDir, onConflict);
 }
 
 /**

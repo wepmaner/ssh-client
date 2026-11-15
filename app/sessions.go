@@ -47,11 +47,13 @@ type session struct {
 	conn      *hostConn // the connection joined in SessionOpen
 	leaveOnce sync.Once
 
-	out    *outStream
-	in     *inputQueue // keystrokes for the Prompter until the shell starts
-	ctx    context.Context
-	cancel context.CancelFunc
-	done   chan struct{} // closed when run has returned and every goroutine of the session ended
+	out      *outStream
+	in       *inputQueue // keystrokes for the Prompter until the shell starts
+	ctx      context.Context
+	cancel   context.CancelFunc
+	done     chan struct{} // closed when run has returned and every goroutine of the session ended
+	stopped  chan struct{} // closed by close(): a wait for the end of the connection stops
+	stopOnce sync.Once
 
 	wmu sync.Mutex // orders writes to the shell; never held together with mu waiting on the network
 
@@ -69,7 +71,7 @@ func newSession(id, hostID, hostName string, cols, rows int, e emitter) *session
 	return &session{
 		id: id, hostID: hostID, hostName: hostName,
 		out: newOutStream(e, id), in: newInputQueue(),
-		ctx: ctx, cancel: cancel, done: make(chan struct{}),
+		ctx: ctx, cancel: cancel, done: make(chan struct{}), stopped: make(chan struct{}),
 		state: stateConnecting, cols: cols, rows: rows,
 	}
 }
@@ -136,28 +138,47 @@ func (s *session) run(p hostParams) {
 	switch {
 	case closed:
 		s.finish(SessionStateDTO{State: stateClosed, Retryable: true})
-	case code == nil && s.clientEnded(client):
+	case code == nil && s.clientEnded(client, endGrace(waitErr)):
 		st := errorState(fmt.Errorf("%w: %w", errConnLost, waitErr))
-		st.Message = errConnLost.Error() // the system text stays in Detail
+		st.Message = errConnLost.Error()
+		if waitErr != nil {
+			st.Detail = sshclient.ErrorDetail(waitErr) // only the system text, once
+		}
 		s.finish(st)
 	default:
 		s.finish(SessionStateDTO{State: stateClosed, ExitCode: code, Retryable: true})
 	}
 }
 
+// exitMissingGrace is how long a shell whose channel closed with no exit status or signal waits for
+// the end of the connection: a server going down for a restart closes its shells first and the TCP
+// connection a while later, and that is a dropped connection, not a shell that exited.
+var exitMissingGrace = 3 * time.Second
+
+// endGrace is how long a shell that ended with waitErr waits for the end of its connection.
+func endGrace(waitErr error) time.Duration {
+	var missing *ssh.ExitMissingError
+	if errors.As(waitErr, &missing) {
+		return exitMissingGrace
+	}
+	return deadClientGrace
+}
+
 // clientEnded reports, after a shell ended without an exit status, whether the shared client ended
-// too (the connection dropped) within deadClientGrace: the channel closes before the client does.
-func (s *session) clientEnded(c *ssh.Client) bool {
+// too (the connection dropped) within grace: the channel closes before the client does.
+func (s *session) clientEnded(c *ssh.Client, grace time.Duration) bool {
 	ended := make(chan struct{})
 	go func() { // a live client keeps this until it closes
 		_ = c.Wait() //nolint:gosec // G104: only the end of the connection matters
 		close(ended)
 	}()
-	t := time.NewTimer(deadClientGrace)
+	t := time.NewTimer(grace)
 	defer t.Stop()
 	select {
 	case <-ended:
 		return true
+	case <-s.stopped:
+		return false
 	case <-t.C:
 		return false
 	}
@@ -316,6 +337,7 @@ func (s *session) close() {
 	s.mu.Lock()
 	s.closing = true
 	s.mu.Unlock()
+	s.stopOnce.Do(func() { close(s.stopped) })
 	s.cancel()
 	s.in.Close()
 }

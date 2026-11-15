@@ -1,6 +1,6 @@
 <script lang="ts">
   import { FilesShowLocal, errorText } from '../api'
-  import { toast } from '../stores.svelte'
+  import { setToastLift, toast } from '../stores.svelte'
   import { isActive, isFinished, type FilesTab, type Job } from './files.svelte'
   import Icon, { type IconName } from './Icon.svelte'
   import { jobFraction, jobStatus, orderJobs, queueSummary } from './jobs'
@@ -12,6 +12,27 @@
   let { model }: { model: FilesTab } = $props()
 
   let expanded = $state(true)
+  let panel: HTMLElement | undefined = $state()
+
+  // The toast stays above the panel while the panel is on screen; a hidden tab's panel measures 0.
+  $effect(() => {
+    const el = panel
+    const owner = 'transfers:' + model.id
+    if (!el) return
+    const measure = () => {
+      const r = el.getBoundingClientRect()
+      setToastLift(owner, r.height > 0 ? window.innerHeight - r.top : 0)
+    }
+    measure()
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
+    ro?.observe(el)
+    window.addEventListener('resize', measure)
+    return () => {
+      ro?.disconnect()
+      window.removeEventListener('resize', measure)
+      setToastLift(owner, 0)
+    }
+  })
   let details = $state<string[]>([])
   let now = $state(Date.now())
 
@@ -27,10 +48,12 @@
   const rows = $derived(orderJobs(model.jobs))
   const finished = $derived(model.jobs.filter(isFinished).length)
 
-  const direction = (j: Job) => (j.kind === 'upload' ? 'Загрузка на сервер' : j.kind === 'download' ? 'Скачивание' : 'Удаление')
+  const direction = (j: Job) =>
+    j.kind === 'upload' ? 'Загрузка на сервер' : j.kind === 'download' ? 'Скачивание' : j.kind === 'copy' ? 'Копирование на сервере' : 'Удаление'
+  const activeIcon: Record<Job['kind'], IconName> = { upload: 'upload', download: 'download', copy: 'copy', delete: 'trash' }
 
   function stateIcon(j: Job): { name: IconName; label: string } {
-    if (isActive(j)) return { name: j.kind === 'upload' ? 'upload' : j.kind === 'download' ? 'download' : 'trash', label: direction(j) }
+    if (isActive(j)) return { name: activeIcon[j.kind] ?? 'file', label: direction(j) }
     if (j.state === 'failed') return { name: 'error', label: 'Ошибка' }
     if (j.state === 'cancelled') return { name: 'cancelled', label: 'Отменено' }
     if (j.failed > 0) return { name: 'warning', label: 'Готово, с ошибками' }
@@ -52,7 +75,7 @@
   }
 </script>
 
-<section class="transfers" aria-label="Передачи">
+<section class="transfers" aria-label="Передачи" bind:this={panel}>
   <div class="head">
     <button type="button" class="toggle" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>
       <span class="chev" class:open={expanded}><Icon name="chevron" size={12} /></span>

@@ -3,7 +3,7 @@
   import type { HTMLButtonAttributes } from 'svelte/elements'
 
   interface Props extends HTMLButtonAttributes {
-    variant?: 'primary' | 'outline' | 'ghost'
+    variant?: 'primary' | 'outline' | 'ghost' | 'danger'
     children: Snippet
   }
   let { variant = 'outline', type = 'button', children, ...rest }: Props = $props()
@@ -38,6 +38,15 @@
   }
   .primary:hover:not(:disabled) {
     background: #6aa0f9;
+  }
+  /* A destructive confirmation: red, never the default of Enter (the dialog focuses Cancel). */
+  .danger {
+    background: var(--danger);
+    color: #fff;
+    font-weight: 600;
+  }
+  .danger:hover:not(:disabled) {
+    background: #d13a2b;
   }
   .outline {
     background: transparent;

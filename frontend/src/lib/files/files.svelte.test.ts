@@ -12,6 +12,7 @@ const { handlers, api } = vi.hoisted(() => ({
     FilesMove: vi.fn(),
     FilesDelete: vi.fn(),
     FilesConflicts: vi.fn(),
+    FilesCopy: vi.fn(),
     FilesUpload: vi.fn(),
     FilesDownload: vi.fn(),
     FilesPickUpload: vi.fn(),
@@ -40,7 +41,7 @@ vi.mock('../api', async () => {
 })
 
 import { toastState } from '../stores.svelte'
-import { createFilesTab, disposeFilesTab, filesTab, type FilesTab, type Job } from './files.svelte'
+import { createFilesTab, CROSS_SERVER_PASTE, disposeFilesTab, filesClipboard, filesTab, lastFolder, resetFilesMemory, type FilesTab, type Job } from './files.svelte'
 import type { Entry } from './format'
 
 const e = (name: string, over: Partial<Entry> = {}): Entry => ({ name, dir: false, link: false, broken: false, size: 10, mtime: 0, mode: '-rw-r--r--', ...over })
@@ -55,8 +56,8 @@ function listOf(dir: string) {
 
 const flush = () => new Promise((r) => setTimeout(r, 0))
 
-async function open(id = 't1'): Promise<FilesTab> {
-  const t = createFilesTab(id, 'h1')
+async function open(id = 't1', hostId = 'h1'): Promise<FilesTab> {
+  const t = createFilesTab(id, hostId)
   await flush()
   await flush()
   return t
@@ -65,6 +66,7 @@ async function open(id = 't1'): Promise<FilesTab> {
 beforeEach(() => {
   vi.resetAllMocks()
   for (const id of ['t1', 't2']) disposeFilesTab(id)
+  resetFilesMemory()
   handlers.clear()
   tree = {
     '/home/u': [e('docs', { dir: true }), e('b.txt'), e('.profile'), e('a.txt')],
@@ -306,6 +308,120 @@ describe('FilesTab transfers', () => {
     await t.clearFinished()
     expect(api.FilesJobRemove).toHaveBeenCalledWith('t1', 'j1')
     expect(t.jobs).toEqual([])
+  })
+})
+
+describe('FilesTab memory and refresh', () => {
+  it('reopens a host at its last folder, and at home when that folder is gone', async () => {
+    let t = await open()
+    await t.navigate('/home/u/docs')
+    expect(lastFolder('h1')).toBe('/home/u/docs')
+    disposeFilesTab('t1')
+    t = await open()
+    expect(t.path).toBe('/home/u/docs')
+    expect(t.history).toEqual(['/home/u/docs'])
+    expect(t.listError).toBe('')
+    disposeFilesTab('t1')
+
+    delete tree['/home/u/docs']
+    t = await open()
+    expect(t.path).toBe('/home/u')
+    expect(t.history).toEqual(['/home/u'])
+    expect(t.listError).toBe('')
+  })
+
+  it('refreshes silently: keeps the selection, shows no loading, ignores a failure', async () => {
+    const t = await open()
+    t.sel = { selected: ['a.txt'], anchor: 'a.txt', cursor: 'a.txt' }
+    tree['/home/u'].push(e('c.txt'))
+    expect(await t.autoRefresh()).toBe(true)
+    expect(t.order).toContain('c.txt')
+    expect(t.sel.selected).toEqual(['a.txt'])
+
+    const before = t.entries
+    toastState.message = ''
+    api.FilesList.mockRejectedValueOnce('Нет связи')
+    expect(await t.autoRefresh()).toBe(false)
+    expect(t.listError).toBe('')
+    expect(t.entries).toBe(before)
+    expect(toastState.message).toBe('')
+
+    expect(await t.autoRefresh()).toBe(true)
+    expect(t.entries).toBe(before) // nothing new: the rows stay as they are
+  })
+
+  it('does not refresh under an inline editor or a question', async () => {
+    const t = await open()
+    api.FilesList.mockClear()
+    t.startRename('a.txt')
+    expect(await t.autoRefresh()).toBe(false)
+    t.cancelEdits()
+    t.startCreate()
+    expect(await t.autoRefresh()).toBe(false)
+    t.cancelEdits()
+    t.askDelete(['a.txt'])
+    expect(await t.autoRefresh()).toBe(false)
+    expect(api.FilesList).not.toHaveBeenCalled()
+  })
+
+  it('counts the hidden names while they are hidden', async () => {
+    const t = await open()
+    expect(t.hiddenCount).toBe(1)
+    t.filter = 'zzz'
+    expect(t.hiddenCount).toBe(0)
+    t.filter = ''
+    t.toggleHidden()
+    expect(t.hiddenCount).toBe(0)
+  })
+})
+
+describe('FilesTab clipboard', () => {
+  it('copies into another folder after the clash question, by a job', async () => {
+    const t = await open()
+    t.toClipboard(['a.txt', 'docs'], false)
+    expect(filesClipboard.value).toEqual({ hostId: 'h1', paths: ['/home/u/a.txt', '/home/u/docs'], cut: false })
+    api.FilesConflicts.mockResolvedValue([{ name: 'a.txt', merge: false }])
+    api.FilesCopy.mockResolvedValue('j1')
+    const p = t.paste('/home')
+    await flush()
+    expect(api.FilesConflicts).toHaveBeenCalledWith('t1', 'copy', ['/home/u/a.txt', '/home/u/docs'], '/home')
+    t.conflict!.resolve('replace')
+    expect(await p).toBe('j1')
+    expect(api.FilesCopy).toHaveBeenCalledWith('t1', ['/home/u/a.txt', '/home/u/docs'], '/home', 'replace')
+    expect(filesClipboard.value).not.toBeNull() // a copy can be pasted again
+  })
+
+  it('a copy into its own folder needs no question: Go names it «(копия)»', async () => {
+    const t = await open()
+    t.toClipboard(['a.txt'], false)
+    api.FilesConflicts.mockResolvedValue([])
+    api.FilesCopy.mockResolvedValue('j1')
+    expect(await t.paste()).toBe('j1')
+    expect(api.FilesCopy).toHaveBeenCalledWith('t1', ['/home/u/a.txt'], '/home/u', 'skip')
+  })
+
+  it('a cut moves once and empties the clipboard; never into itself', async () => {
+    const t = await open()
+    t.toClipboard(['docs'], true)
+    expect(await t.paste('/home/u/docs')).toBe('')
+    expect(api.FilesMove).not.toHaveBeenCalled()
+    expect(toastState.message).toBe('Нельзя переместить папку в неё саму')
+    t.toClipboard(['a.txt'], true)
+    api.FilesMove.mockResolvedValue(undefined)
+    await t.paste('/home/u/docs')
+    expect(api.FilesMove).toHaveBeenCalledWith('t1', ['/home/u/a.txt'], '/home/u/docs')
+    expect(filesClipboard.value).toBeNull()
+  })
+
+  it('refuses a paste of another server’s files', async () => {
+    const a = await open('t1', 'h1')
+    const b = await open('t2', 'h2')
+    a.toClipboard(['a.txt'], false)
+    expect(await b.paste()).toBe('')
+    expect(toastState.message).toBe(CROSS_SERVER_PASTE)
+    expect(api.FilesConflicts).not.toHaveBeenCalled()
+    expect(api.FilesCopy).not.toHaveBeenCalled()
+    disposeFilesTab('t2')
   })
 })
 

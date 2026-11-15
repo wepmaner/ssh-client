@@ -2,6 +2,7 @@
 import {
   EventsOn,
   FilesConflicts,
+  FilesCopy,
   FilesDelete,
   FilesDownload,
   FilesHome,
@@ -24,7 +25,7 @@ import { decodeBase64 } from '../terminal/base64'
 import { baseName, compareEntries, isHidden, joinPath, parentPath, type Entry, type Sort } from './format'
 import { emptySelection, pruneSelection, type Selection } from './selection'
 
-export type JobKind = 'upload' | 'download' | 'delete'
+export type JobKind = 'upload' | 'download' | 'delete' | 'copy'
 export type JobState = 'queued' | 'running' | 'waiting' | 'done' | 'failed' | 'cancelled'
 
 /**
@@ -80,6 +81,30 @@ const plain = <T>(v: T): T => JSON.parse(JSON.stringify(v))
 /** Same folder in the POSIX sense: «/a/b/» is «/a/b». */
 const samePath = (a: string, b: string) => (a.length > 1 ? a.replace(/\/+$/, '') : a) === (b.length > 1 ? b.replace(/\/+$/, '') : b)
 
+/** The last folder shown per host, in memory only: a reopened files tab starts there. */
+const lastFolders = new Map<string, string>()
+
+export function lastFolder(hostId: string): string | undefined {
+  return lastFolders.get(hostId)
+}
+
+/**
+ * Remote files cut or copied with Ctrl+X / Ctrl+C, one clipboard for the app. The paths belong to
+ * hostId's server: a paste on another host's tab is refused.
+ */
+export const filesClipboard = $state<{ value: { hostId: string; paths: string[]; cut: boolean } | null }>({ value: null })
+
+/** Forgets the last folders and the clipboard; for tests. */
+export function resetFilesMemory(): void {
+  lastFolders.clear()
+  filesClipboard.value = null
+}
+
+export const CROSS_SERVER_PASTE = 'Копирование между серверами не поддерживается'
+
+/** How often a shown, idle listing is read again. */
+export const AUTO_REFRESH_MS = 10_000
+
 export class FilesTab {
   readonly id: string
   readonly hostId: string
@@ -132,6 +157,12 @@ export class FilesTab {
   readonly selectedEntries: Entry[] = $derived.by(() => {
     const s = new Set(this.sel.selected)
     return this.visible.filter((e) => s.has(e.name))
+  })
+  /** Names hidden by the dot rule that the filter would show. */
+  readonly hiddenCount: number = $derived.by(() => {
+    if (this.showHidden) return 0
+    const q = this.filter.trim().toLocaleLowerCase('ru')
+    return this.entries.filter((e) => isHidden(e.name) && (!q || e.name.toLocaleLowerCase('ru').includes(q))).length
   })
   readonly canBack = $derived(this.index > 0)
   readonly canForward = $derived(this.index >= 0 && this.index < this.history.length - 1)
@@ -203,9 +234,18 @@ export class FilesTab {
     if (this.loaded || this.starting) return this.starting ?? Promise.resolve()
     this.starting = (async () => {
       try {
-        const home = await FilesHome(this.id)
+        const home = (await FilesHome(this.id)) || '/'
         this.onConnected()
-        await this.navigate(home || '/')
+        // The folder the host's last tab showed, quietly: a folder gone since falls back to home.
+        const last = lastFolders.get(this.hostId)
+        if (last && !samePath(last, home)) {
+          this.history = [last]
+          this.index = 0
+          if (await this.load(last, { quiet: true })) return
+          this.history = []
+          this.index = -1
+        }
+        await this.navigate(home)
       } catch (e) {
         if (!probe) this.listError = errorText(e)
       } finally {
@@ -250,25 +290,34 @@ export class FilesTab {
 
   // ---- navigation ----
 
-  /** Lists dir. keep holds the selection (a refresh); select picks one name after it. */
-  async load(dir: string, opts: { keep?: boolean; select?: string } = {}): Promise<boolean> {
+  /**
+   * Lists dir. keep holds the selection (a refresh); select picks one name after it. quiet leaves
+   * everything as it was when the folder cannot be read; silent is a quiet background refresh
+   * without the loading hint.
+   */
+  async load(dir: string, opts: { keep?: boolean; select?: string; quiet?: boolean; silent?: boolean } = {}): Promise<boolean> {
     const token = ++this.token
-    this.listing = true
-    clearTimeout(this.slowTimer)
-    this.slowTimer = setTimeout(() => token === this.token && (this.slow = true), SLOW_LISTING_MS)
+    if (!opts.silent) {
+      this.listing = true
+      clearTimeout(this.slowTimer)
+      this.slowTimer = setTimeout(() => token === this.token && (this.slow = true), SLOW_LISTING_MS)
+    }
     try {
       const res = await FilesList(this.id, dir)
       if (token !== this.token) return false
       this.path = res.path || dir
       if (this.index >= 0) this.history[this.index] = this.path
-      this.entries = plain(res.entries ?? [])
+      lastFolders.set(this.hostId, this.path)
+      const entries = plain(res.entries ?? [])
+      // A background refresh that finds nothing new leaves the rows alone.
+      if (!opts.silent || JSON.stringify(entries) !== JSON.stringify(this.entries)) this.entries = entries
       this.listError = ''
       this.loaded = true
       if (opts.select) this.sel = { selected: [opts.select], anchor: opts.select, cursor: opts.select }
       else this.sel = opts.keep ? pruneSelection(this.sel, this.order) : emptySelection()
       return true
     } catch (e) {
-      if (token !== this.token) return false
+      if (token !== this.token || opts.quiet || opts.silent) return false
       this.path = dir
       this.entries = []
       this.listError = errorText(e)
@@ -323,6 +372,17 @@ export class FilesTab {
 
   refresh(): Promise<boolean> {
     return this.load(this.path, { keep: true })
+  }
+
+  /**
+   * Reads the shown folder again in the background: never while a listing, an inline editor or a
+   * question is open, without the loading hint, and a failure changes nothing.
+   */
+  autoRefresh(): Promise<boolean> {
+    if (!this.loaded || !this.path || this.listing || this.listError || this.renaming || this.creating || this.conflict || this.deleteAsk) {
+      return Promise.resolve(false)
+    }
+    return this.load(this.path, { keep: true, silent: true })
   }
 
   pathOf(name: string): string {
@@ -419,6 +479,58 @@ export class FilesTab {
       toast(errorText(e))
     }
     await this.load(this.path, { keep: true })
+  }
+
+  // ---- clipboard inside the server ----
+
+  /** Ctrl+X / Ctrl+C: the named entries of the current folder go to the app's clipboard. */
+  toClipboard(names: string[], cut: boolean): void {
+    if (names.length === 0) return
+    filesClipboard.value = { hostId: this.hostId, paths: names.map((n) => this.pathOf(n)), cut }
+    const n = names.length
+    toast(`${cut ? 'Вырезано' : 'Скопировано'}: ${n === 1 ? `«${names[0]}»` : n}`)
+  }
+
+  readonly canPaste = $derived(filesClipboard.value !== null)
+
+  /**
+   * Ctrl+V: cut entries move into destDir, copied ones are copied by a job; a clash is asked about
+   * as for a transfer. Copies into their own folder get «(копия)» names. Paths of another server
+   * are refused.
+   */
+  async paste(destDir = this.path): Promise<string> {
+    const clip = filesClipboard.value
+    if (!clip || !destDir) return ''
+    if (clip.hostId !== this.hostId) {
+      toast(CROSS_SERVER_PASTE)
+      return ''
+    }
+    if (clip.cut) {
+      const into = clip.paths.filter((p) => samePath(p, destDir) || destDir.startsWith(p + '/'))
+      if (into.length > 0) {
+        toast('Нельзя переместить папку в неё саму')
+        return ''
+      }
+      await this.move(clip.paths, destDir)
+      filesClipboard.value = null
+      return ''
+    }
+    try {
+      const clashes = (await FilesConflicts(this.id, 'copy', clip.paths, destDir)) ?? []
+      let mode: ConflictChoice = 'skip'
+      if (clashes.length > 0) {
+        const choice = await this.askConflict(
+          clashes.map((c) => c.name),
+          clashes.some((c) => c.merge),
+        )
+        if (!choice) return ''
+        mode = choice
+      }
+      return await FilesCopy(this.id, clip.paths, destDir, mode)
+    } catch (e) {
+      toast(errorText(e))
+      return ''
+    }
   }
 
   askDelete(names: string[]): void {

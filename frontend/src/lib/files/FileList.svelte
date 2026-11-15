@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte'
   import Menu, { type MenuItem } from '../ui/Menu.svelte'
-  import { MOVE_TYPE, type FilesTab } from './files.svelte'
+  import { filesClipboard, MOVE_TYPE, type FilesTab } from './files.svelte'
   import { formatDate, formatSize, joinPath, objectsLabel, stemRange, type Entry, type SortKey } from './format'
   import Icon from './Icon.svelte'
   import { clickSelect, keySelect, selectAll, type NavKey } from './selection'
@@ -43,6 +43,12 @@
       if (files.length > 0) parts.push(formatSize(files.reduce((s, e) => s + e.size, 0)))
     }
     return parts.join(' · ')
+  })
+
+  /** Paths cut to the clipboard from this server: their rows are dimmed, as in Explorer. */
+  const cutPaths = $derived.by(() => {
+    const c = filesClipboard.value
+    return c && c.cut && c.hostId === model.hostId ? new Set(c.paths) : new Set<string>()
   })
 
   const rowId = (name: string) => `f-${model.id}-${encodeURIComponent(name)}`
@@ -88,24 +94,32 @@
 
   function itemMenu(entry: Entry): MenuItem[] {
     const names = model.sel.selected
+    const one = names.length === 1
     const items: MenuItem[] = []
-    if (names.length === 1 && isFolder(entry)) items.push({ label: 'Открыть', onselect: () => void model.open(entry) })
-    if (!entry.broken || names.length > 1) items.push({ label: 'Скачать…', onselect: () => void model.download(names) })
-    if (names.length === 1) items.push({ label: 'Переименовать', onselect: () => model.startRename(entry.name) })
-    items.push({ label: names.length > 1 ? 'Копировать пути' : 'Копировать путь', onselect: () => oncopypath(names.map((n) => model.pathOf(n))) })
-    items.push({ label: 'Удалить', onselect: () => model.askDelete(names), danger: true })
+    if (one && isFolder(entry)) items.push({ label: 'Открыть', hint: 'Enter', onselect: () => void model.open(entry) })
+    if (!entry.broken || names.length > 1) items.push({ label: 'Скачать…', hint: one && !isFolder(entry) ? 'Enter' : undefined, onselect: () => void model.download(names) })
+    items.push({ label: 'Вырезать', hint: 'Ctrl+X', onselect: () => model.toClipboard(names, true) })
+    items.push({ label: 'Копировать', hint: 'Ctrl+C', onselect: () => model.toClipboard(names, false) })
+    if (one && isFolder(entry) && model.canPaste) items.push({ label: 'Вставить в папку', onselect: () => void model.paste(model.pathOf(entry.name)) })
+    if (one) items.push({ label: 'Переименовать', hint: 'F2', onselect: () => model.startRename(entry.name) })
+    items.push({ label: names.length > 1 ? 'Копировать пути' : 'Копировать путь', hint: 'Ctrl+Shift+C', onselect: () => oncopypath(names.map((n) => model.pathOf(n))) })
+    items.push({ label: 'Удалить', hint: 'Del', onselect: () => model.askDelete(names), danger: true })
     return items
   }
 
   function blankMenu(): MenuItem[] {
-    return [
+    const items: MenuItem[] = []
+    if (model.canPaste) items.push({ label: 'Вставить', hint: 'Ctrl+V', onselect: () => void model.paste() })
+    items.push(
       { label: 'Загрузить файлы…', onselect: () => void model.upload(false) },
       { label: 'Загрузить папку…', onselect: () => void model.upload(true) },
-      { label: 'Новая папка', onselect: () => model.startCreate() },
-      { label: 'Обновить', onselect: () => void model.refresh() },
-      { label: 'Копировать путь папки', onselect: () => oncopypath([model.path]) },
+      { label: 'Новая папка', hint: 'Ctrl+Shift+N', onselect: () => model.startCreate() },
+      { label: 'Выделить всё', hint: 'Ctrl+A', onselect: () => (model.sel = selectAll(model.order)) },
+      { label: 'Обновить', hint: 'F5', onselect: () => void model.refresh() },
+      { label: 'Копировать путь папки', hint: 'Ctrl+Shift+C', onselect: () => oncopypath([model.path]) },
       { label: model.showHidden ? 'Скрыть скрытые' : 'Показать скрытые', onselect: () => model.toggleHidden() },
-    ]
+    )
+    return items
   }
 
   const point = (e: MouseEvent) => (e.clientX === 0 && e.clientY === 0 ? undefined : { x: e.clientX, y: e.clientY })
@@ -155,6 +169,12 @@
     } else if (ctrl && !e.shiftKey && e.code === 'KeyA') {
       e.preventDefault()
       model.sel = selectAll(model.order)
+    } else if (ctrl && !e.shiftKey && (e.code === 'KeyX' || e.code === 'KeyC')) {
+      e.preventDefault()
+      model.toClipboard([...model.sel.selected], e.code === 'KeyX')
+    } else if (ctrl && !e.shiftKey && e.code === 'KeyV') {
+      e.preventDefault()
+      void model.paste()
     } else if (e.key === 'Enter' && !e.altKey) {
       const entry = model.visible.find((v) => v.name === model.sel.cursor) ?? model.selectedEntries[0]
       if (!entry) return
@@ -326,6 +346,7 @@
         class:sel={isSel(entry.name)}
         class:broken={entry.broken}
         class:hidden-entry={entry.name.startsWith('.')}
+        class:cut={cutPaths.has(path)}
         class:over={over === entry.name}
         class:editing={model.renaming === entry.name}
         class:menu-open={menu?.anchor?.id === rowId(entry.name)}
@@ -398,7 +419,7 @@
   </div>
 
   <div class="footer" aria-live="polite">
-    <span>{footer}</span>
+    <span>{footer}{#if model.hiddenCount > 0 && !model.listError}<span class="muted" title="Имена, начинающиеся с точки; кнопка «Скрытые» показывает их"> · скрыто: {model.hiddenCount}</span>{/if}</span>
     {#if model.slow}<span class="muted">Загрузка папки…</span>{/if}
   </div>
 </div>
@@ -555,6 +576,10 @@
   .row.broken,
   .row.hidden-entry {
     color: #7d8794;
+  }
+  .row.cut .ico,
+  .row.cut .text {
+    opacity: 0.5;
   }
   .row.broken .text {
     text-decoration: line-through;

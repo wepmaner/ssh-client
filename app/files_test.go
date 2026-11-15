@@ -737,3 +737,115 @@ func TestFilesDrop(t *testing.T) {
 		t.Fatalf("drop %+v", d)
 	}
 }
+
+func TestFilesCopyJob(t *testing.T) {
+	s := newFilesApp(t)
+	a := writeData(t, filepath.Join(s.root, "d", "a"), 300_000)
+	b := writeData(t, filepath.Join(s.root, "d", "e", "b"), 10)
+	c := writeData(t, filepath.Join(s.root, "c.txt"), 5)
+	if err := os.Mkdir(filepath.Join(s.root, "dst"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	tab := s.openTab(t)
+	home := s.home(t, tab)
+	srcs := []string{path.Join(home, "d"), path.Join(home, "c.txt")}
+	dst := path.Join(home, "dst")
+
+	if conf, err := s.FilesConflicts(tab, "copy", srcs, dst); err != nil || len(conf) != 0 {
+		t.Fatalf("conflicts %v %v", conf, err)
+	}
+	job, err := s.FilesCopy(tab, srcs, dst, "skip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := s.waitJob(t, tab, job, jobDone, hcWait)
+	if d.Kind != jobCopy || d.Title != "Копирование: 2 объекта" || d.TotalFiles != 3 || d.DoneFiles != 3 || d.Failed != 0 || d.DoneBytes != 300_015 {
+		t.Fatalf("copy job %+v", d)
+	}
+	checkFile(t, filepath.Join(s.root, "dst", "d", "a"), a)
+	checkFile(t, filepath.Join(s.root, "dst", "d", "e", "b"), b)
+	checkFile(t, filepath.Join(s.root, "dst", "c.txt"), c)
+	checkFile(t, filepath.Join(s.root, "d", "a"), a) // the source stays
+	noParts(t, s.root)
+	s.ev.waitFor(t, hcWait, "files:changed", func([]fakeEvent) bool { return s.ev.count("files:changed:"+tab) > 0 })
+
+	// The same names again: the clash is asked about; a folder merges, «replace» overwrites.
+	conf, err := s.FilesConflicts(tab, "copy", srcs, dst)
+	if err != nil || len(conf) != 2 || conf[0] != (FilesConflictDTO{Name: "d", Merge: true}) || conf[1] != (FilesConflictDTO{Name: "c.txt"}) {
+		t.Fatalf("conflicts %+v %v", conf, err)
+	}
+	writeData(t, filepath.Join(s.root, "dst", "c.txt"), 1)
+	job, err = s.FilesCopy(tab, srcs[1:], dst, "skip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := s.waitJob(t, tab, job, jobDone, hcWait); d.Skipped != 1 {
+		t.Fatalf("skip job %+v", d)
+	}
+	job, err = s.FilesCopy(tab, srcs[1:], dst, "replace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.waitJob(t, tab, job, jobDone, hcWait)
+	checkFile(t, filepath.Join(s.root, "dst", "c.txt"), c)
+
+	// Into the folder it is in: «(копия)», then «(копия 2)»; no clash is reported.
+	if conf, err := s.FilesConflicts(tab, "copy", srcs, home); err != nil || len(conf) != 0 {
+		t.Fatalf("same-folder conflicts %v %v", conf, err)
+	}
+	for _, suffix := range []string{" (копия)", " (копия 2)"} {
+		job, err = s.FilesCopy(tab, srcs, home, "skip")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d := s.waitJob(t, tab, job, jobDone, hcWait); d.DoneFiles != 3 || d.Failed != 0 {
+			t.Fatalf("same-folder copy %+v", d)
+		}
+		checkFile(t, filepath.Join(s.root, "d"+suffix, "e", "b"), b)
+		checkFile(t, filepath.Join(s.root, "c"+suffix+".txt"), c)
+	}
+
+	// A folder never goes into itself.
+	job, err = s.FilesCopy(tab, []string{path.Join(home, "d")}, path.Join(home, "d", "e"), "skip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := s.waitJob(t, tab, job, jobDone, hcWait); d.Failed != 1 || !strings.Contains(d.Detail, "в неё саму") {
+		t.Fatalf("copy into itself %+v", d)
+	}
+	if _, err := os.Stat(filepath.Join(s.root, "d", "e", "d")); !os.IsNotExist(err) {
+		t.Fatalf("copied into itself: %v", err)
+	}
+
+	if _, err := s.FilesCopy(tab, []string{"rel"}, dst, "skip"); !errors.Is(err, errBadInput) {
+		t.Fatalf("relative source: %v", err)
+	}
+	if _, err := s.FilesCopy(tab, srcs, dst, "merge"); !errors.Is(err, errFilesBadConflict) {
+		t.Fatalf("bad choice: %v", err)
+	}
+}
+
+func TestFilesCopyCancelRemovesPart(t *testing.T) {
+	s := newFilesApp(t)
+	writeData(t, filepath.Join(s.root, "big.bin"), 8_000_000)
+	if err := os.Mkdir(filepath.Join(s.root, "dst"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	tab := s.openTab(t)
+	home := s.home(t, tab)
+	var once sync.Once
+	s.filesProgressHook = func(id, _ string, pos int64) {
+		if pos > 1_000_000 {
+			once.Do(func() { go func() { _ = s.FilesJobCancel(tab, id) }() }) //nolint:gosec // G104: checked through the job state
+		}
+	}
+	id, err := s.FilesCopy(tab, []string{path.Join(home, "big.bin")}, path.Join(home, "dst"), "skip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.waitJob(t, tab, id, jobCancelled, 3*hcWait)
+	s.ev.waitFor(t, hcWait, "the part removed", func([]fakeEvent) bool {
+		ents, err := os.ReadDir(filepath.Join(s.root, "dst"))
+		return err == nil && len(ents) == 0
+	})
+}

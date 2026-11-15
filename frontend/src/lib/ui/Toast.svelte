@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { toastState } from '../stores.svelte'
+  import { toastBottom, toastState } from '../stores.svelte'
 </script>
 
 {#if toastState.message}
-  <div class="toast" role="status">{toastState.message}</div>
+  <!-- Above the transfers panel of a file tab while it is shown, so it never covers its rows. -->
+  <div class="toast" role="status" style:bottom="{toastBottom()}px">{toastState.message}</div>
 {/if}
 
 <style>

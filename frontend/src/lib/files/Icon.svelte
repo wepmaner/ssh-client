@@ -20,6 +20,7 @@
     | 'check'
     | 'error'
     | 'cancelled'
+    | 'copy'
 </script>
 
 <script lang="ts">
@@ -38,7 +39,9 @@
   stroke-linejoin="round"
   aria-hidden="true"
 >
-  {#if name === 'back'}
+  {#if name === 'copy'}
+    <rect x="5.5" y="5.5" width="8" height="8" rx="1" /><path d="M10.5 5.5V3.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2" />
+  {:else if name === 'back'}
     <path d="M13 8H3.5M7.5 4 3.5 8l4 4" />
   {:else if name === 'forward'}
     <path d="M3 8h9.5M8.5 4l4 4-4 4" />

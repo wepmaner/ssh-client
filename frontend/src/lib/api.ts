@@ -5,6 +5,7 @@ import { Clipboard, Events, Window } from '@wailsio/runtime'
 export {
   FilesClose,
   FilesConflicts,
+  FilesCopy,
   FilesDelete,
   FilesDownload,
   FilesHome,

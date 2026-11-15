@@ -21,9 +21,20 @@ vi.mock('./api', async () => {
 })
 
 import { forwards } from './forwards/forwards.svelte'
-import { hosts, lockVault, refreshAll, refreshSettings, settings, vault } from './stores.svelte'
+import { hosts, lockVault, refreshAll, refreshSettings, setToastLift, settings, toastBottom, vault } from './stores.svelte'
 
 describe('stores', () => {
+  it('lifts the toast above the highest bottom panel, back to 24 px when it goes', () => {
+    expect(toastBottom()).toBe(24)
+    setToastLift('a', 180)
+    setToastLift('b', 60)
+    expect(toastBottom()).toBe(192)
+    setToastLift('a', 0)
+    expect(toastBottom()).toBe(72)
+    setToastLift('b', 0)
+    expect(toastBottom()).toBe(24)
+  })
+
   it('settings changes notify subscribers after refreshSettings', async () => {
     const seen: number[] = []
     const stop = $effect.root(() => {

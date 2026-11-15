@@ -41,6 +41,21 @@ export async function refreshHosts(): Promise<void> {
 }
 
 export const toastState = $state({ message: '' })
+
+/** Panels pinned to the bottom of the window, by owner: how far up from the bottom edge each reaches. */
+export const toastLift = $state<{ by: Record<string, number> }>({ by: {} })
+
+/** A panel at the bottom (the transfers of a file tab) takes 0 when it is hidden or gone. */
+export function setToastLift(owner: string, px: number): void {
+  if (px > 0) toastLift.by[owner] = px
+  else delete toastLift.by[owner]
+}
+
+/** The toast's distance from the bottom edge: 24 px, or just above the highest bottom panel. */
+export function toastBottom(): number {
+  const lift = Math.max(0, ...Object.values(toastLift.by))
+  return lift > 0 ? Math.max(24, Math.ceil(lift) + 12) : 24
+}
 let toastTimer: ReturnType<typeof setTimeout> | undefined
 
 /** Shows a small bottom-centre plaque for 2 seconds. */

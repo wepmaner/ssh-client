@@ -678,6 +678,7 @@ func TestSessionInputWhileWaitingIsDropped(t *testing.T) {
 
 // A shell that ends without an exit status on a live connection is closed, not a dropped connection.
 func TestSessionEndWithoutExitStatusIsClosed(t *testing.T) {
+	setExitMissingGrace(t, 300*time.Millisecond)
 	s := newSessionsApp(t, sshtest.Opts{NoExitStatus: true}, true)
 	t.Cleanup(s.closeAllHostConns)
 	id := s.open(t)
@@ -708,5 +709,31 @@ func TestOutStreamHoldsOnlyTheLatestState(t *testing.T) {
 	}
 	if st := ev.snapshot()[3].payload.(HostConnStateDTO); st.Status != "none" {
 		t.Fatalf("held state %+v, want the latest", st)
+	}
+}
+
+func setExitMissingGrace(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := exitMissingGrace
+	exitMissingGrace = d
+	t.Cleanup(func() { exitMissingGrace = old })
+}
+
+// A server going down for a restart closes the shell with no exit status and its connection a
+// moment later: the console shows the Russian «connection lost» card, the system text in details.
+func TestSessionShellClosedThenConnectionDropsIsLost(t *testing.T) {
+	setExitMissingGrace(t, 3*time.Second)
+	s := newSessionsApp(t, sshtest.Opts{NoExitStatus: true}, true)
+	t.Cleanup(s.closeAllHostConns)
+	id := s.open(t)
+	s.ev.waitState(t, id, "connected", hcWait)
+	time.Sleep(3 * deadClientGrace) // past the grace of a shell that ends with a status
+	s.srv.DropConnections()
+	st := s.ev.waitState(t, id, "error", hcWait)
+	if st.Message != errConnLost.Error() || st.Kind != "other" || !st.Retryable {
+		t.Fatalf("card %+v", st)
+	}
+	if !strings.Contains(st.Detail, "exit status") || strings.Contains(st.Detail, errConnLost.Error()) {
+		t.Fatalf("detail %q", st.Detail)
 	}
 }

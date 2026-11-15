@@ -3,6 +3,8 @@
     label: string
     onselect: () => void
     danger?: boolean
+    /** A keyboard shortcut shown muted on the right, such as «Ctrl+C». */
+    hint?: string
   }
 </script>
 
@@ -103,7 +105,9 @@
   {onfocusout}
 >
   {#each items as it (it.label)}
-    <button type="button" role="menuitem" class:danger={it.danger} onclick={() => select(it)}>{it.label}</button>
+    <button type="button" role="menuitem" class:danger={it.danger} aria-keyshortcuts={it.hint?.replace(/ /g, '')} onclick={() => select(it)}>
+      <span class="label">{it.label}</span>{#if it.hint}<span class="hint" aria-hidden="true">{it.hint}</span>{/if}
+    </button>
   {/each}
 </div>
 
@@ -126,6 +130,10 @@
     position: fixed;
   }
   button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
     height: 30px;
     padding: 0 10px;
     border: 0;
@@ -144,5 +152,10 @@
   }
   .danger {
     color: var(--error);
+  }
+  .hint {
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
   }
 </style>

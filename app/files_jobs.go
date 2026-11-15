@@ -25,6 +25,7 @@ const (
 	jobUpload   = "upload"
 	jobDownload = "download"
 	jobDelete   = "delete"
+	jobCopy     = "copy" // inside the server, streamed through the client
 
 	jobQueued    = "queued"
 	jobRunning   = "running"
@@ -47,6 +48,7 @@ var (
 	errFilesJobActive   = errors.New("Задача ещё выполняется")
 	errFilesParentFail  = errors.New("Папка не создана")
 	errFilesLinkGone    = errors.New("Связь с сервером не восстановилась за 10 минут")
+	errFilesCopyItself  = errors.New("Нельзя скопировать папку в неё саму")
 )
 
 // filesDefaultBackoff is the pause before reconnect attempt n (from 1): 1, 2, 5, 10, then 30 s.
@@ -69,18 +71,19 @@ type filesJob struct {
 	now     chan struct{} // FilesJobRetry on a waiting job: the pause ends at once
 
 	// Touched by the runner goroutine only.
-	sc       *sftp.Client
-	scClose  func()
-	cl       *ssh.Client
-	acked    map[string]int64 // confirmed bytes of upload parts, kept across runs
-	finished map[string]bool  // targets completed by an earlier run: Retry does not copy them again
-	lost     bool             // the connection dropped: the next connect pauses first
-	attempt  int
-	outage   time.Time // the drop that is not yet followed by progress
-	lastErr  error
-	fileBase int64 // bytes of the files done in this run
-	failures []string
-	changed  []string // remote folders the job changed
+	sc        *sftp.Client
+	scClose   func()
+	cl        *ssh.Client
+	acked     map[string]int64  // confirmed bytes of upload parts, kept across runs
+	finished  map[string]bool   // targets completed by an earlier run: Retry does not copy them again
+	copyNames map[string]string // copy: the top-level target name of each source, chosen once per job
+	lost      bool              // the connection dropped: the next connect pauses first
+	attempt   int
+	outage    time.Time // the drop that is not yet followed by progress
+	lastErr   error
+	fileBase  int64 // bytes of the files done in this run
+	failures  []string
+	changed   []string // remote folders the job changed
 
 	mu        sync.Mutex
 	dto       FilesJobDTO
@@ -252,6 +255,8 @@ func (j *filesJob) run() {
 			err = j.download(ctx)
 		case jobDelete:
 			err = j.remove(ctx)
+		case jobCopy:
+			err = j.copyRemote(ctx)
 		}
 		stop()
 	}
@@ -731,6 +736,136 @@ func (j *filesJob) remove(ctx context.Context) error {
 	return nil
 }
 
+// copyTarget is the top-level name src gets in j.dest: its own name, or a free «(копия)» name when
+// it is copied into the folder it is in. The choice is kept for the job's later runs.
+func (j *filesJob) copyTarget(sc *sftp.Client, src string, isDir bool) (string, error) {
+	if name, ok := j.copyNames[src]; ok {
+		return name, nil
+	}
+	name := path.Base(src)
+	if path.Dir(src) == j.dest {
+		var err error
+		if name, err = sshclient.CopyName(sc, j.dest, name, isDir); err != nil {
+			return "", err
+		}
+	}
+	if j.copyNames == nil {
+		j.copyNames = map[string]string{}
+	}
+	j.copyNames[src] = name
+	return name, nil
+}
+
+// planCopy walks the sources of a copy into one plan whose Rel starts with each target name. A
+// folder copied into itself is a failure of its own.
+func (j *filesJob) planCopy(ctx context.Context, sc *sftp.Client) ([]sshclient.PlanItem, []error, error) {
+	var plan []sshclient.PlanItem
+	var fails []error
+	for _, s := range j.sources {
+		src := path.Clean(s)
+		if j.dest == src || strings.HasPrefix(j.dest+"/", src+"/") {
+			fails = append(fails, &sshclient.FSError{Msg: errFilesCopyItself.Error() + ": " + path.Base(src), Err: errFilesCopyItself})
+			continue
+		}
+		items, err := sshclient.PlanRemote(ctx, sc, []string{src}, func(_ string, err error) { fails = append(fails, err) })
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(items) == 0 {
+			continue
+		}
+		name, err := j.copyTarget(sc, src, items[0].Dir)
+		if err != nil {
+			if sshclient.IsLost(err) {
+				return nil, nil, err
+			}
+			fails = append(fails, err)
+			continue
+		}
+		base := path.Base(src)
+		for i := range items {
+			items[i].Rel = name + strings.TrimPrefix(items[i].Rel, base)
+		}
+		plan = append(plan, items...)
+	}
+	return plan, fails, nil
+}
+
+// copyRemote copies remote files and folders into another remote folder through the job's sftp
+// session: folders merge, files go through part files, replaced or skipped by j.replace.
+func (j *filesJob) copyRemote(ctx context.Context) error {
+	j.dest = path.Clean(j.dest)
+	var plan []sshclient.PlanItem
+	var planFails []error
+	ierr, ferr := j.withConn(ctx, func(sc *sftp.Client) error {
+		var err error
+		plan, planFails, err = j.planCopy(ctx, sc)
+		return err
+	})
+	if ferr != nil {
+		return ferr
+	}
+	if ierr != nil {
+		return ierr
+	}
+	for _, e := range planFails {
+		j.fail(e, true)
+	}
+	j.setTotals(plan)
+	j.changed = []string{j.dest}
+	var failedDirs []string
+	for _, it := range plan {
+		target := path.Join(j.dest, it.Rel)
+		if under(it.Rel, failedDirs) {
+			if it.Dir {
+				failedDirs = append(failedDirs, it.Rel)
+			} else {
+				j.fail(fmt.Errorf("%w: %s", errFilesParentFail, it.Src), true)
+			}
+			continue
+		}
+		if it.Dir {
+			ierr, ferr := j.withConn(ctx, func(sc *sftp.Client) error { return sshclient.EnsureRemoteDir(sc, target) })
+			if ferr != nil {
+				return ferr
+			}
+			if ierr != nil {
+				j.fail(ierr, false)
+				failedDirs = append(failedDirs, it.Rel)
+			}
+			continue
+		}
+		if j.finished[target] {
+			j.fileDone(it.Size)
+			continue
+		}
+		j.startFile(it.Rel)
+		part := sshclient.PartName(target, j.id)
+		skipped := false
+		ierr, ferr := j.withConn(ctx, func(sc *sftp.Client) error {
+			res, err := sshclient.CopyRemoteFile(ctx, sc, it.Src, target, j.copyOpts(target))
+			skipped = res == sshclient.Skipped
+			return err
+		})
+		if ferr != nil {
+			return ferr
+		}
+		if ierr != nil {
+			j.fail(ierr, true)
+			j.removeRemotePart(part)
+			j.fileBase += it.Size
+			continue
+		}
+		j.dropPart(part)
+		j.finished[target] = true
+		if skipped {
+			j.update(false, func(d *FilesJobDTO) { d.Skipped++ })
+		}
+		j.fileDone(it.Size)
+	}
+	return nil
+}
+
 // runJobs runs the tab's queued jobs one at a time until the tab ends.
 func (t *filesTab) runJobs() {
 	defer close(t.runnerDone)
@@ -865,7 +1000,7 @@ func newJobID() string {
 }
 
 func jobTitle(kind string, sources []string) string {
-	verb := map[string]string{jobUpload: "Загрузка", jobDownload: "Скачивание", jobDelete: "Удаление"}[kind]
+	verb := map[string]string{jobUpload: "Загрузка", jobDownload: "Скачивание", jobDelete: "Удаление", jobCopy: "Копирование"}[kind]
 	if len(sources) == 1 {
 		name := path.Base(sources[0])
 		if kind == jobUpload {

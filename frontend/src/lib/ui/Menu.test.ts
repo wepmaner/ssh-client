@@ -23,4 +23,25 @@ describe('Menu', () => {
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Изменить' }))
     expect(focusedOnSelect).toBe(anchor)
   })
+
+  it('shows a shortcut hint muted on the right, out of the item name', async () => {
+    anchor = document.createElement('button')
+    document.body.append(anchor)
+    render(Menu, {
+      props: {
+        anchor,
+        onclose: () => {},
+        items: [
+          { label: 'Копировать', hint: 'Ctrl+C', onselect: () => {} },
+          { label: 'Открыть', onselect: () => {} },
+        ],
+      },
+    })
+    const copy = screen.getByRole('menuitem', { name: 'Копировать' })
+    expect(copy.querySelector('.hint')?.textContent).toBe('Ctrl+C')
+    expect(copy.getAttribute('aria-keyshortcuts')).toBe('Ctrl+C')
+    const open = screen.getByRole('menuitem', { name: 'Открыть' })
+    expect(open.querySelector('.hint')).toBeNull()
+    expect(open.textContent?.trim()).toBe('Открыть')
+  })
 })
