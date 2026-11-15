@@ -44,10 +44,14 @@
       </span>
     {/if}
     <span class="spacer"></span>
-    <span class="item">UTF-8</span>
-    <span class="item mono">{tab.cols}×{tab.rows}</span>
+    {#if tab.type === 'files'}
+      <span class="item">SFTP</span>
+    {:else}
+      <span class="item">UTF-8</span>
+      <span class="item mono">{tab.cols}×{tab.rows}</span>
+    {/if}
   {:else}
-    <span class="item">{sessionsLabel(sessions.list.length)}</span>
+    <span class="item">{sessionsLabel(sessions.list.filter((t) => t.type === 'term').length)}</span>
     {#if runningForwards > 0}<span class="item">{forwardsLabel(runningForwards)}</span>{/if}
     <span class="spacer"></span>
     <span class="item">Хосты и ключи хранятся только на этом компьютере</span>

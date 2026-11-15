@@ -1,8 +1,11 @@
-import { EventsOn, SessionClose, SessionList, SessionOpen, errorText } from './api'
+import { EventsOn, FilesClose, FilesOpen, SessionClose, SessionList, SessionOpen, errorText } from './api'
+import { createFilesTab, disposeFilesTab, filesTab } from './files/files.svelte'
 import { hosts, toast, ui } from './stores.svelte'
 
 export type SessionState = 'connecting' | 'connected' | 'error' | 'closed'
 export type ErrorKind = 'timeout' | 'hostkey' | 'auth' | 'cancelled' | 'other'
+/** What a tab shows: a terminal or the host's files over SFTP. */
+export type TabType = 'term' | 'files'
 
 /** Payload of term:state:<id>, see app.SessionStateDTO. */
 export interface StatePayload {
@@ -14,9 +17,10 @@ export interface StatePayload {
   retryable: boolean
 }
 
-/** One session tab. cols/rows are the size the terminal view last reported. */
+/** One tab of the title bar. cols/rows are the size the terminal view last reported. */
 export interface SessionTab {
   id: string
+  type: TabType
   hostId: string
   hostName: string
   state: SessionState
@@ -35,10 +39,12 @@ const initialCols = 120
 const initialRows = 32
 const latencyPollMs = 5000
 
-export const sessions = $state<{ list: SessionTab[]; activeId: string; searchId: string }>({
+/** closeAsk is the file tab whose close waits for «Остановить передачи и закрыть?». */
+export const sessions = $state<{ list: SessionTab[]; activeId: string; searchId: string; closeAsk: string }>({
   list: [],
   activeId: '',
   searchId: '',
+  closeAsk: '',
 })
 
 /** Applies a term:state event to a tab; error fields live only while the state is error. */
@@ -54,9 +60,10 @@ export function reduceState(tab: SessionTab, p: StatePayload): SessionTab {
   return next
 }
 
-export function newTab(id: string, hostId: string): SessionTab {
+export function newTab(id: string, hostId: string, type: TabType = 'term'): SessionTab {
   return {
     id,
+    type,
     hostId,
     hostName: hosts.find((h) => h.id === hostId)?.name ?? '',
     state: 'connecting',
@@ -72,12 +79,13 @@ export function newTab(id: string, hostId: string): SessionTab {
 const unsubscribe = new Map<string, () => void>()
 let poll: ReturnType<typeof setInterval> | undefined
 
-function subscribe(id: string): void {
+function subscribe(id: string, type: TabType = 'term'): void {
   unsubscribe.set(
     id,
-    EventsOn('term:state:' + id, (p: StatePayload) => {
+    EventsOn((type === 'files' ? 'files:state:' : 'term:state:') + id, (p: StatePayload) => {
       const i = sessions.list.findIndex((t) => t.id === id)
       if (i >= 0) sessions.list[i] = reduceState(sessions.list[i], p)
+      if (type === 'files') filesTab(id)?.onState(p.state)
     }),
   )
 }
@@ -86,12 +94,14 @@ function forget(id: string): void {
   unsubscribe.get(id)?.()
   unsubscribe.delete(id)
   if (sessions.searchId === id) sessions.searchId = ''
+  if (sessions.closeAsk === id) sessions.closeAsk = ''
 }
 
-/** Polls SessionList for latency while any session is open. */
+/** Polls SessionList for latency while any terminal is open. */
 function syncPoll(): void {
-  if (sessions.list.length > 0 && !poll) poll = setInterval(() => void refreshSessions().catch(() => {}), latencyPollMs)
-  if (sessions.list.length === 0 && poll) {
+  const terms = sessions.list.some((t) => t.type === 'term')
+  if (terms && !poll) poll = setInterval(() => void refreshSessions().catch(() => {}), latencyPollMs)
+  if (!terms && poll) {
     clearInterval(poll)
     poll = undefined
   }
@@ -128,12 +138,48 @@ export async function openSession(hostId: string): Promise<void> {
   }
 }
 
+/**
+ * Opens the files tab of the host, or brings its open one to front: one files tab per host,
+ * which already shows every folder of it.
+ */
+export async function openFiles(hostId: string): Promise<void> {
+  const open = sessions.list.find((t) => t.type === 'files' && t.hostId === hostId)
+  if (open) {
+    activate(open.id)
+    return
+  }
+  try {
+    const id = await FilesOpen(hostId)
+    // A probe that finds the host's connection already up marks the tab connected.
+    const markConnected = () => {
+      const t = sessions.list.find((x) => x.id === id)
+      if (t && t.state === 'connecting') Object.assign(t, reduceState(t, { state: 'connected', retryable: true }))
+    }
+    sessions.list.push(newTab(id, hostId, 'files'))
+    subscribe(id, 'files')
+    createFilesTab(id, hostId, markConnected)
+    activate(id)
+  } catch (e) {
+    toast(errorText(e))
+  }
+}
+
+/** A close the user asked for: a file tab with transfers under way asks first. */
+export function requestClose(id: string): void {
+  const tab = sessions.list.find((t) => t.id === id)
+  if (tab?.type === 'files' && filesTab(id)?.busy) sessions.closeAsk = id
+  else closeSession(id)
+}
+
 /** Closes the tab at once, without confirmation; the neighbour or the home tab comes to front. */
 export function closeSession(id: string): void {
   const i = sessions.list.findIndex((t) => t.id === id)
   if (i < 0) return
   forget(id)
-  void SessionClose(id).catch(() => {})
+  if (sessions.list[i].type === 'files') {
+    disposeFilesTab(id)
+    void FilesClose(id).catch(() => {})
+  } else void SessionClose(id).catch(() => {})
   sessions.list.splice(i, 1)
   if (sessions.activeId === id) {
     const next = sessions.list[i] ?? sessions.list[i - 1]
@@ -148,6 +194,7 @@ export async function retrySession(id: string): Promise<void> {
   const i = sessions.list.findIndex((t) => t.id === id)
   if (i < 0) return
   const old = sessions.list[i]
+  if (old.type !== 'term') return
   forget(id)
   void SessionClose(id).catch(() => {})
   try {

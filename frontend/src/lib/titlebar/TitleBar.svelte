@@ -1,6 +1,7 @@
 <script lang="ts">
   import { WindowClose, WindowMinimise, WindowToggleMaximise } from '../api'
-  import { activate, activeSession, closeSession, cycleTab, goHome, sessions } from '../sessions.svelte'
+  import { filesTab } from '../files/files.svelte'
+  import { activate, activeSession, cycleTab, goHome, openFiles, requestClose, sessions, type SessionTab } from '../sessions.svelte'
   import { ui } from '../stores.svelte'
   import { tabAction } from '../terminal/keys'
 
@@ -16,7 +17,13 @@
     e.preventDefault()
     if (action === 'next') cycleTab(1)
     else if (action === 'prev') cycleTab(-1)
-    else if (active) closeSession(active.id)
+    else if (active) requestClose(active.id)
+  }
+
+  /** Host name, plus the percent of the transfers of a file tab. */
+  function label(tab: SessionTab): string {
+    const p = tab.type === 'files' ? filesTab(tab.id)?.progress : null
+    return p === null || p === undefined ? tab.hostName : `${tab.hostName} · ${p}%`
   }
 
   function newSession(): void {
@@ -44,12 +51,25 @@
         <button type="button" role="tab" class="tab home" class:active={!active} aria-selected={!active} onclick={goHome} ondblclick={stop}>{title}</button>
         {#if tabs}
           {#each sessions.list as tab (tab.id)}
-            <div class="tab session" class:active={active?.id === tab.id}>
-              <button type="button" role="tab" class="select" aria-selected={active?.id === tab.id} onclick={() => activate(tab.id)} ondblclick={stop}>
+            <div class="tab session" class:active={active?.id === tab.id} class:files={tab.type === 'files'}>
+              <button
+                type="button"
+                role="tab"
+                class="select"
+                aria-selected={active?.id === tab.id}
+                title={tab.type === 'files' ? `Файлы ${tab.hostName}` : undefined}
+                onclick={() => activate(tab.id)}
+                ondblclick={stop}
+              >
                 <span class="dot {tab.state}" aria-hidden="true"></span>
-                <span class="name">{tab.hostName}</span>
+                {#if tab.type === 'files'}
+                  <svg class="kind" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-label="Файлы">
+                    <path d="M1.75 4.25a1 1 0 0 1 1-1h3.1l1.5 1.5h5.9a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1z" />
+                  </svg>
+                {/if}
+                <span class="name">{label(tab)}</span>
               </button>
-              <button type="button" class="close-tab" aria-label="Закрыть вкладку {tab.hostName}" onclick={() => closeSession(tab.id)} ondblclick={stop}>
+              <button type="button" class="close-tab" aria-label="Закрыть вкладку {tab.hostName}" onclick={() => requestClose(tab.id)} ondblclick={stop}>
                 <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
                   <path d="M1 1l8 8M9 1 1 9" />
                 </svg>
@@ -66,7 +86,12 @@
     {/if}
   </div>
   <div class="caption">
-    {#if active}
+    {#if active?.type === 'term'}
+      <button type="button" class="action" aria-label="Файлы" title="Файлы хоста (SFTP)" onclick={() => openFiles(active.hostId)} ondblclick={stop}>
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true">
+          <path d="M1.75 4.25a1 1 0 0 1 1-1h3.1l1.5 1.5h5.9a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1z" />
+        </svg>
+      </button>
       <button type="button" class="action" class:on={sessions.searchId === active.id} aria-label="Поиск в терминале" title="Поиск (Ctrl+F)" onclick={toggleSearch} ondblclick={stop}>
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
           <circle cx="7" cy="7" r="4.5" />
@@ -177,6 +202,14 @@
     background: var(--terminal);
     color: var(--text);
   }
+  .session.files.active {
+    background: var(--bg);
+  }
+  .kind {
+    flex: none;
+    margin-left: -2px;
+    color: var(--muted);
+  }
   .name {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -261,6 +294,9 @@
     color: var(--muted);
     cursor: default;
     transition: background-color 80ms;
+  }
+  .action + .action {
+    margin-left: -6px;
   }
   .action:hover,
   .action.on {

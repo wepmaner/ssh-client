@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import { GroupDelete, GroupRename, GroupSave, HostDelete, errorText, type app } from '../api'
-  import { closeSession, openSession, sessions } from '../sessions.svelte'
+  import { closeSession, openFiles, openSession, sessions } from '../sessions.svelte'
   import { groups, hosts, refreshHosts, refreshKeys, toast, ui } from '../stores.svelte'
   import Button from '../ui/Button.svelte'
   import Dialog from '../ui/Dialog.svelte'
@@ -217,6 +217,7 @@
             host={h}
             {layout}
             onconnect={() => openSession(h.id)}
+            onfiles={() => openFiles(h.id)}
             onedit={() => openDialog(h)}
             onduplicate={() => duplicate(h)}
             ondelete={() => askDeleteHost(h)}

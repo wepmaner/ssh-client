@@ -19,6 +19,7 @@ const api = vi.hoisted(() => ({
 }))
 const sess = vi.hoisted(() => ({
   openSession: vi.fn(),
+  openFiles: vi.fn(),
   closeSession: vi.fn(),
   sessions: { list: [] as { id: string; hostId: string; state: string }[] },
 }))
@@ -166,7 +167,7 @@ describe('HostsView', () => {
     const row = tile('nas')
     await fireEvent.contextMenu(row, { clientX: 120, clientY: 90 })
     const menu = screen.getByRole('menu')
-    expect(within(menu).getAllByRole('menuitem').map((e) => e.textContent)).toEqual(['Изменить', 'Дублировать', 'Удалить'])
+    expect(within(menu).getAllByRole('menuitem').map((e) => e.textContent)).toEqual(['Файлы', 'Изменить', 'Дублировать', 'Удалить'])
     expect(menu.style.top).toBe('90px')
     expect(menu.style.left).toBe('120px')
     expect(document.activeElement).toBe(within(menu).getAllByRole('menuitem')[0])
@@ -174,6 +175,15 @@ describe('HostsView', () => {
     expect(screen.queryByRole('menu')).toBeNull()
     expect(document.activeElement).toBe(row)
     await fireEvent.click(screen.getByRole('button', { name: 'Плитки' }))
+  })
+
+  it('«Файлы» in the host menu opens the files tab of that host', async () => {
+    load(list)
+    render(HostsView)
+    await fireEvent.contextMenu(tile('db-01'), { clientX: 10, clientY: 10 })
+    await fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Файлы' }))
+    expect(sess.openFiles).toHaveBeenCalledWith('h2')
+    expect(sess.openSession).not.toHaveBeenCalled()
   })
 
   it('Shift+F10, the menu key or a keyboard contextmenu opens the menu at the tile', async () => {

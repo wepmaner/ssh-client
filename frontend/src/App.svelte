@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import CloseFilesDialog from './lib/files/CloseFilesDialog.svelte'
+  import FilesView from './lib/files/FilesView.svelte'
   import { refreshForwards } from './lib/forwards/forwards.svelte'
   import ForwardsView from './lib/forwards/ForwardsView.svelte'
   import McpView from './lib/mcp/McpView.svelte'
@@ -80,23 +82,27 @@
         </main>
       </div>
     {/if}
-    <!-- Every terminal stays mounted so its scrollback survives tab switches and the idle lock:
-         sessions keep running behind the unlock screen. -->
+    <!-- Every terminal and file tab stays mounted so its scrollback, folder and queue survive tab
+         switches and the idle lock: sessions keep running behind the unlock screen. -->
     <div class="terminals" class:hidden={home || vault.locked}>
       {#each sessions.list as tab (tab.id)}
         {@const visible = shell && !home && tab.id === sessions.activeId}
         <div class="pane" class:hidden={!visible}>
-          <TerminalView sessionId={tab.id} {visible} />
-          {#if tab.state === 'error'}
-            <ErrorCard
-              hostName={tab.hostName}
-              kind={tab.kind}
-              message={tab.message}
-              detail={tab.detail}
-              retryable={tab.retryable}
-              onretry={() => retrySession(tab.id)}
-              onopenhost={() => openHost(tab.hostId)}
-            />
+          {#if tab.type === 'files'}
+            <FilesView {tab} visible={visible && !vault.locked} onopenhost={() => openHost(tab.hostId)} />
+          {:else}
+            <TerminalView sessionId={tab.id} {visible} />
+            {#if tab.state === 'error'}
+              <ErrorCard
+                hostName={tab.hostName}
+                kind={tab.kind}
+                message={tab.message}
+                detail={tab.detail}
+                retryable={tab.retryable}
+                onretry={() => retrySession(tab.id)}
+                onopenhost={() => openHost(tab.hostId)}
+              />
+            {/if}
           {/if}
         </div>
       {/each}
@@ -106,6 +112,7 @@
   <!-- Mounted before load(): trust questions of autostarted forwards arrive once ForwardAttach runs. -->
   <TrustDialog />
   <McpLoginDialog />
+  <CloseFilesDialog />
   <Toast />
 </div>
 

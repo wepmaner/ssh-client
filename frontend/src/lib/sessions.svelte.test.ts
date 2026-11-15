@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { handlers, sessionOpen, sessionClose } = vi.hoisted(() => ({
+const { handlers, sessionOpen, sessionClose, filesOpen, filesClose } = vi.hoisted(() => ({
   handlers: new Map<string, (p: unknown) => void>(),
   sessionOpen: vi.fn(),
   sessionClose: vi.fn(() => Promise.resolve()),
+  filesOpen: vi.fn(),
+  filesClose: vi.fn(() => Promise.resolve()),
 }))
 vi.mock('./api', async () => {
   const model = await import('../../bindings/sshclient/internal/model/models')
@@ -15,6 +17,11 @@ vi.mock('./api', async () => {
     SessionOpen: sessionOpen,
     SessionClose: sessionClose,
     SessionList: () => Promise.resolve([]),
+    FilesOpen: filesOpen,
+    FilesClose: filesClose,
+    // No connection yet: the probe of a new file tab fails quietly.
+    FilesHome: () => Promise.reject('нет подключения'),
+    FilesLoginAttach: () => Promise.resolve(),
     GetSettings: vi.fn(),
     HostsList: vi.fn(),
     GroupsList: vi.fn(),
@@ -25,7 +32,7 @@ vi.mock('./api', async () => {
   }
 })
 
-import { activeSession, closeSession, cycleTab, newTab, openSession, reduceState, retrySession, sessions } from './sessions.svelte'
+import { activeSession, closeSession, cycleTab, newTab, openFiles, openSession, reduceState, requestClose, retrySession, sessions } from './sessions.svelte'
 import { hosts, toastState, ui } from './stores.svelte'
 
 beforeEach(() => {
@@ -35,6 +42,9 @@ beforeEach(() => {
   ui.activeTab = 'home'
   let n = 0
   sessionOpen.mockImplementation(() => Promise.resolve('s' + ++n))
+  filesOpen.mockImplementation(() => Promise.resolve('f' + ++n))
+  filesClose.mockClear()
+  sessionClose.mockClear()
 })
 
 describe('reduceState', () => {
@@ -113,5 +123,41 @@ describe('sessions store', () => {
     expect(sessions.activeId).toBe('s3')
     expect(handlers.has('term:state:s1')).toBe(false)
     expect(handlers.has('term:state:s3')).toBe(true)
+  })
+
+  it('puts a file tab among the terminals: same strip, same Ctrl+Tab order, its own close', async () => {
+    await openSession('h1')
+    await openFiles('h1')
+    expect(sessions.list.map((t) => [t.id, t.type])).toEqual([
+      ['s1', 'term'],
+      ['f2', 'files'],
+    ])
+    expect(activeSession()?.id).toBe('f2')
+    handlers.get('files:state:f2')!({ state: 'connected', retryable: true })
+    expect(sessions.list[1].state).toBe('connected')
+    cycleTab(1)
+    expect(ui.activeTab).toBe('home')
+    cycleTab(-1)
+    expect(activeSession()?.id).toBe('f2')
+    cycleTab(-1)
+    expect(activeSession()?.id).toBe('s1')
+
+    // One files tab per host: opening again brings it to front.
+    await openFiles('h1')
+    expect(filesOpen).toHaveBeenCalledTimes(1)
+    expect(activeSession()?.id).toBe('f2')
+
+    requestClose('f2')
+    expect(filesClose).toHaveBeenCalledWith('f2')
+    expect(sessionClose).not.toHaveBeenCalled()
+    expect(handlers.has('files:state:f2')).toBe(false)
+    expect(activeSession()?.id).toBe('s1')
+  })
+
+  it('retry leaves a file tab alone: it retries through its own view', async () => {
+    await openFiles('h1')
+    await retrySession('f1')
+    expect(sessionOpen).not.toHaveBeenCalled()
+    expect(sessions.list[0].id).toBe('f1')
   })
 })

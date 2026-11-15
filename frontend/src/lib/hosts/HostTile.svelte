@@ -8,11 +8,13 @@
     /** tile: the 64 px card of the grid; row: a line of the list view. */
     layout: 'tile' | 'row'
     onconnect: () => void
+    /** Opens the host's files tab. */
+    onfiles: () => void
     onedit: () => void
     onduplicate: () => void
     ondelete: () => void
   }
-  let { host, layout, onconnect, onedit, onduplicate, ondelete }: Props = $props()
+  let { host, layout, onconnect, onfiles, onedit, onduplicate, ondelete }: Props = $props()
 
   let menuOpen = $state(false)
   let menuAt = $state<{ x: number; y: number } | null>(null)
@@ -59,6 +61,7 @@
       at={menuAt ?? undefined}
       onclose={() => (menuOpen = false)}
       items={[
+        { label: 'Файлы', onselect: onfiles },
         { label: 'Изменить', onselect: onedit },
         { label: 'Дублировать', onselect: onduplicate },
         { label: 'Удалить', onselect: ondelete, danger: true },
