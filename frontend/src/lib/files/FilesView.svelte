@@ -147,6 +147,10 @@
     return names.length > 3 ? `${shown} (и ещё ${names.length - 3})` : shown
   })
 
+  const deleteHasDir = $derived.by(() => {
+    const n = new Set(model?.deleteAsk ?? [])
+    return (model?.entries ?? []).some((e) => e.dir && n.has(e.name))
+  })
   const deleteTitle = $derived.by(() => {
     const n = model?.deleteAsk ?? []
     if (n.length === 1) return `Удалить «${n[0]}»?`
@@ -268,7 +272,7 @@
 
   <!-- Cancel has the focus: Enter never deletes by itself. -->
   <Dialog open={!!model.deleteAsk} title={deleteTitle} onclose={() => (model.deleteAsk = null)} width={440} autofocus="[data-autofocus]">
-    <p class="muted">Папки удаляются со всем содержимым. Это нельзя отменить.</p>
+    <p class="muted">{deleteHasDir ? 'Папки удаляются со всем содержимым. ' : ''}Это нельзя отменить.</p>
     {#snippet footer()}
       <span></span>
       <span class="actions">

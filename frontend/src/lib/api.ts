@@ -8,6 +8,7 @@ export {
   FilesCopy,
   FilesDelete,
   FilesDownload,
+  FilesDragOut,
   FilesHome,
   FilesJobCancel,
   FilesJobRemove,

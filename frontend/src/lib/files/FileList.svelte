@@ -3,6 +3,7 @@
   import Menu, { type MenuItem } from '../ui/Menu.svelte'
   import { filesClipboard, MOVE_TYPE, type FilesTab } from './files.svelte'
   import { formatDate, formatSize, joinPath, objectsLabel, stemRange, type Entry, type SortKey } from './format'
+  import { watchDragOut } from './dragout'
   import Icon from './Icon.svelte'
   import { clickSelect, keySelect, selectAll, type NavKey } from './selection'
 
@@ -255,6 +256,8 @@
     model.dragging = paths
     e.dataTransfer.setData(MOVE_TYPE, JSON.stringify(paths))
     e.dataTransfer.effectAllowed = 'move'
+    // Out of the window the drag goes on as a system drag that Explorer copies from.
+    watchDragOut(model.id, paths)
   }
 
   function ondragover(e: DragEvent, entry: Entry): void {
@@ -419,7 +422,7 @@
   </div>
 
   <div class="footer" aria-live="polite">
-    <span>{footer}{#if model.hiddenCount > 0 && !model.listError}<span class="muted" title="Имена, начинающиеся с точки; кнопка «Скрытые» показывает их"> · скрыто: {model.hiddenCount}</span>{/if}</span>
+    <span>{footer}{#if model.hiddenCount > 0 && !model.listError}<span class="muted" title="Имена, начинающиеся с точки; кнопка «Скрытые» показывает их">{` · скрыто: ${model.hiddenCount}`}</span>{/if}</span>
     {#if model.slow}<span class="muted">Загрузка папки…</span>{/if}
   </div>
 </div>

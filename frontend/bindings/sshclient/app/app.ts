@@ -64,6 +64,17 @@ export function FilesDownload(tabID: string, remote: string[], localDir: string,
 }
 
 /**
+ * FilesDragOut hands the chosen remote files and folders of a tab to Windows as a drag: the
+ * frontend calls it while its own row drag has left the window with the button still held. It
+ * ends that drag, starts the system one and returns when it is dropped or cancelled; Explorer goes
+ * on copying in its own progress window. Nothing happens when the button is already up or the
+ * cursor came back into the window.
+ */
+export function FilesDragOut(tabID: string, paths: string[]): $CancellablePromise<void> {
+    return $Call.ByID(4136507944, tabID, paths);
+}
+
+/**
  * FilesHome returns the remote home folder.
  */
 export function FilesHome(tabID: string): $CancellablePromise<string> {
